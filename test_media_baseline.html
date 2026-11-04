@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Stage5 Media Baseline</title>
+<style>body{font-family:sans-serif;margin:2em}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:6px}</style>
+</head>
+<body>
+<h1>Stage 5 — Media Baseline (local)</h1>
+<table id="t">
+<thead><tr><th>Test</th><th>Result</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>HTMLMediaElement</td><td id="r1">-</td><td>pre-check only</td></tr>
+<tr><td>canPlayType MP4/H.264</td><td id="r2">-</td><td>preliminary, not proof</td></tr>
+<tr><td>canPlayType WebM/VP9</td><td id="r3">-</td><td>preliminary</td></tr>
+<tr><td>canPlayType WebM/VP8</td><td id="r4">-</td><td>preliminary</td></tr>
+<tr><td>canPlayType Opus</td><td id="r5">-</td><td>preliminary</td></tr>
+<tr><td>MediaSource</td><td id="r6">-</td><td>existence check</td></tr>
+<tr><td>MediaRecorder</td><td id="r7">-</td><td>existence check</td></tr>
+<tr><td>navigator.mediaCapabilities</td><td id="r8">-</td><td>if present</td></tr>
+</tbody>
+</table>
+<video id="v" width="320" height="240" controls playsinline>
+<source src="none.webm" type="video/webm">
+</video>
+<p id="err"></p>
+<script>
+function set(id,val,note){var c=document.getElementById(id);if(c){c.textContent=val;}var n=document.getElementById(id.replace('r','n'));}
+try { document.getElementById('r1').textContent = (typeof HTMLMediaElement !== 'undefined' ? 'present' : 'missing'); } catch(e){ document.getElementById('r1').textContent = 'error'; }
+try { var v=document.createElement('video'); document.getElementById('r2').textContent = (v.canPlayType ? v.canPlayType('video/mp4;codecs="avc1.42E01E,mp4a.40.2"') : 'n/a'); } catch(e){ document.getElementById('r2').textContent = 'error'; }
+try { var v=document.createElement('video'); document.getElementById('r3').textContent = (v.canPlayType ? v.canPlayType('video/webm;codecs="vp9"') : 'n/a'); } catch(e){ document.getElementById('r3').textContent = 'error'; }
+try { var v=document.createElement('video'); document.getElementById('r4').textContent = (v.canPlayType ? v.canPlayType('video/webm;codecs="vp8"') : 'n/a'); } catch(e){ document.getElementById('r4').textContent = 'error'; }
+try { var v=document.createElement('video'); document.getElementById('r5').textContent = (v.canPlayType ? v.canPlayType('audio/webm;codecs="opus"') : 'n/a'); } catch(e){ document.getElementById('r5').textContent = 'error'; }
+try { document.getElementById('r6').textContent = (typeof MediaSource !== 'undefined' ? 'present' : 'missing'); } catch(e){ document.getElementById('r6').textContent = 'error'; }
+try { document.getElementById('r7').textContent = (typeof MediaRecorder !== 'undefined' ? 'present' : 'missing'); } catch(e){ document.getElementById('r7').textContent = 'error'; }
+try { document.getElementById('r8').textContent = (typeof navigator !== 'undefined' && navigator.mediaCapabilities ? 'present' : 'missing'); } catch(e){ document.getElementById('r8').textContent = 'error'; }
+// video error test
+window.addEventListener('load', function(){
+  var v=document.getElementById('v');
+  v.onerror = function(){ document.getElementById('err').textContent = 'video error: '+(v.error ? v.error.code : 'unknown'); };
+});
+</script>
+</body>
+</html>

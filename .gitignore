@@ -1,0 +1,9 @@
+# Build output
+/build/
+/build-gst/
+/run/
+/run-gst/
+# Old copies of files made before edits
+*.before-fixes
+*.backup
+*.stage4_*
