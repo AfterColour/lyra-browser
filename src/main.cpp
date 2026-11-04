@@ -1,5 +1,5 @@
 // ============================================================================
-//  MyBrowser - Windows + WebKit (WebKit2 C API) with a Safari-style chrome.
+//  Lyra - Windows + WebKit (WebKit2 C API) with a Safari-style chrome.
 //
 //  Build notes
 //   - Link: gdiplus, dwmapi, comdlg32, shlwapi, uuid (pragmas below), plus your WebKit libs.
@@ -8,7 +8,11 @@
 //   - C++17 or newer (the project builds as C++20).
 //
 //  Data: settings, tabs.log and the browser profile (cookies, storage, cache) live
-//  in %LOCALAPPDATA%\MyBrowser.
+//  in %LOCALAPPDATA%\Lyra (moved there from %LOCALAPPDATA%\MyBrowser on first start).
+//
+//  Debug switches are environment variables named LYRA_* (LYRA_MEDIA_TRACE,
+//  LYRA_DISABLE_GPU_RASTER, ...). WebKit reads them under their old MYBROWSER_* names;
+//  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -51,6 +55,7 @@ using std::max;
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKInspector.h>
 #include <WebKit/WKNavigationResponseRef.h>
+#include <WebKit/WKPreferencesRefPrivate.h>
 #include <WebKit/WKSecurityOriginRef.h>
 #include <WebKit/WKWebsiteDataStoreConfigurationRef.h>
 #include <WebKit/WKWebsiteDataStoreRef.h>
@@ -91,10 +96,8 @@ constexpr int kMaxTabs    = 20;
 constexpr int   ID_URL_EDIT = 1001;
 constexpr UINT_PTR TIMER_UI = 1;
 
-// Display name used in the window title, dialogs and the About page. The settings
-// folder (%LOCALAPPDATA%\MyBrowser) deliberately keeps its old name so existing
-// settings are not lost when the product is renamed.
-static const wchar_t kAppName[] = L"MyBrowser";
+// Display name used in the window title, dialogs and the About page.
+static const wchar_t kAppName[] = L"Lyra";
 
 // Appended to WebKit's standard Windows user agent. Without a "Version/... Safari/..."
 // token many sites (Google, YouTube, ...) treat the browser as unknown and serve a
@@ -154,6 +157,13 @@ struct TabCtx {
 };
 
 static HWND   g_hWnd = nullptr;
+
+// Element fullscreen (video players). WebKit sends the registered message "WebKitFullScreen" to
+// this window (wParam: TRUE enter / FALSE exit, lParam: the WKView's HWND); see OnFullScreenMessage.
+static UINT   g_fullScreenMsg = 0;
+static HWND   g_fullScreenView = nullptr;      // WKView shown fullscreen, nullptr otherwise
+static LONG_PTR g_savedStyle = 0;
+static WINDOWPLACEMENT g_savedPlacement = { sizeof(WINDOWPLACEMENT) };
 static HWND   g_urlEdit = nullptr;
 static WNDPROC g_oldEditProc = nullptr;
 static HFONT  g_editFont = nullptr;
@@ -167,7 +177,7 @@ static bool   g_dark = false;
 
 static WKContextRef          g_context = nullptr;
 static WKPreferencesRef      g_preferences = nullptr;
-static WKWebsiteDataStoreRef g_dataStore = nullptr;   // cookies, storage, cache under %LOCALAPPDATA%\MyBrowser
+static WKWebsiteDataStoreRef g_dataStore = nullptr;   // cookies, storage, cache under %LOCALAPPDATA%\Lyra
 
 static std::vector<std::wstring> g_closedUrls;        // for Ctrl+Shift+T (most recent last)
 static int g_modalDepth = 0;                          // >0 while a dialog runs inside a WebKit callback
@@ -194,7 +204,7 @@ static std::wstring g_settingsDir, g_settingsFile;
 
 // ----------------------------------------------------------------------------
 //  Diagnostic log (tab lifecycle only; never written from paint code).
-//  File: %LOCALAPPDATA%\MyBrowser\tabs.log  - appended across runs, every line is
+//  File: %LOCALAPPDATA%\Lyra\tabs.log  - appended across runs, every line is
 //  written straight to the file so it survives a crash.
 // ----------------------------------------------------------------------------
 static HANDLE g_logFile = INVALID_HANDLE_VALUE;
@@ -463,8 +473,36 @@ static void InitPaths() {
     }
     std::wstring dir = base;
     while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
-    g_settingsDir = dir + L"\\MyBrowser";
+    g_settingsDir = dir + L"\\Lyra";
     g_settingsFile = g_settingsDir + L"\\settings.ini";
+
+    // The browser used to be called MyBrowser: take its profile (settings, cookies, history)
+    // along the first time Lyra starts.
+    std::wstring oldDir = dir + L"\\MyBrowser";
+    if (GetFileAttributesW(g_settingsDir.c_str()) == INVALID_FILE_ATTRIBUTES
+        && GetFileAttributesW(oldDir.c_str()) != INVALID_FILE_ATTRIBUTES)
+        MoveFileW(oldDir.c_str(), g_settingsDir.c_str());
+}
+
+// Debug switches are documented as LYRA_*; the WebKit side (GPU and web processes) still reads
+// them as MYBROWSER_*. Copy every LYRA_X to MYBROWSER_X (unless that is set already) before
+// WebKit starts its processes, which inherit this environment.
+static void ForwardLyraEnvironment() {
+    LPWCH block = GetEnvironmentStringsW();
+    if (!block) return;
+    std::vector<std::pair<std::wstring, std::wstring>> forward;
+    for (LPWCH entry = block; *entry; entry += wcslen(entry) + 1) {
+        std::wstring line = entry;
+        if (_wcsnicmp(line.c_str(), L"LYRA_", 5) != 0) continue;
+        size_t eq = line.find(L'=');
+        if (eq == std::wstring::npos) continue;
+        forward.emplace_back(L"MYBROWSER_" + line.substr(5, eq - 5), line.substr(eq + 1));
+    }
+    FreeEnvironmentStringsW(block);
+    for (auto& [name, value] : forward) {
+        if (!GetEnvironmentVariableW(name.c_str(), nullptr, 0))
+            SetEnvironmentVariableW(name.c_str(), value.c_str());
+    }
 }
 
 static void LoadSettings() {
@@ -773,7 +811,7 @@ static void LayoutWebViews() {
     if (!g_hWnd) return;
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    int top = (int)g_L.chromeH;
+    int top = g_fullScreenView ? 0 : (int)g_L.chromeH;   // fullscreen: the page covers the tab strip and toolbar
     int h = std::max(0, (int)cr.bottom - top);
     // Only the visible tab is resized. Hidden tabs are brought to the right size
     // by SelectTab() (which calls this function) right after they are shown, so
@@ -807,8 +845,62 @@ static void ShowUrlEdit() {
     InvalidateChrome();
 }
 
+// Leaves element fullscreen on the window side. Called for WebKit's exit message and when the
+// fullscreen tab goes away without WebKit telling us (tab closed, page crashed).
+static void RestoreFromFullScreen() {
+    if (!g_fullScreenView) return;
+    g_fullScreenView = nullptr;
+    SetWindowLongPtrW(g_hWnd, GWL_STYLE, g_savedStyle);
+    SetWindowPlacement(g_hWnd, &g_savedPlacement);
+    SetWindowPos(g_hWnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    RefreshLayout();
+    InvalidateRect(g_hWnd, nullptr, FALSE);
+}
+
+static LRESULT OnFullScreenMessage(bool enter, HWND view) {
+    if (!enter) {
+        RestoreFromFullScreen();
+        return TRUE;
+    }
+    if (g_fullScreenView) return TRUE;              // already fullscreen
+    Tab* t = ActiveTab();
+    if (!t || t->hwnd != view) return FALSE;        // a background tab: let WebKit handle it
+    if (IsEditing()) ShowWindow(g_urlEdit, SW_HIDE);
+
+    g_savedStyle = GetWindowLongPtrW(g_hWnd, GWL_STYLE);
+    g_savedPlacement.length = sizeof(g_savedPlacement);
+    GetWindowPlacement(g_hWnd, &g_savedPlacement);
+    g_fullScreenView = view;
+
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST), &mi);
+    const RECT& m = mi.rcMonitor;
+    SetWindowLongPtrW(g_hWnd, GWL_STYLE, (g_savedStyle & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+    // WM_SIZE -> RefreshLayout() gives the view the whole client area (see LayoutWebViews).
+    SetWindowPos(g_hWnd, HWND_TOP, m.left, m.top, m.right - m.left, m.bottom - m.top,
+                 SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    RefreshLayout();
+    SetFocus(view);
+    return TRUE;
+}
+
+// The page shown fullscreen must leave fullscreen before another tab is shown.
+static void ExitFullScreenForTabSwitch() {
+    if (!g_fullScreenView) return;
+    for (auto& tp : g_tabs) {
+        if (tp->hwnd == g_fullScreenView && tp->page) {
+            WKPageRequestExitFullScreen(tp->page);   // WebKit answers with the exit message
+            break;
+        }
+    }
+    RestoreFromFullScreen();                          // in case the page does not answer
+}
+
 static void SelectTab(int i) {
     if (i < 0 || i >= (int)g_tabs.size()) return;
+    if (g_fullScreenView && (!g_tabs[i]->hwnd || g_tabs[i]->hwnd != g_fullScreenView))
+        ExitFullScreenForTabSwitch();
     g_active = i;
     LayoutWebViews();                    // size the newly active view first, then show it
     for (int k = 0; k < (int)g_tabs.size(); ++k)
@@ -998,14 +1090,19 @@ static void OnDecidePolicyForResponse(WKPageRef, WKNavigationResponseRef nr, WKF
         WKRelease(fi);
     }
     bool attachment = false;
+    std::wstring mime;
     if (WKURLResponseRef resp = WKNavigationResponseCopyResponse(nr)) {
         attachment = WKURLResponseIsAttachment(resp);
+        if (WKStringRef m = WKURLResponseCopyMIMEType(resp)) { mime = WKStr(m); WKRelease(m); }
         WKRelease(resp);
     }
-    if (mainFrame && (attachment || !WKNavigationResponseCanShowMIMEType(nr)))
+    if (mainFrame && (attachment || !WKNavigationResponseCanShowMIMEType(nr))) {
+        Log("response -> download: mime='%ls' attachment=%d canShow=%d", mime.c_str(), (int)attachment,
+            (int)WKNavigationResponseCanShowMIMEType(nr));
         WKFramePolicyListenerDownload(listener);
-    else
-        WKFramePolicyListenerUse(listener);
+        return;
+    }
+    WKFramePolicyListenerUse(listener);
 }
 
 // --- downloads (saved straight to the user's Downloads folder) ------------------
@@ -1457,6 +1554,7 @@ static void DestroyTab(Tab& t) {
     WKPageRef page = t.page;
     HWND      hwnd = t.hwnd;
     t.view = nullptr; t.page = nullptr; t.hwnd = nullptr;   // a second call is a no-op
+    if (hwnd && hwnd == g_fullScreenView) RestoreFromFullScreen();
     Log("tab#%llu destroy: begin view=%p page=%p hwnd=%p", id, (void*)view, (void*)page, (void*)hwnd);
 
     if (page) ClearPageClients(page);
@@ -1947,6 +2045,13 @@ static void ApplyWebPrefs() {
     WKPreferencesSetWebAudioEnabled(g_preferences, g_prefs.webAudio);
     WKPreferencesSetDefaultFontSize(g_preferences, (uint32_t)g_prefs.defaultFont);
     WKPreferencesSetMinimumFontSize(g_preferences, (uint32_t)g_prefs.minFont);
+
+    // Canvas 2D follows the page tiles: both on the GPU (Skia on ANGLE in the GPU process), or both
+    // on the CPU with LYRA_DISABLE_GPU_RASTER=1. A GPU canvas under CPU-painted tiles would be
+    // read back from the GPU for every tile it covers, every frame.
+    wchar_t noGpuRaster[4] = {};
+    bool cpuRaster = GetEnvironmentVariableW(L"MYBROWSER_DISABLE_GPU_RASTER", noGpuRaster, 4) && noGpuRaster[0] == L'1';
+    WKPreferencesSetCanvasUsesAcceleratedDrawing(g_preferences, !cpuRaster);
 }
 
 static COLORREF SFieldColor() { return g_dark ? RGB(30, 30, 32) : RGB(236, 236, 238); }
@@ -2018,7 +2123,7 @@ static SRow RInfo(const wchar_t* label, const std::wstring& right, bool kbd = fa
 // ---- state -----------------------------------------------------------------
 constexpr int SET_ID_SEARCH = 2001;
 constexpr int SET_ID_EDIT   = 2002;
-static const wchar_t kSetClass[] = L"MyBrowserSettingsWindow";
+static const wchar_t kSetClass[] = L"LyraSettingsWindow";
 
 static HWND   g_setSearch = nullptr, g_setEdit = nullptr;
 static HBRUSH g_fieldBrush = nullptr;
@@ -2915,9 +3020,12 @@ static void ShowSettingsWindow() {
 //  Window procedure
 // ----------------------------------------------------------------------------
 static LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (g_fullScreenMsg && msg == g_fullScreenMsg)
+        return OnFullScreenMessage(wParam != 0, (HWND)lParam);
     switch (msg) {
     case WM_CREATE: {
         g_hWnd = hWnd;
+        g_fullScreenMsg = RegisterWindowMessageW(L"WebKitFullScreen");
         g_dpi = GetDpiForWindow(hWnd);
         g_urlEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL | ES_LEFT,
                                     0, 0, 10, 10, hWnd, (HMENU)(INT_PTR)ID_URL_EDIT,
@@ -3173,6 +3281,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     ULONG_PTR gdipToken = 0;
     GdiplusStartup(&gdipToken, &gsi, nullptr);
 
+    ForwardLyraEnvironment();
     InitPaths();
     LogOpen();
     SetUnhandledExceptionFilter(CrashFilter);
@@ -3181,7 +3290,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     ConfigureGStreamerEnvironment();
 
-    const wchar_t CLASS_NAME[] = L"MyBrowserWindowClass";
+    const wchar_t CLASS_NAME[] = L"LyraWindowClass";
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = MainWndProc;

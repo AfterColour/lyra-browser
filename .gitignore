@@ -7,3 +7,8 @@
 *.before-fixes
 *.backup
 *.stage4_*
+# Leftovers of builds and renames
+*.locked
+*.obj
+*.prelyra
+/_to_delete/

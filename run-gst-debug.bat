@@ -1,6 +1,6 @@
 @echo off
 rem ==========================================================================
-rem  Runs run-gst\MyBrowser.exe with GStreamer logging enabled.
+rem  Runs run-gst\Lyra.exe with GStreamer logging enabled.
 rem  One log per process: C:\WebKit\gstlogs\gst-<pid>.log
 rem  The folder is cleared on every start, so it only has the latest run.
 rem ==========================================================================
@@ -15,7 +15,7 @@ set "GST_DEBUG=2,webkit*:5,webkitvideosink:6,webkitvideoframeconverter:6,GST_CAP
 set "GST_DEBUG_FILE=%LOGDIR%\gst-%%p.log"
 set "GST_DEBUG_NO_COLOR=1"
 rem WebKit-side trace of the video drawing path (GStreamer logs are compiled out in vcpkg Release).
-set "MYBROWSER_MEDIA_TRACE=%LOGDIR%\trace"
+set "LYRA_MEDIA_TRACE=%LOGDIR%\trace"
 
 echo [debug] Logs: %LOGDIR%
-start "" "%~dp0run-gst\MyBrowser.exe"
+start "" "%~dp0run-gst\Lyra.exe"

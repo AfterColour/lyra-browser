@@ -1,9 +1,9 @@
 @echo off
 rem ==========================================================================
-rem  MyBrowser build script. Works from any console (cmd, PowerShell, Explorer).
+rem  Lyra build script. Works from any console (cmd, PowerShell, Explorer).
 rem    build.bat          - configure (if needed) + build
 rem    build.bat fresh    - wipe the CMake cache and configure from scratch
-rem    build.bat run      - build and start run\MyBrowser.exe
+rem    build.bat run      - build and start run\Lyra.exe
 rem    build.bat gst      - build against WebKit with GStreamer (YouTube/MSE) into run-gst\
 rem                         (arguments combine: build.bat gst fresh run)
 rem ==========================================================================
@@ -55,17 +55,36 @@ for %%a in (%*) do (
     )
 )
 
+rem --- 4. Leftover browser processes keep the WebKit DLLs locked: stop them --------
+for %%p in (Lyra.exe MyBrowser.exe WebKitGPUProcess.exe WebKitWebProcess.exe WebKitNetworkProcess.exe) do (
+    tasklist /fi "imagename eq %%p" 2>nul | find /i "%%p" >nul && (
+        echo [build] %%p is still running, stopping it:
+        taskkill /f /t /im %%p
+    )
+)
+rem A process that cannot be stopped still lets its files be renamed: move them aside so
+rem the new ones can be copied in. The *.locked files are removed by a later build.
+for %%d in (run run-gst) do if exist "%~dp0%%d" (
+    del /q "%~dp0%%d\*.locked" >nul 2>&1
+    for %%f in ("%~dp0%%d\*.dll" "%~dp0%%d\*.exe") do (
+        2>nul ( >>"%%~f" call; ) || (
+            echo [build] %%~nxf is in use, moving it aside
+            move /y "%%~f" "%%~f.%RANDOM%.locked" >nul
+        )
+    )
+)
+
 rem --- 4. Configure + build ----------------------------------------------------
 set "RUNPATH=%~dp0%RUNDIR%"
 set "RUNPATH=%RUNPATH:\=/%"
-cmake %FRESH% -S . -B %BUILDDIR% -G Ninja "-DCMAKE_CXX_COMPILER=%CLANGCL%" "-DWEBKIT_BUILD_DIR=%WEBKITDIR%" "-DMYBROWSER_RUN_DIR=%RUNPATH%"
+cmake %FRESH% -S . -B %BUILDDIR% -G Ninja "-DCMAKE_CXX_COMPILER=%CLANGCL%" "-DWEBKIT_BUILD_DIR=%WEBKITDIR%" "-DLYRA_RUN_DIR=%RUNPATH%"
 if errorlevel 1 goto :fail
 cmake --build %BUILDDIR%
 if errorlevel 1 goto :fail
 
 echo.
-echo [build] OK: %~dp0%RUNDIR%\MyBrowser.exe
-if defined RUN start "" "%~dp0%RUNDIR%\MyBrowser.exe"
+echo [build] OK: %~dp0%RUNDIR%\Lyra.exe
+if defined RUN start "" "%~dp0%RUNDIR%\Lyra.exe"
 exit /b 0
 
 :no_vs
