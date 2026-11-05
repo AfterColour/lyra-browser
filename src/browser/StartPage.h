@@ -24,6 +24,13 @@ void OpenHistory();
 std::wstring BookmarksPageUrl();
 void OpenBookmarks();
 
+// The downloads page, generated the same way into %LOCALAPPDATA%\Lyra\downloads.html.
+// Ctrl+J / menu / the downloads list: OpenDownloads(). PushDownloadsToPages() hands open
+// downloads pages the current list (progress) without reloading them.
+std::wstring DownloadsPageUrl();
+void OpenDownloads();
+void PushDownloadsToPages();
+
 // A start page asked for "lyra://setup?..." or "lyra://settings" (see resources/start.html).
 // Called on the main window's message loop, never inside a WebKit callback.
 void HandleLyraUrl(unsigned long long tabId, const std::wstring& url);

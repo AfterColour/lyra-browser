@@ -1,0 +1,226 @@
+<!doctype html>
+<!--
+  Lyra downloads page (lyra://downloads, Ctrl+J).
+  This is a template: Lyra copies it to %LOCALAPPDATA%\Lyra\downloads.html with the downloads put
+  in place of the LYRA_DATA marker below (browser/StartPage.cpp), then opens it with
+  ?language=..&themeMode=..&sysru=..&sysdark=..&accent=.. like the start page. While the page is
+  open Lyra calls lyraDownloads([...]) with fresh data a few times a second during downloads.
+  Commands go back as lyra://downloads-<verb>?id=..
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Downloads</title>
+<style>
+  :root {
+    --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
+    --hover: rgba(0,0,0,.045); --field: #FFFFFF; --accent: #0067C0; --track: rgba(0,0,0,.09); --danger: #C42B1C;
+  }
+  :root[data-theme="dark"] {
+    --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
+    --hover: rgba(255,255,255,.06); --field: #2E3036; --track: rgba(255,255,255,.12); --danger: #FF8A80;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 32px 64px; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
+  .search { position: relative; width: 260px; max-width: 100%; }
+  .search svg { position: absolute; left: 10px; top: 9px; color: var(--text2); }
+  .search input { width: 100%; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px 0 32px; font: inherit; outline: none; }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .btn { height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+         color: var(--text); font: inherit; cursor: pointer; }
+  .btn:hover { background: var(--hover); }
+  .day { margin: 22px 0 8px 4px; font-size: 12px; font-weight: 600; color: var(--text2); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 10px 10px 16px; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row:hover { background: var(--hover); }
+  .ficon { width: 32px; height: 38px; flex: none; position: relative; color: var(--text2); }
+  .ficon svg { position: absolute; inset: 0; }
+  .ficon span { position: absolute; left: 0; right: 0; bottom: 7px; text-align: center; font-size: 8px; font-weight: 700;
+                letter-spacing: .02em; color: var(--accent); text-transform: uppercase; overflow: hidden; }
+  .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+  a.name:hover { text-decoration: underline; }
+  .name.gone { color: var(--text2); font-weight: 400; text-decoration: line-through; }
+  .status { color: var(--text2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status.failed { color: var(--danger); }
+  .src { color: var(--text2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src a { color: inherit; text-decoration: none; }
+  .src a:hover { text-decoration: underline; }
+  .bar { height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; margin: 2px 0; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+  .bar.unknown i { width: 30%; animation: slide 1.4s ease-in-out infinite alternate; }
+  @keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
+  .acts { display: flex; gap: 4px; flex: none; }
+  .act { height: 30px; padding: 0 10px; border-radius: 7px; border: 0; background: none; color: var(--accent); font: inherit;
+         cursor: pointer; white-space: nowrap; }
+  .act:hover { background: var(--hover); }
+  .x { width: 30px; padding: 0; color: var(--text2); opacity: 0; }
+  .row:hover .x, .x:focus-visible { opacity: 1; }
+  .empty { text-align: center; color: var(--text2); padding: 80px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title"></h1>
+    <label class="search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="q" type="search" autocomplete="off">
+    </label>
+    <button class="btn" id="folderBtn"></button>
+    <button class="btn" id="clearBtn"></button>
+  </header>
+  <div id="list"></div>
+</div>
+<script>
+"use strict";
+// [{i: id, s: 0 running / 1 done / 2 failed / 3 cancelled, n: file name, u: address, r: bytes received,
+//   t: total bytes (-1 unknown), a: started (Unix ms), x: 1 if the file is still there, e: status line}]
+let DATA = /*LYRA_DATA*/[];
+
+const q = new URLSearchParams(location.search);
+const lang = +(q.get("language") || 0), theme = +(q.get("themeMode") || 0);
+const ru = lang === 2 || (lang === 0 && q.get("sysru") === "1");
+const dark = theme === 2 || (theme === 0 && q.get("sysdark") === "1");
+document.documentElement.dataset.theme = dark ? "dark" : "light";
+document.documentElement.lang = ru ? "ru" : "en";
+if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.style.setProperty("--accent", "#" + q.get("accent"));
+
+const S = ru ? {
+  title: "Загрузки", search: "Поиск в загрузках", folder: "Открыть папку", clear: "Очистить список",
+  show: "Показать в папке", cancel: "Отменить", retry: "Повторить", remove: "Убрать из списка",
+  today: "Сегодня", yesterday: "Вчера", empty: "Загрузок пока нет", nothing: "Ничего не найдено",
+} : {
+  title: "Downloads", search: "Search downloads", folder: "Open folder", clear: "Clear list",
+  show: "Show in folder", cancel: "Cancel", retry: "Retry", remove: "Remove from list",
+  today: "Today", yesterday: "Yesterday", empty: "No downloads yet", nothing: "Nothing found",
+};
+const $ = (id) => document.getElementById(id);
+document.title = S.title;
+$("title").textContent = S.title;
+$("q").placeholder = S.search;
+$("folderBtn").textContent = S.folder;
+$("clearBtn").textContent = S.clear;
+
+function send(verb, id) { location.href = "lyra://downloads-" + verb + (id ? "?id=" + id : ""); }
+
+const locale = ru ? "ru-RU" : "en-US";
+function dayLabel(ms) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(ms); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return S.today;
+  if (diff === 1) return S.yesterday;
+  const s = day.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long",
+                                             year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url || ""; } }
+function extOf(name) { const m = /\.([a-z0-9]{1,5})$/i.exec(name || ""); return m ? m[1] : ""; }
+const FILE_SVG = '<svg width="32" height="38" viewBox="0 0 32 38" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M5 2.5h15l7.5 7.5v24.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 5 2.5z"/><path d="M19.5 2.5V10.5h8"/></svg>';
+
+function button(cls, text, title, fn) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "act " + cls; b.textContent = text;
+  if (title) { b.title = title; b.setAttribute("aria-label", title); }
+  b.addEventListener("click", (e) => { e.preventDefault(); fn(); });
+  return b;
+}
+
+function render() {
+  const words = $("q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = $("list");
+  list.textContent = "";
+  const items = DATA.filter((d) => words.every((w) => (d.n || "").toLowerCase().includes(w) || (d.u || "").toLowerCase().includes(w)));
+  $("clearBtn").disabled = !DATA.some((d) => d.s !== 0);
+  if (!items.length) {
+    const p = document.createElement("div");
+    p.className = "empty"; p.textContent = DATA.length ? S.nothing : S.empty;
+    list.appendChild(p);
+    return;
+  }
+  let card = null, current = "";
+  for (const d of items) {
+    const label = dayLabel(d.a);
+    if (label !== current) {
+      current = label;
+      const h = document.createElement("div");
+      h.className = "day"; h.textContent = label;
+      list.appendChild(h);
+      card = document.createElement("div");
+      card.className = "card";
+      list.appendChild(card);
+    }
+    const row = document.createElement("div");
+    row.className = "row";
+    const icon = document.createElement("div");
+    icon.className = "ficon";
+    icon.innerHTML = FILE_SVG + "<span></span>";
+    icon.querySelector("span").textContent = extOf(d.n);
+    row.appendChild(icon);
+
+    const info = document.createElement("div");
+    info.className = "info";
+    const canOpen = d.s === 1 && d.x;
+    const name = document.createElement(canOpen ? "a" : "span");
+    name.className = "name" + (d.s === 1 && !d.x ? " gone" : "");
+    name.textContent = d.n;
+    if (canOpen) { name.href = "#"; name.addEventListener("click", (e) => { e.preventDefault(); send("open", d.i); }); }
+    info.appendChild(name);
+    if (d.s === 0) {
+      const bar = document.createElement("div");
+      bar.className = "bar" + (d.t > 0 ? "" : " unknown");
+      bar.innerHTML = "<i></i>";
+      if (d.t > 0) bar.firstChild.style.width = Math.min(100, d.r / d.t * 100).toFixed(1) + "%";
+      info.appendChild(bar);
+    }
+    const st = document.createElement("div");
+    st.className = "status" + (d.s === 2 ? " failed" : "");
+    st.textContent = d.e;
+    info.appendChild(st);
+    if (d.u) {
+      const src = document.createElement("div");
+      src.className = "src";
+      const a = document.createElement("a");
+      a.href = d.u; a.title = d.u; a.textContent = d.u.length > 120 ? hostOf(d.u) : d.u;
+      src.appendChild(a);
+      info.appendChild(src);
+    }
+    row.appendChild(info);
+
+    const acts = document.createElement("div");
+    acts.className = "acts";
+    if (d.s === 0) acts.appendChild(button("", S.cancel, "", () => send("cancel", d.i)));
+    if (d.s === 1 && d.x) acts.appendChild(button("", S.show, "", () => send("show", d.i)));
+    if ((d.s === 2 || d.s === 3) && d.u) acts.appendChild(button("", S.retry, "", () => send("retry", d.i)));
+    if (d.s !== 0) acts.appendChild(button("x", "✕", S.remove, () => {
+      DATA = DATA.filter((x) => x !== d); render(); send("remove", d.i);
+    }));
+    row.appendChild(acts);
+    card.appendChild(row);
+  }
+}
+
+// Fresh data from Lyra while the page is open.
+window.lyraDownloads = (data) => { DATA = Array.isArray(data) ? data : []; render(); };
+
+$("q").addEventListener("input", render);
+$("folderBtn").addEventListener("click", () => send("folder"));
+$("clearBtn").addEventListener("click", () => { DATA = DATA.filter((d) => d.s === 0); render(); send("clear"); });
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey && e.key.toLowerCase() === "f") || (e.key === "/" && document.activeElement !== $("q"))) {
+    e.preventDefault(); $("q").focus();
+  }
+});
+render();
+</script>
+</body>
+</html>

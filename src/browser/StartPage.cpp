@@ -1,6 +1,7 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
 #include "browser/Bookmarks.h"
+#include "browser/Downloads.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "app/Log.h"
@@ -11,6 +12,7 @@
 #include "core/StringUtils.h"
 #include "core/Url.h"
 #include "ui/Chrome.h"
+#include "ui/DownloadsPopup.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/settings/SettingsWindow.h"
@@ -185,6 +187,51 @@ void OpenBookmarks() {
     CreateTab(kBookmarksAlias);
 }
 
+// [{"i":id,"s":state,"n":name,"u":url,"r":received,"t":total,"a":started,"x":exists,"e":status}]
+static std::wstring DownloadsJson() {
+    std::wstring json = L"[";
+    for (const DownloadItem& d : DownloadsList()) {
+        if (json.size() > 1) json += L",";
+        json += L"{\"i\":" + std::to_wstring(d.id) + L",\"s\":" + std::to_wstring((int)d.state) +
+                L",\"n\":" + JsString(d.name) + L",\"u\":" + JsString(d.url) +
+                L",\"r\":" + std::to_wstring(d.received) + L",\"t\":" + std::to_wstring(d.total) +
+                L",\"a\":" + std::to_wstring(d.started) + L",\"x\":" + (DownloadFileExists(d) ? L"1" : L"0") +
+                L",\"e\":" + JsString(DownloadStatusText(d.id)) + L"}";
+    }
+    return json + L"]";
+}
+
+std::wstring DownloadsPageUrl() {
+    const std::wstring url = WriteGeneratedPage(L"downloads.html", DownloadsPagePath(), DownloadsJson());
+    return url.empty() ? url : url + L"?" + LookParams();
+}
+
+static void IgnoreScriptResult(WKTypeRef, WKErrorRef, void*) {}
+
+void PushDownloadsToPages() {
+    std::string script;
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (t.state != TabState::Live || !t.page || !IsDownloadsPageUrl(t.url)) continue;
+        if (script.empty()) script = "window.lyraDownloads && lyraDownloads(" + ToUtf8(DownloadsJson()) + ")";
+        if (WKStringRef s = WKStringCreateWithUTF8CString(script.c_str())) {
+            WKPageEvaluateJavaScriptInMainFrame(t.page, s, nullptr, IgnoreScriptResult);
+            WKRelease(s);
+        }
+    }
+}
+
+void OpenDownloads() {
+    for (int i = 0; i < (int)g_tabs.size(); ++i) {
+        if (g_tabs[i]->state == TabState::Live && IsDownloadsPageUrl(g_tabs[i]->url)) {
+            SelectTab(i);
+            PushDownloadsToPages();
+            return;
+        }
+    }
+    CreateTab(kDownloadsAlias);
+}
+
 void OpenHistory() {
     for (int i = 0; i < (int)g_tabs.size(); ++i) {
         if (g_tabs[i]->state == TabState::Live && IsHistoryPageUrl(g_tabs[i]->url)) {
@@ -204,6 +251,8 @@ std::string ResolveNavigation(const std::wstring& input) {
         return ToUtf8(HistoryPageUrl());
     if (_wcsicmp(s.c_str(), kBookmarksAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://bookmarks/") == 0)
         return ToUtf8(BookmarksPageUrl());
+    if (_wcsicmp(s.c_str(), kDownloadsAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://downloads/") == 0)
+        return ToUtf8(DownloadsPageUrl());
     return ResolveInput(s);
 }
 
@@ -239,6 +288,14 @@ void RefreshStartPages() {
     }
     RefreshHistoryPages();
     RefreshBookmarksPages();
+    // The downloads page follows the look too.
+    std::wstring fresh;
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (t.state != TabState::Live || !t.page || !IsDownloadsPageUrl(t.url)) continue;
+        if (fresh.empty()) fresh = DownloadsPageUrl();
+        if (fresh != t.url) LoadInTab(t, fresh);
+    }
 }
 
 // Value of `key` in "a=1&b=x" (still URL-encoded)
@@ -342,6 +399,23 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     }
     if (command == L"lyra://bookmarks") {
         OpenBookmarks();
+        return;
+    }
+    if (command == L"lyra://downloads") {
+        OpenDownloads();
+        return;
+    }
+    if (command.compare(0, 17, L"lyra://downloads-") == 0) {
+        const std::wstring verb = command.substr(17);
+        const std::wstring idText = QueryString(query, L"id");
+        const long long id = idText.empty() ? 0 : _wtoi64(idText.c_str());
+        if (verb == L"open") DownloadOpen(id);
+        else if (verb == L"show") DownloadShowInFolder(id);
+        else if (verb == L"cancel") DownloadCancel(id);
+        else if (verb == L"retry") DownloadRetry(id);
+        else if (verb == L"remove") DownloadRemove(id);
+        else if (verb == L"clear") DownloadsClear();
+        else if (verb == L"folder") OpenDownloadsFolder();
         return;
     }
     if (command.compare(0, 17, L"lyra://bookmarks-") == 0) {

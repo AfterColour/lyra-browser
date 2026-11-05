@@ -11,10 +11,13 @@
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
 #include "ui/BookmarkPopup.h"
+#include "ui/DownloadsPopup.h"
+#include "browser/Downloads.h"
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
 #include "ui/Dialogs.h"
+#include "core/Localization.h"
 #include "ui/FullScreen.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
@@ -48,11 +51,13 @@ void LayoutWebViews() {
     int top = g_fullScreenView ? 0 : (int)g_L.chromeH;
     int left = g_fullScreenView ? 0 : (int)g_L.sideW;
     int h = std::max(0, (int)cr.bottom - top);
-    // Only the visible tab is resized. Hidden tabs are brought to the right size
-    // by SelectTab() (which calls this function) right after they are shown, so
-    // a window resize no longer sends resize IPC to every background page.
+    // The active view in place; the "ready" tabs parked off-screen at the same size, the rest
+    // hidden (they get the right size when they are selected, so a window resize does not send
+    // resize IPC to every background page).
+    const int w = std::max(0, (int)cr.right - left);
     if (Tab* t = ActiveTab())
-        if (t->hwnd) MoveWindow(t->hwnd, left, top, std::max(0, (int)cr.right - left), h, TRUE);
+        if (t->hwnd) MoveWindow(t->hwnd, left, top, w, h, TRUE);
+    if (!g_fullScreenView) ParkBackgroundViews(w, h);
 }
 
 void RefreshLayout(bool animate) {
@@ -163,11 +168,13 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         UnfreezeTabWidths();
         SuggestHide();
         BookmarkPopupClose();
+        DownloadsPopupClose();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         return 0;
     case WM_MOVE:
         SuggestHide();
         BookmarkPopupClose();
+        DownloadsPopupClose();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -332,6 +339,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Forward:  GoForward(); break;
             case Hit::Reload:   ReloadActive(true); break;
             case Hit::Star:     BookmarkCurrentPage(); break;
+            case Hit::Downloads: DownloadsPopupToggle(); break;
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
@@ -357,6 +365,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
+        if (wParam == TIMER_SPARE_TAB) {
+            KillTimer(hWnd, TIMER_SPARE_TAB);
+            if (g_tabOp || g_modalDepth > 0) ScheduleSpareTab(1000);
+            else PrepareSpareTab();
+            return 0;
+        }
         if (wParam == TIMER_TAB_UNFREEZE) {
             KillTimer(hWnd, TIMER_TAB_UNFREEZE);
             s_unfreezeArmed = false;
@@ -385,6 +399,20 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // Title / URL / history changes arrive through the page state client; this slow
         // poll (~1 s) is only a safety net.
         HistorySaveSoon();
+        DownloadsTick();
+        {
+            // The downloads button: the finished glow goes off. (Moving parts run on the
+            // animation clock, see ChromeAnimStep; without animations they step here.)
+            static bool glowing = false;
+            const bool glow = DownloadsJustFinished();
+            const bool sliding = DownloadsRunning() > 0 && DownloadsProgress() < 0;
+            if (glow != glowing) { dirty = true; glowing = glow; }
+            if (sliding && g_tick % 3 == 0) {
+                if (!g_prefs.animations) dirty = true;
+                DownloadsPopupRefresh();
+            }
+            if (g_prefs.animations && (sliding || (g_prefs.loadIndicator == 0 && act && act->loading))) AnimRequest();
+        }
         if (g_tick % 32 == 0) {
             for (auto& tp : g_tabs)
                 if (SyncTab(*tp)) dirty = true;
@@ -427,12 +455,23 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             g_closeRequested = false;
             return 0;
         }
+        if (const int running = DownloadsRunning()) {
+            // Closing stops them: ask first.
+            std::wstring msg = std::wstring(Tr(L"Downloads in progress: ", L"Идут загрузки: ")) + std::to_wstring(running) +
+                               Tr(L".\n\nClose Lyra and stop them?", L".\n\nЗакрыть Lyra и прервать их?");
+            int r;
+            { ModalScope modal; r = MessageBoxW(hWnd, msg.c_str(), kAppName, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2); }
+            if (r != IDYES) { g_closeRequested = false; return 0; }
+        }
         Log("WM_CLOSE: shutting down (tabs=%d active=%d)", (int)g_tabs.size(), g_active);
         g_closing = true;
         KillTimer(hWnd, TIMER_UI);
         SuggestHide();
+        DownloadsPopupClose();
+        BookmarkPopupClose();
         CloseAllTabs();
         HistorySave();
+        DownloadsSave();
         DestroyWindow(hWnd);
         return 0;
 

@@ -8,6 +8,7 @@
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
 #include "ui/WindowFrame.h"
+#include "browser/Downloads.h"
 #include "browser/Favicons.h"
 #include "core/Localization.h"
 #include "browser/Tab.h"
@@ -17,6 +18,7 @@
 #include "core/Url.h"
 #include "ui/AddressBar.h"
 #include "ui/BookmarkPopup.h"
+#include "ui/DownloadsPopup.h"
 #include "ui/Animation.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
@@ -123,6 +125,7 @@ static void ComputeTarget(Layout& L, int clientW) {
     const float bar = std::floor(S(d.bar)), btn = std::floor(S(d.btn)), tabH = std::floor(S(d.tab));
     const float edge = S(8), gap = S(2);
     const size_t n = g_tabs.size();
+    const bool dl = !DownloadsList().empty();        // the downloads button shows once there are any
     L.tabs.resize(n);
 
     if (L.mode == kLayoutCompact) {
@@ -132,11 +135,13 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.back = RectF(edge, by, btn, btn);
         L.fwd  = RectF(edge + btn + gap, by, btn, btn);
         L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
+        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
+        const float trail = dl ? L.downloads.X : L.more.X;
 
         // Tabs between "forward" and "+": inactive tabs up to 150 px wide, the active tab (the
         // address field) takes the rest, up to 860 px. Many tabs shrink the inactive ones first.
         const float left = L.fwd.GetRight() + S(8);
-        const float right = L.more.X - S(4) - btn - gap;
+        const float right = trail - S(4) - btn - gap;
         const float ty = std::floor((bar - tabH) / 2);
         const float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
         const int inactive = n ? (int)n - 1 : 0;
@@ -190,7 +195,8 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.reload = RectF(edge + (btn + gap) * 2, by, btn, btn);
         L.reloadInPill = false;
         L.more   = RectF(w - edge - btn, by, btn, btn);
-        const float pl = L.reload.GetRight() + S(8), pr = L.more.X - S(8);
+        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
+        const float pl = L.reload.GetRight() + S(8), pr = (dl ? L.downloads.X : L.more.X) - S(8);
         L.pill = RectF(std::floor(pl), strip + std::floor((bar - tabH) / 2), std::floor(std::max(S(80), pr - pl)), tabH);
         PlaceStar(L);
     } else {   // vertical
@@ -201,7 +207,8 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.back = RectF(edge, by, btn, btn);
         L.fwd  = RectF(edge + btn + gap, by, btn, btn);
         L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
-        const float pl = L.fwd.GetRight() + S(12), pr = L.more.X - S(12);
+        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
+        const float pl = L.fwd.GetRight() + S(12), pr = (dl ? L.downloads.X : L.more.X) - S(12);
         const float pw = std::max(S(120), std::min(pr - pl, S(640)));
         float px = std::floor(w / 2 - pw / 2);
         px = std::max(pl, std::min(px, pr - pw));
@@ -332,8 +339,37 @@ static Color Mix(const Color& a, const Color& b, float k) {
     return Color(m(a.GetA(), b.GetA()), m(a.GetR(), b.GetR()), m(a.GetG(), b.GetG()), m(a.GetB(), b.GetB()));
 }
 
+static DWORD s_dlAnimAt = 0;                      // when the download start animation began
+constexpr DWORD kDlAnimMs = 900;
+
+void ChromeDownloadStarted() {
+    if (!g_prefs.animations) return;
+    s_dlAnimAt = GetTickCount();
+    if (!s_dlAnimAt) s_dlAnimAt = 1;
+    AnimRequest();
+}
+
+// 0..1 through the download start animation, or -1 when it is not playing.
+static float DownloadAnimT() {
+    if (!s_dlAnimAt) return -1.f;
+    const DWORD el = GetTickCount() - s_dlAnimAt;
+    if (el >= kDlAnimMs) { s_dlAnimAt = 0; return -1.f; }
+    return (float)el / (float)kDlAnimMs;
+}
+
+// The page is loading in the active tab (the address field's line moves).
+static bool PageLoadingShown() {
+    const Tab* t = ActiveTab();
+    return t && (t->loading || t->fade > 0.01f);
+}
+
 bool ChromeAnimStep(float dt) {
     bool moving = false;
+    // Things that move by themselves: the download start animation, the "size unknown" bar on
+    // the downloads button and the running light of the loading line.
+    if (DownloadAnimT() >= 0) moving = true;
+    if (g_prefs.animations && DownloadsRunning() > 0 && DownloadsProgress() < 0) moving = true;
+    if (g_prefs.animations && g_prefs.loadIndicator == 0 && PageLoadingShown()) moving = true;
 
     // Tabs
     if (g_tabOp) {
@@ -411,6 +447,7 @@ Hit HitTest(int px, int py) {
         if (L.back.Contains(x, y))     return MakeHit(Hit::Back);
         if (L.fwd.Contains(x, y))      return MakeHit(Hit::Forward);
         if (L.more.Contains(x, y))     return MakeHit(Hit::More);
+        if (L.downloads.Width > 0 && L.downloads.Contains(x, y)) return MakeHit(Hit::Downloads);
         if (L.mode != kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
         if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
@@ -570,6 +607,41 @@ static void DrawChrome(Graphics& g, int w, int h) {
     toolButton(L.back, L"\uE76B", cur && cur->canBack, Hit::Back, g_fIcon.get());
     toolButton(L.fwd,  L"\uE76C", cur && cur->canFwd,  Hit::Forward, g_fIcon.get());
     toolButton(L.more, L"\uE712", true, Hit::More, g_fIcon.get());
+    if (L.downloads.Width > 0) {
+        // Downloads: the arrow, with a progress bar under it while something downloads; it
+        // lights up in the accent colour for a moment when a download finishes.
+        const RectF& r = L.downloads;
+        hoverFill(r, MakeHit(Hit::Downloads, -1), dwn(Hit::Downloads, -1) || DownloadsPopupVisible(), S(6));
+        const bool running = DownloadsRunning() > 0;
+        RectF glyph = r;
+        if (running) glyph.Y -= S(3);
+        const float at = DownloadAnimT();
+        if (at >= 0) {
+            // A ring spreading out from the button and the arrow dropping in with a small bounce.
+            const float ease = 1.f - (1.f - at) * (1.f - at);
+            const float rad = r.Width * (0.32f + 0.5f * ease);
+            Pen ring(Faded(T.accent, 0.85f * (1.f - at)), std::max(1.5f, S(2.f) * (1.f - at * 0.5f)));
+            g.DrawEllipse(&ring, r.X + r.Width / 2 - rad, r.Y + r.Height / 2 - rad, rad * 2, rad * 2);
+            float dy;
+            if (at < 0.55f) { const float k = 1.f - at / 0.55f; dy = -S(9) * k * k; }
+            else dy = -S(2.5f) * std::sin((at - 0.55f) / 0.45f * 3.14159f);
+            glyph.Y += dy;
+        }
+        DrawGlyph(g, L"\uE896", glyph, (running || DownloadsJustFinished() || at >= 0) ? T.accent : T.icon, g_fIcon.get());
+        if (running) {
+            const float bw = std::floor(r.Width * 0.5f), bh = std::max(2.f, std::floor(S(3)));
+            const RectF track(r.X + (r.Width - bw) / 2, r.Y + r.Height * 0.72f, bw, bh);
+            FillRound(g, Faded(T.icon, 0.25f), track, bh / 2);
+            const float p = DownloadsProgress();
+            if (p >= 0) {
+                if (p > 0) FillRound(g, T.accent, RectF(track.X, track.Y, std::max(bh, bw * p), bh), bh / 2);
+            } else {                                     // size unknown: a segment sliding along
+                const float t = (float)(GetTickCount() % 1200) / 1200.f;
+                const float sw = bw * 0.35f, sx = track.X + (bw - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
+                FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
+            }
+        }
+    }
     if (!L.reloadInPill)
         toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, g_fIcon.get());
 
@@ -642,14 +714,52 @@ static void DrawChrome(Graphics& g, int w, int h) {
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
-        // Safari-style loading fill
+        // Page loading: a glowing line along the bottom of the field with a light running along
+        // it (Settings > Appearance), or the field filling up like Safari.
         if (!editing && cur && cur->fade > 0.01f && cur->progress > 0.f) {
             GraphicsPath path;
             AddRound(path, pill, rad);
             g.SetClip(&path);
-            Color a((BYTE)(T.progressAlpha * cur->fade), T.accent.GetR(), T.accent.GetG(), T.accent.GetB());
-            SolidBrush b(a);
-            g.FillRectangle(&b, pill.X, pill.Y, pill.Width * std::min(1.f, cur->progress), pill.Height);
+            const float p = std::min(1.f, cur->progress), w = pill.Width * p;
+            if (g_prefs.loadIndicator == 1) {
+                Color a((BYTE)(T.progressAlpha * cur->fade), T.accent.GetR(), T.accent.GetG(), T.accent.GetB());
+                SolidBrush b(a);
+                g.FillRectangle(&b, pill.X, pill.Y, w, pill.Height);
+            } else if (w > 1.f) {
+                const float lineH = std::max(2.f, std::floor(S(2))), glowH = std::floor(S(9));
+                const float bottom = pill.GetBottom();
+                const Color& ac = T.accent;
+                // glow rising from the line
+                {
+                    const RectF gr(pill.X, bottom - glowH, w, glowH);
+                    LinearGradientBrush glow(PointF(0, gr.Y - 1), PointF(0, gr.GetBottom()),
+                                             Color(0, ac.GetR(), ac.GetG(), ac.GetB()),
+                                             Color((BYTE)(90 * cur->fade), ac.GetR(), ac.GetG(), ac.GetB()));
+                    g.FillRectangle(&glow, gr);
+                }
+                // the line, brighter towards its head
+                {
+                    const RectF lr(pill.X, bottom - lineH, w, lineH);
+                    LinearGradientBrush line(PointF(lr.X - 1, 0), PointF(lr.GetRight() + 1, 0),
+                                             Color((BYTE)(110 * cur->fade), ac.GetR(), ac.GetG(), ac.GetB()),
+                                             Color((BYTE)(255 * cur->fade), ac.GetR(), ac.GetG(), ac.GetB()));
+                    g.FillRectangle(&line, lr);
+                }
+                // a light running along the line
+                if (g_prefs.animations && w > S(40)) {
+                    const float period = 1300.f;
+                    const float t = (float)(GetTickCount() % (DWORD)period) / period;
+                    const float sw = std::min(w * 0.5f, S(90));
+                    const float cx = pill.X - sw + (w + sw) * t;
+                    const Color white((BYTE)(230 * cur->fade), 255, 255, 255), clear(0, 255, 255, 255);
+                    LinearGradientBrush run(PointF(cx - 1, 0), PointF(cx + sw + 1, 0), clear, clear);
+                    Color cols[3] = { clear, white, clear };
+                    REAL pos[3] = { 0.f, 0.5f, 1.f };
+                    run.SetInterpolationColors(cols, pos, 3);
+                    g.SetClip(RectF(pill.X, bottom - glowH, w, glowH), CombineModeIntersect);
+                    g.FillRectangle(&run, RectF(cx, bottom - lineH - S(1), sw, lineH + S(1)));
+                }
+            }
             g.ResetClip();
         }
 

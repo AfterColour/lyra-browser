@@ -29,13 +29,14 @@ struct Layout {
     bool  reloadInPill = true;       // false: reload is a toolbar button (separate layout)
     RectF back, fwd, more, pill, reload, newTab;
     RectF star;                      // bookmark star at the right end of the address field
+    RectF downloads;                 // downloads button left of "more" (empty while there are none)
     RectF capMin, capMax, capClose;
     std::vector<RectF> tabs;         // one per tab; in the compact layout the active one is the address field
 };
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }
@@ -58,6 +59,8 @@ bool ChromeAnimStep(float dt);
 // so the next tab's close button lands under the pointer. They widen again once the pointer
 // has left the tab strip (MainWindow.cpp, TIMER_TAB_UNFREEZE).
 void FreezeTabWidths();
+// A download has just started: the downloads button plays its "here it comes" animation.
+void ChromeDownloadStarted();
 void UnfreezeTabWidths();
 bool TabWidthsFrozen();
 float TabStripBottom();             // the tab strip spans y in [0, TabStripBottom())

@@ -16,6 +16,7 @@
 // ============================================================================
 #include "common/Platform.h"
 #include "browser/Bookmarks.h"
+#include "browser/Downloads.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
@@ -54,6 +55,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LoadSettings();
     HistoryLoad();
     BookmarksLoad();
+    DownloadsLoad();
     EnableDarkMenus();
 
     ConfigureGStreamerEnvironment();
@@ -112,6 +114,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         if (!arg.empty()) startUrl = arg;
     }
     CreateTab(startUrl);
+    ScheduleSpareTab(3000);              // the next new tab, once the first page is up
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -128,8 +131,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_ctxs.clear();                      // only now can no WebKit callback refer to a TabCtx any more
     ReleaseResources();
     HistorySave();
+    DownloadsSave();
     FaviconsShutdown();
     GdiplusShutdown(gdipToken);
     OleUninitialize();
+    // Everything is saved. End here instead of running the C++ static destructors: WebKit's
+    // own threads can still be finishing, and a crash in the destructors at exit (one was seen
+    // in a dump) would only lose the user a "Lyra stopped working" box.
+    Log("exit");
+    TerminateProcess(GetCurrentProcess(), (UINT)msg.wParam);
     return (int)msg.wParam;
 }

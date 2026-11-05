@@ -8,6 +8,7 @@ extern std::wstring g_settingsDir, g_settingsFile;
 extern double g_zoom;
 extern std::wstring g_homePage;
 extern std::wstring g_searchEngine;
+extern std::wstring g_downloadDir;      // Settings > Downloads; empty = the Windows Downloads folder
 
 struct Prefs {
     int  language = 0;           // 0 as in Windows, 1 English, 2 Russian
@@ -29,6 +30,11 @@ struct Prefs {
     bool mica = true;            // Windows 11 Mica behind the tab strip and toolbar   // remember visited pages (Settings > Privacy)
     bool onboarded = false;      // the first-run welcome screen was completed
     int  newTabMode = 0;         // 0 start page, 1 blank page, 2 home page
+    bool askDownload = false;    // Save As dialog for every download (Settings > Downloads)
+    bool downloadsPopup = true;  // show the downloads list when a download starts
+    int  loadIndicator = 0;      // page loading in the address field: 0 glowing line, 1 fill (Safari)
+    int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
+    bool spareTab = true;        // a start page is prepared in the background for the next new tab
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;
     int  defaultFont = 16, minFont = 0;

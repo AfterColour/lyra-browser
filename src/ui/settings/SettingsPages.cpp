@@ -1,5 +1,6 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
+#include "browser/Downloads.h"
 #include "browser/History.h"
 #include "core/Url.h"
 #include "browser/StartPage.h"
@@ -28,6 +29,7 @@ static void ResetAllSettings() {
     g_prefs = Prefs();
     g_prefs.onboarded = onboarded;
     g_homePage = kStartAlias;
+    g_downloadDir.clear();
     g_searchEngine = L"https://duckduckgo.com/?q=";
     ApplyWebPrefs();
     SetZoom(1.0);                         // also saves
@@ -150,6 +152,11 @@ void BuildPages() {
                 &g_prefs.mica, theme));
         else
             p.rows.push_back(RInfo(Tr(L"Mica", L"Эффект Mica"), Tr(L"Needs Windows 11 22H2", L"Нужна Windows 11 22H2")));
+        p.rows.push_back(RSegmented(Tr(L"Page loading", L"Загрузка страницы"),
+            Tr(L"How the address field shows that a page is loading.", L"Как адресная строка показывает загрузку страницы."),
+            { Tr(L"Glowing line", L"Светящаяся линия"), Tr(L"Fill", L"Заливка") },
+            []() { return g_prefs.loadIndicator; },
+            [repaint](int i) { g_prefs.loadIndicator = i; repaint(); }));
         p.rows.push_back(RToggleGear(Tr(L"Animations", L"Анимации"),
             Tr(L"Tabs glide, highlights fade. The gear opens the details.",
                L"Вкладки плавно двигаются, подсветка плавно гаснет. Шестерёнка — подробные настройки."),
@@ -175,6 +182,17 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Close button on every tab", L"Кнопка закрытия на всех вкладках"),
             Tr(L"Otherwise it appears on the tab under the pointer.", L"Иначе она появляется на вкладке под курсором."),
             &g_prefs.closeAlways, repaint));
+        p.rows.push_back(RHeader(Tr(L"Speed", L"Скорость")));
+        p.rows.push_back(RSegmented(Tr(L"Ready tabs", L"Готовые вкладки"),
+            Tr(L"The tabs used last stay drawn, so switching back to them is instant. More uses more memory.",
+               L"Последние открытые вкладки остаются отрисованными — переключение на них мгновенное. Больше — больше памяти."),
+            { Tr(L"Off", L"Выкл."), L"1", L"2", L"4" },
+            []() { return g_prefs.warmTabs >= 4 ? 3 : g_prefs.warmTabs; },
+            [save](int i) { g_prefs.warmTabs = i == 3 ? 4 : i; RefreshLayout(); save(); }));
+        p.rows.push_back(RToggle(Tr(L"Prepare the new tab", L"Готовить новую вкладку заранее"),
+            Tr(L"A start page waits in the background, so a new tab appears at once.",
+               L"Стартовая страница ждёт в фоне, и новая вкладка появляется сразу."),
+            &g_prefs.spareTab, [save]() { if (g_prefs.spareTab) ScheduleSpareTab(300); else DiscardSpareTab(); save(); }));
         p.rows.push_back(RInfo(Tr(L"Most tabs at once", L"Наибольшее число вкладок"), std::to_wstring(metrics::kMaxTabs)));
         p.rows.push_back(RInfo(Tr(L"Closing the last tab", L"Закрытие последней вкладки"),
                                Tr(L"Closes the window", L"Закрывает окно")));
@@ -242,6 +260,30 @@ void BuildPages() {
                                Tr(L"pages loaded afterwards", L"страниц, открытых после них")));
         g_pages.push_back(std::move(p));
     }
+    {   // Downloads
+        SPage p; p.name = Tr(L"Downloads", L"Загрузки"); p.icon = L"\uE896"; p.tint = kTintBlue;
+        p.rows.push_back(RHeader(Tr(L"Save files to", L"Куда сохранять")));
+        static std::wstring folder;                      // the row label must outlive the page build
+        folder = DownloadsFolder();
+        p.rows.push_back(RButton(folder.c_str(),
+            g_downloadDir.empty() ? Tr(L"The Windows Downloads folder.", L"Папка «Загрузки» Windows.")
+                                  : Tr(L"Chosen in Lyra.", L"Выбрана в Lyra."),
+            Tr(L"Change\x2026", L"Изменить\x2026"),
+            []() { if (ChooseDownloadsFolder(g_setHwnd)) SettingsLanguageChanged(); }));
+        p.rows.push_back(RButton(Tr(L"Downloads folder", L"Папка загрузок"), L"", Tr(L"Open", L"Открыть"),
+            []() { OpenDownloadsFolder(); }));
+        p.rows.push_back(RToggle(Tr(L"Ask where to save each file", L"Спрашивать, куда сохранять"),
+            Tr(L"A Save As window opens before every download.", L"Перед каждой загрузкой открывается окно «Сохранить как»."),
+            &g_prefs.askDownload, save));
+        p.rows.push_back(RHeader(Tr(L"Downloads list", L"Список загрузок")));
+        p.rows.push_back(RToggle(Tr(L"Show the list when a download starts", L"Показывать список, когда начинается загрузка"),
+            Tr(L"Otherwise only the downloads button in the toolbar shows the progress.",
+               L"Иначе прогресс видно только на кнопке загрузок в панели."),
+            &g_prefs.downloadsPopup, save));
+        p.rows.push_back(RButton(Tr(L"All downloads", L"Все загрузки"), L"Ctrl+J", Tr(L"Open", L"Открыть"),
+            []() { OpenDownloads(); }));
+        g_pages.push_back(std::move(p));
+    }
     {   // Keyboard
         SPage p; p.name = Tr(L"Keyboard", L"Клавиатура"); p.icon = L"\uE765"; p.tint = kTintTeal;
         p.rows.push_back(RHeader(Tr(L"Tabs", L"Вкладки")));
@@ -253,6 +295,9 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Go to last tab", L"Последняя вкладка"), L"Ctrl+9", true));
         p.rows.push_back(RInfo(Tr(L"Reopen closed tab", L"Вернуть закрытую вкладку"), L"Ctrl+Shift+T", true));
         p.rows.push_back(RInfo(Tr(L"History", L"История"), L"Ctrl+H", true));
+        p.rows.push_back(RInfo(Tr(L"Bookmarks", L"Закладки"), L"Ctrl+Shift+O", true));
+        p.rows.push_back(RInfo(Tr(L"Bookmark this page", L"Добавить в закладки"), L"Ctrl+D", true));
+        p.rows.push_back(RInfo(Tr(L"Downloads", L"Загрузки"), L"Ctrl+J", true));
         p.rows.push_back(RHeader(Tr(L"Navigation", L"Навигация")));
         p.rows.push_back(RInfo(Tr(L"Address bar", L"Адресная строка"), L"Ctrl+L", true));
         p.rows.push_back(RInfo(Tr(L"Reload", L"Обновить"), L"Ctrl+R  /  F5", true));

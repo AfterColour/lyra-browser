@@ -17,9 +17,13 @@ constexpr const wchar_t* kHistoryAlias = L"lyra://history";
 std::wstring BookmarksPagePath();
 bool IsBookmarksPageUrl(const std::wstring& url);
 constexpr const wchar_t* kBookmarksAlias = L"lyra://bookmarks";
+// The downloads page, %LOCALAPPDATA%\Lyra\downloads.html.
+std::wstring DownloadsPagePath();
+bool IsDownloadsPageUrl(const std::wstring& url);
+constexpr const wchar_t* kDownloadsAlias = L"lyra://downloads";
 // Lyra's own pages: shown with an empty address field, never bookmarked or recorded.
 inline bool IsInternalPageUrl(const std::wstring& url) {
-    return IsStartPageUrl(url) || IsHistoryPageUrl(url) || IsBookmarksPageUrl(url);
+    return IsStartPageUrl(url) || IsHistoryPageUrl(url) || IsBookmarksPageUrl(url) || IsDownloadsPageUrl(url);
 }
 
 // Host / address shown to the user ("" for blank pages and the start page)

@@ -11,6 +11,7 @@ constexpr int kMaxTabs = 20;
 constexpr int   ID_URL_EDIT = 1001;
 constexpr UINT_PTR TIMER_UI = 1;
 constexpr UINT_PTR TIMER_TAB_UNFREEZE = 2;   // tabs may widen again after a close (see FreezeTabWidths)
+constexpr UINT_PTR TIMER_SPARE_TAB = 3;      // prepare the next new tab in the background (see PrepareSpareTab)
 
 // Display name used in the window title, dialogs and the About page.
 static const wchar_t kAppName[] = L"Lyra";
@@ -31,5 +32,5 @@ constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyr
 enum Cmd {
     CMD_NEWTAB = 301, CMD_CLOSETAB, CMD_COPYURL,
     CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMRESET, CMD_SETHOME, CMD_SETTINGS,
-    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE
+    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS
 };

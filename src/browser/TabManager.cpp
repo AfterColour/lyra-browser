@@ -40,6 +40,11 @@ bool g_tabOp = false;          // a create/close operation is in progress (re-en
 
 bool g_closeRequested = false; // WM_CLOSE already posted for "last tab closed"
 
+static std::vector<unsigned long long> s_mru;  // tab ids, most recently active first
+static std::unique_ptr<Tab> s_spare;           // see PrepareSpareTab
+static TabCtx* s_spareCtx = nullptr;
+static std::wstring s_spareUrl;
+
 Tab* ActiveTab() {
     return (g_active >= 0 && g_active < (int)g_tabs.size()) ? g_tabs[g_active].get() : nullptr;
 }
@@ -87,14 +92,59 @@ bool SyncTab(Tab& t) {
     return changed;
 }
 
+// ----------------------------------------------------------------------------
+//  Ready (parked) views and the spare new tab
+// ----------------------------------------------------------------------------
+static void ParkView(HWND h, int w, int hgt) {
+    if (!h) return;
+    // Left of the window's client area: clipped away completely, but still a visible window,
+    // so WebKit keeps the page rendered.
+    SetWindowPos(h, nullptr, -(w + 400), 0, std::max(1, w), std::max(1, hgt),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+}
+
+static bool IsReady(const Tab& t) {
+    int n = 0;
+    for (unsigned long long id : s_mru) {
+        if (n >= g_prefs.warmTabs) break;
+        const Tab* a = ActiveTab();
+        if (a && id == a->id) continue;
+        if (id == t.id) return true;
+        if (FindTab(id)) ++n;
+    }
+    return false;
+}
+
+void ParkBackgroundViews(int w, int h) {
+    const Tab* active = ActiveTab();
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (&t == active || !t.hwnd || t.state != TabState::Live) continue;
+        if (t.hwnd == g_fullScreenView) continue;
+        if (IsReady(t)) ParkView(t.hwnd, w, h);
+        else if (IsWindowVisible(t.hwnd)) ShowWindow(t.hwnd, SW_HIDE);
+    }
+    if (s_spare && s_spare->hwnd) ParkView(s_spare->hwnd, w, h);
+}
+
+static void TouchMru(unsigned long long id) {
+    s_mru.erase(std::remove(s_mru.begin(), s_mru.end(), id), s_mru.end());
+    s_mru.insert(s_mru.begin(), id);
+}
+
 void SelectTab(int i) {
     if (i < 0 || i >= (int)g_tabs.size()) return;
     if (g_fullScreenView && (!g_tabs[i]->hwnd || g_tabs[i]->hwnd != g_fullScreenView))
         ExitFullScreenForTabSwitch();
     g_active = i;
-    RefreshLayout(true);                 // the compact layout depends on the active tab; also sizes the new view before it shows
-    for (int k = 0; k < (int)g_tabs.size(); ++k)
-        if (g_tabs[k]->hwnd) ShowWindow(g_tabs[k]->hwnd, k == i ? SW_SHOW : SW_HIDE);
+    TouchMru(g_tabs[i]->id);
+    // The compact layout depends on the active tab; LayoutWebViews puts the new view in place
+    // (still parked views are already rendered) and parks or hides the others.
+    RefreshLayout(true);
+    if (HWND h = g_tabs[i]->hwnd) {
+        SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        ShowWindow(h, SW_SHOW);
+    }
     if (IsEditing()) ShowWindow(g_urlEdit, SW_HIDE);
     UpdateWindowTitle();
     InvalidateChrome();
@@ -204,7 +254,90 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage) 
     return raw;
 }
 
+static bool IsStartInput(const std::wstring& input) {
+    const std::wstring s = TrimWs(input);
+    return _wcsicmp(s.c_str(), kStartAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://start/") == 0;
+}
+
+void ScheduleSpareTab(UINT delayMs) {
+    if (g_hWnd && g_prefs.spareTab && !g_closing) SetTimer(g_hWnd, TIMER_SPARE_TAB, delayMs, nullptr);
+}
+
+void PrepareSpareTab() {
+    if (!g_prefs.spareTab || s_spare || g_closing || g_tabOp || !g_hWnd || !g_context) return;
+    TabOpGuard guard;
+    RECT cr;
+    GetClientRect(g_hWnd, &cr);
+    const int top = (int)g_L.chromeH, left = (int)g_L.sideW;
+    const int w = std::max<int>(1, cr.right - left), h = std::max<int>(1, cr.bottom - top);
+    RECT r = { -(w + 400), 0, -400, h };
+    WKPageConfigurationRef conf = CreatePageConfiguration();
+    WKViewRef view = WKViewCreate(r, conf, g_hWnd);
+    WKRelease(conf);
+    if (!view) return;
+    WKPageRef page = WKViewGetPage(view);
+    HWND viewWnd = WKViewGetWindow(view);
+    if (!page || !viewWnd) {
+        if (viewWnd && IsWindow(viewWnd)) DestroyWindow(viewWnd);
+        WKRelease(view);
+        return;
+    }
+    WKViewSetIsInWindow(view, true);
+    auto tab = std::make_unique<Tab>();
+    auto ctx = std::make_unique<TabCtx>();
+    ctx->id = g_nextTabId++;
+    ctx->tab = nullptr;                  // no callbacks reach Lyra until the tab is used
+    tab->id = ctx->id;
+    tab->ctx = ctx.get();
+    tab->view = view;
+    tab->page = page;
+    tab->hwnd = viewWnd;
+    SetPageClients(page, ctx.get());
+    WKStringRef appName = WKStringCreateWithUTF8CString(kUserAgentAppName);
+    WKPageSetApplicationNameForUserAgent(page, appName);
+    WKRelease(appName);
+    WKPageSetPageZoomFactor(page, g_zoom);
+    s_spareCtx = ctx.get();
+    g_ctxs.push_back(std::move(ctx));
+    s_spare = std::move(tab);
+    ParkView(viewWnd, w, h);
+    s_spareUrl = StartPageUrl();
+    Navigate(page, ToUtf8(s_spareUrl));
+    Log("spare tab#%llu prepared", s_spare->id);
+}
+
+void DiscardSpareTab() {
+    KillTimer(g_hWnd, TIMER_SPARE_TAB);
+    if (!s_spare) return;
+    std::unique_ptr<Tab> dead = std::move(s_spare);
+    s_spareCtx = nullptr;
+    DetachTab(*dead);
+    DestroyTab(*dead);
+}
+
+// Ctrl+T with the start page: the prepared one becomes the new tab.
+static bool AdoptSpareTab() {
+    if (!s_spare || g_closing || g_tabOp || (int)g_tabs.size() >= metrics::kMaxTabs) return false;
+    if (!s_spare->page || !s_spare->hwnd || !IsWindow(s_spare->hwnd)) { DiscardSpareTab(); return false; }
+    std::unique_ptr<Tab> tab = std::move(s_spare);
+    Tab* raw = tab.get();
+    if (s_spareCtx) s_spareCtx->tab = raw;
+    s_spareCtx = nullptr;
+    raw->state = TabState::Live;
+    g_tabs.push_back(std::move(tab));
+    Log("tab#%llu CREATED from the spare start page (tabs=%d)", raw->id, (int)g_tabs.size());
+    SyncTab(*raw);
+    RefreshLayout(true);
+    SelectTab((int)g_tabs.size() - 1);
+    // The start page changed meanwhile (favourites, theme...): load the current one.
+    const std::wstring fresh = StartPageUrl();
+    if (fresh != s_spareUrl) Navigate(raw->page, ToUtf8(fresh));
+    ScheduleSpareTab();
+    return true;
+}
+
 void CreateTab(const std::wstring& input) {
+    if (IsStartInput(input) && AdoptSpareTab()) return;
     WKPageConfigurationRef conf = CreatePageConfiguration();
     Tab* t = CreateTabWithConfiguration(conf, false);
     WKRelease(conf);
@@ -289,6 +422,7 @@ void CloseTab(int i) {
     //    runs while WebKit objects are being destroyed can reach it.
     std::unique_ptr<Tab> dead = std::move(g_tabs[i]);
     g_tabs.erase(g_tabs.begin() + i);
+    s_mru.erase(std::remove(s_mru.begin(), s_mru.end(), dead->id), s_mru.end());
     DetachTab(*dead);
     if (g_active > i) --g_active;
     else if (g_active == i) g_active = std::min(i, (int)g_tabs.size() - 1);
@@ -315,6 +449,8 @@ void CloseAllTabs() {
     // context is detached, so timers / paint / late callbacks never see these tabs.
     std::vector<std::unique_ptr<Tab>> dead;
     dead.swap(g_tabs);
+    if (s_spare) { dead.push_back(std::move(s_spare)); s_spareCtx = nullptr; }
+    s_mru.clear();
     g_active = -1;
     g_hover = Hit();
     g_down  = Hit();

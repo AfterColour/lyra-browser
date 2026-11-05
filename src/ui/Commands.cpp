@@ -77,6 +77,7 @@ void RunCommand(int cmd) {
     case CMD_DEVTOOLS:  ShowWebInspector(); break;
     case CMD_HISTORY:   OpenHistory(); break;
     case CMD_BOOKMARKS: OpenBookmarks(); break;
+    case CMD_DOWNLOADS: OpenDownloads(); break;
     case CMD_BOOKMARK_PAGE: BookmarkCurrentPage(); break;
     }
 }
@@ -89,6 +90,7 @@ void ShowMoreMenu() {
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
     AppendMenuW(m, MF_STRING, CMD_HISTORY,   Tr(L"History\tCtrl+H", L"История\tCtrl+H"));
     AppendMenuW(m, MF_STRING, CMD_BOOKMARKS, Tr(L"Bookmarks\tCtrl+Shift+O", L"Закладки\tCtrl+Shift+O"));
+    AppendMenuW(m, MF_STRING, CMD_DOWNLOADS, Tr(L"Downloads\tCtrl+J", L"Загрузки\tCtrl+J"));
     {
         const Tab* t = ActiveTab();
         AppendMenuW(m, MF_STRING | ((t && CanBookmark(t->url)) ? 0 : MF_GRAYED), CMD_BOOKMARK_PAGE,
@@ -138,6 +140,7 @@ bool HandleShortcut(const MSG& m) {
         case 'L': ShowUrlEdit(); return true;
         case 'H': RunCommand(CMD_HISTORY); return true;
         case 'D': RunCommand(CMD_BOOKMARK_PAGE); return true;
+        case 'J': RunCommand(CMD_DOWNLOADS); return true;
         case VK_OEM_COMMA: RunCommand(CMD_SETTINGS); return true;
         case 'R': ReloadActive(false); return true;
         case VK_OEM_PLUS: case VK_ADD:         RunCommand(CMD_ZOOMIN); return true;

@@ -7,6 +7,7 @@ std::wstring g_settingsDir, g_settingsFile;
 double       g_zoom = 1.0;
 
 std::wstring g_homePage = L"lyra://start";
+std::wstring g_downloadDir;
 
 std::wstring g_searchEngine = L"https://duckduckgo.com/?q=";
 
@@ -45,6 +46,8 @@ void LoadSettings() {
     if (g_homePage == L"https://example.com") g_homePage = L"lyra://start";   // the old placeholder default
     GetPrivateProfileStringW(L"Browser", L"SearchEngine", L"https://duckduckgo.com/?q=", buf, 512, g_settingsFile.c_str());
     g_searchEngine = buf;
+    GetPrivateProfileStringW(L"Browser", L"DownloadFolder", L"", buf, 512, g_settingsFile.c_str());
+    g_downloadDir = buf;
 
     auto geti = [&](const wchar_t* k, int d) {
         return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
@@ -69,6 +72,11 @@ void LoadSettings() {
     g_prefs.recordHistory  = geti(L"RecordHistory", 1) != 0;
     g_prefs.mica           = geti(L"Mica", 1) != 0;
     g_prefs.onboarded   = geti(L"Onboarded", 0) != 0;
+    g_prefs.askDownload = geti(L"AskDownloadFolder", 0) != 0;
+    g_prefs.downloadsPopup = geti(L"ShowDownloads", 1) != 0;
+    g_prefs.loadIndicator = std::max(0, std::min(1, geti(L"LoadIndicator", 0)));
+    g_prefs.warmTabs = std::max(0, std::min(4, geti(L"ReadyTabs", 2)));
+    g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
     g_prefs.localStorage= geti(L"LocalStorage", 1) != 0;
@@ -86,6 +94,7 @@ void SaveSettings() {
     WritePrivateProfileStringW(L"Browser", L"Scale", buf, g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"HomePage", g_homePage.c_str(), g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"SearchEngine", g_searchEngine.c_str(), g_settingsFile.c_str());
+    WritePrivateProfileStringW(L"Browser", L"DownloadFolder", g_downloadDir.c_str(), g_settingsFile.c_str());
 
     auto puti = [&](const wchar_t* k, int v) {
         WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
@@ -104,5 +113,8 @@ void SaveSettings() {
     puti(L"LocalStorage", g_prefs.localStorage); puti(L"Databases", g_prefs.databases);
     puti(L"DevTools", g_prefs.devExtras); puti(L"Fullscreen", g_prefs.fullscreen);
     puti(L"WebAudio", g_prefs.webAudio);
+    puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
+    puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
+    puti(L"PrepareNewTab", g_prefs.spareTab);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
 }
