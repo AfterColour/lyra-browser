@@ -3,6 +3,7 @@
 /build-gst/
 /run/
 /run-gst/
+/run-old/
 # Old copies of files made before edits
 *.before-fixes
 *.backup

@@ -5,3 +5,5 @@
 
 void ForwardLyraEnvironment();
 void ConfigureGStreamerEnvironment();
+// More parallel connections for the curl network backend (see Environment.cpp).
+void ConfigureNetworkEnvironment();

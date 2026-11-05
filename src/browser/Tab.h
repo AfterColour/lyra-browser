@@ -16,6 +16,7 @@ struct Tab {
     std::wstring title = L"New Tab";
     std::wstring url;
     bool  loading = false;
+    DWORD navStart = 0;            // GetTickCount at didStart (timings in tabs.log)
     bool  canBack = false;
     bool  canFwd  = false;
     float progress = 0.f;   // animated 0..1

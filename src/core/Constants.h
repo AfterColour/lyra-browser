@@ -12,6 +12,7 @@ constexpr int   ID_URL_EDIT = 1001;
 constexpr UINT_PTR TIMER_UI = 1;
 constexpr UINT_PTR TIMER_TAB_UNFREEZE = 2;   // tabs may widen again after a close (see FreezeTabWidths)
 constexpr UINT_PTR TIMER_SPARE_TAB = 3;      // prepare the next new tab in the background (see PrepareSpareTab)
+constexpr UINT_PTR TIMER_TRANSITION = 4;     // the tab switch cover fades (see TabTransition)
 
 // Display name used in the window title, dialogs and the About page.
 static const wchar_t kAppName[] = L"Lyra";
@@ -27,6 +28,7 @@ constexpr UINT WM_APP_CLOSE_TAB    = WM_APP + 1;   // window.close() from a page
 constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminationReason
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
+constexpr UINT WM_APP_TAB_PAINTED  = WM_APP + 6;   // a switched-to tab has drawn; wParam tab id (TabTransition)
 constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyra://...; wParam tab id, lParam new std::wstring*
 
 enum Cmd {

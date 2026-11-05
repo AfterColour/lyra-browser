@@ -1,6 +1,6 @@
 @echo off
 rem ==========================================================================
-rem  Runs run-gst\Lyra.exe with GStreamer logging enabled.
+rem  Runs run\Lyra.exe with GStreamer logging enabled.
 rem  One log per process: C:\WebKit\gstlogs\gst-<pid>.log
 rem  The folder is cleared on every start, so it only has the latest run.
 rem ==========================================================================
@@ -21,4 +21,4 @@ set "LYRA_STALL_DUMPS=C:\WebKit\crashdumps"
 if not exist "%LYRA_STALL_DUMPS%" mkdir "%LYRA_STALL_DUMPS%"
 
 echo [debug] Logs: %LOGDIR%
-start "" "%~dp0run-gst\Lyra.exe"
+start "" "%~dp0run\Lyra.exe"

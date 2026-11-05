@@ -10,6 +10,7 @@
 #include "core/Localization.h"
 #include "core/StringUtils.h"
 #include "core/Url.h"
+#include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
@@ -444,7 +445,7 @@ void DownloadsPopupShow() {
     const BOOL dark = g_dark;
     DwmSetWindowAttribute(s_popup, kDwmDarkMode, &dark, sizeof(dark));
     PlacePopup();
-    ShowWindow(s_popup, SW_SHOW);
+    PopupShow(s_popup, true);
     SetForegroundWindow(s_popup);
     SetFocus(s_popup);
     InvalidateChrome();
@@ -460,6 +461,7 @@ void DownloadsPopupClose() {
     if (!s_popup) return;
     HWND h = s_popup;
     s_popup = nullptr;
+    PopupRevealStop(h);
     DestroyWindow(h);
     s_closedAt = GetTickCount();
     InvalidateChrome();
@@ -495,6 +497,6 @@ void DownloadsPopupRefresh() {
     if (!s_popup) return;
     RECT wr;
     GetWindowRect(s_popup, &wr);
-    if (wr.bottom - wr.top != PopupH()) PlacePopup();
+    if (wr.bottom - wr.top != PopupH()) { PopupRevealStop(s_popup); PlacePopup(); }
     InvalidateRect(s_popup, nullptr, FALSE);
 }

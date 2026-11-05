@@ -9,6 +9,7 @@
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/StringUtils.h"
+#include "ui/TabTransition.h"
 #include "ui/Chrome.h"
 #include "ui/Dialogs.h"
 #include "ui/MainWindow.h"
@@ -66,6 +67,7 @@ void LoadInfoPage(Tab& t, const std::wstring& heading, const std::wstring& text,
 static void OnDidStart(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didStart");
     if (!t) return;
+    t->navStart = GetTickCount();
     Log("tab#%llu didStart", t->id);
     t->loading = true;
     t->progress = 0.08f;
@@ -77,21 +79,22 @@ static void OnDidStart(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
 static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didCommit");
     if (!t) return;
-    Log("tab#%llu didCommit", t->id);
     SyncTab(*t);
+    Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
     InvalidateChrome();
 }
 
 static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didFinish");
     if (!t) return;
-    Log("tab#%llu didFinish", t->id);
+    Log("tab#%llu didFinish +%lums", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL);
     t->loading = false;
     t->progress = std::max(t->progress, 0.9f);
     SyncTab(*t);
     // The finished page's title names its history entry (the title seen when the address
     // changed may still have been the previous page's).
     if (WKStringRef ts = WKPageCopyTitle(t->page)) { HistorySetTitle(t->url, WKStr(ts)); WKRelease(ts); }
+    TransitionLoaded(t->id);             // a new tab with a Lyra page: its cover can go
     InvalidateChrome();
 }
 
@@ -108,6 +111,7 @@ static void OnDidFail(WKPageRef, WKNavigationRef, WKErrorRef, WKTypeRef, const v
     Tab* t = ResolveTab(ci, "didFail");
     if (!t) return;
     Log("tab#%llu didFail", t->id);
+    TransitionLoaded(t->id);
     StopLoadingIndicator(*t);
 }
 

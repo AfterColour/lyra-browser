@@ -12,6 +12,7 @@
 #include "ui/AddressBar.h"
 #include "ui/BookmarkPopup.h"
 #include "ui/DownloadsPopup.h"
+#include "ui/TabTransition.h"
 #include "browser/Downloads.h"
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
@@ -169,12 +170,14 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         SuggestHide();
         BookmarkPopupClose();
         DownloadsPopupClose();
+        TransitionCancel();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         return 0;
     case WM_MOVE:
         SuggestHide();
         BookmarkPopupClose();
         DownloadsPopupClose();
+        TransitionCancel();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -365,6 +368,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
+        if (wParam == TIMER_TRANSITION) {
+            TransitionTick();
+            return 0;
+        }
         if (wParam == TIMER_SPARE_TAB) {
             KillTimer(hWnd, TIMER_SPARE_TAB);
             if (g_tabOp || g_modalDepth > 0) ScheduleSpareTab(1000);
@@ -413,6 +420,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             if (g_prefs.animations && (sliding || (g_prefs.loadIndicator == 0 && act && act->loading))) AnimRequest();
         }
+        if (g_tick % 32 == 0) ExpireReadyTabs();
         if (g_tick % 32 == 0) {
             for (auto& tp : g_tabs)
                 if (SyncTab(*tp)) dirty = true;
@@ -430,6 +438,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (FindTab((unsigned long long)wParam, &index)) CloseTab(index);
         return 0;
     }
+    case WM_APP_TAB_PAINTED:
+        TransitionPainted((unsigned long long)wParam);
+        return 0;
     case WM_APP_FAVICON:
         FaviconArrived(lParam);
         InvalidateChrome();

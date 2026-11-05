@@ -14,7 +14,7 @@ endif ()
 # ----------------------------------------------------------------------------
 #  WebKit (Windows port) build output
 # ----------------------------------------------------------------------------
-set(WEBKIT_BUILD_DIR "C:/WebKit/WebKit/WebKitBuild/Release" CACHE PATH
+set(WEBKIT_BUILD_DIR "C:/WebKit/WebKit/WebKitBuild/ReleaseGst" CACHE PATH
     "WebKit build directory (contains bin/, lib/ and WebKit/Headers)")
 set(WEBKIT_BIN_DIR "${WEBKIT_BUILD_DIR}/bin")
 set(WEBKIT_LIB_DIR "${WEBKIT_BUILD_DIR}/lib")

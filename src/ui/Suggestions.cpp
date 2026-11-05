@@ -12,6 +12,7 @@
 #include "core/StringUtils.h"
 #include "core/Url.h"
 #include "ui/AddressBar.h"
+#include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
@@ -263,13 +264,17 @@ void SuggestUpdate() {
     if (!s_popup) return;
     RECT r;
     Layout(&r);
+    const bool wasVisible = IsWindowVisible(s_popup) != FALSE;
+    if (wasVisible) PopupRevealStop(s_popup);            // the size changes with the rows
+    else PopupShowBegin(s_popup);                        // first appearance: painted before shown
     SetWindowPos(s_popup, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
     InvalidateRect(s_popup, nullptr, FALSE);
+    if (!wasVisible) PopupShowEnd(s_popup);              // ...and unfolds
 }
 
 void SuggestHide() {
-    if (s_popup && IsWindowVisible(s_popup)) ShowWindow(s_popup, SW_HIDE);
+    if (s_popup && IsWindowVisible(s_popup)) { PopupRevealStop(s_popup); ShowWindow(s_popup, SW_HIDE); }
     s_sel = s_hover = -1;
 }
 

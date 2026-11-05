@@ -15,6 +15,7 @@
 //  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
 #include "common/Platform.h"
+#include <tlhelp32.h>
 #include "browser/Bookmarks.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
@@ -37,6 +38,28 @@
 // ----------------------------------------------------------------------------
 //  Entry point
 // ----------------------------------------------------------------------------
+// Waits until the processes Lyra started have exited, `timeoutMs` at most.
+static void WaitForChildProcesses(DWORD timeoutMs) {
+    const DWORD self = GetCurrentProcessId();
+    std::vector<HANDLE> children;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe = { sizeof(pe) };
+        for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+            if (pe.th32ParentProcessID != self) continue;
+            if (HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pe.th32ProcessID)) children.push_back(h);
+        }
+        CloseHandle(snap);
+    }
+    const DWORD start = GetTickCount();
+    for (HANDLE h : children) {
+        const DWORD spent = GetTickCount() - start;
+        if (spent < timeoutMs) WaitForSingleObject(h, timeoutMs - spent);
+        CloseHandle(h);
+    }
+    Log("exit: %d helper process(es), waited %lu ms", (int)children.size(), GetTickCount() - start);
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
     // Must happen before any window is created.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -59,6 +82,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     EnableDarkMenus();
 
     ConfigureGStreamerEnvironment();
+    ConfigureNetworkEnvironment();
 
     const wchar_t CLASS_NAME[] = L"LyraWindowClass";
     WNDCLASSEXW wc = {};
@@ -89,6 +113,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     // WebKit
     WKContextConfigurationRef contextConf = WKContextConfigurationCreate();
+    // A page that moves to another site gets a new web process (process swap on cross-site
+    // navigation); starting one takes a while on Windows. Keep one started in advance.
+    WKContextConfigurationSetPrewarmsProcessesAutomatically(contextConf, true);
     g_context = WKContextCreateWithConfiguration(contextConf);
     WKRelease(contextConf);
     // Tuned for a browser with back/forward navigation (bigger page/memory caches)
@@ -138,6 +165,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Everything is saved. End here instead of running the C++ static destructors: WebKit's
     // own threads can still be finishing, and a crash in the destructors at exit (one was seen
     // in a dump) would only lose the user a "Lyra stopped working" box.
+    // WebKit's helper processes (network, web, GPU) shut down by themselves once the context is
+    // gone; the network process still writes cookies, site storage and the cache. Wait for them
+    // (a few seconds at most) so ending Lyra here never cuts that short.
+    WaitForChildProcesses(4000);
     Log("exit");
     TerminateProcess(GetCurrentProcess(), (UINT)msg.wParam);
     return (int)msg.wParam;

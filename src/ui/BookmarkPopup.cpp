@@ -8,6 +8,7 @@
 #include "browser/TabManager.h"
 #include "core/Localization.h"
 #include "core/Url.h"
+#include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
@@ -184,6 +185,7 @@ void BookmarkPopupClose() {
     HWND h = s_popup;
     s_popup = nullptr;
     s_edit = nullptr;
+    PopupRevealStop(h);
     DestroyWindow(h);
     s_id = 0;
     s_closing = false;
@@ -374,7 +376,7 @@ void BookmarkCurrentPage() {
         SetWindowTextW(s_edit, b ? b->title.c_str() : L"");
         s_oldEditProc = (WNDPROC)SetWindowLongPtrW(s_edit, GWLP_WNDPROC, (LONG_PTR)EditProc);
     }
-    ShowWindow(s_popup, SW_SHOW);
+    PopupShow(s_popup, true);
     SetForegroundWindow(s_popup);
     if (s_edit) {
         SetFocus(s_edit);

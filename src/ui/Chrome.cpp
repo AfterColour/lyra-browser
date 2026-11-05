@@ -726,7 +726,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 SolidBrush b(a);
                 g.FillRectangle(&b, pill.X, pill.Y, w, pill.Height);
             } else if (w > 1.f) {
-                const float lineH = std::max(2.f, std::floor(S(2))), glowH = std::floor(S(9));
+                const float lineH = std::max(1.f, std::round(S(1.5f))), glowH = std::floor(S(7));
                 const float bottom = pill.GetBottom();
                 const Color& ac = T.accent;
                 // glow rising from the line

@@ -4,8 +4,9 @@ rem  Lyra build script. Works from any console (cmd, PowerShell, Explorer).
 rem    build.bat          - configure (if needed) + build
 rem    build.bat fresh    - wipe the CMake cache and configure from scratch
 rem    build.bat run      - build and start run\Lyra.exe
-rem    build.bat gst      - build against WebKit with GStreamer (YouTube/MSE) into run-gst\
-rem                         (arguments combine: build.bat gst fresh run)
+rem                         (arguments combine: build.bat fresh run)
+rem  Lyra is built against WebKit with the GStreamer media backend (YouTube, MSE):
+rem  WebKitBuild\ReleaseGst, made by C:\WebKit\build-webkit-gst.bat.
 rem ==========================================================================
 setlocal
 
@@ -37,23 +38,19 @@ set "CLANGCL=%CLANGCL:\=/%"
 
 cd /d "%~dp0"
 
-rem --- 3. Arguments (any order): fresh, run, gst ------------------------------------
-rem   gst = build against WebKit with the GStreamer backend (WebKitBuild\ReleaseGst,
-rem         made by C:\WebKit\build-webkit-gst.bat) into build-gst\ and run-gst\.
+rem --- 3. Arguments (any order): fresh, run --------------------------------------------
+rem   ("gst" is still accepted and changes nothing: every build is the GStreamer one now.)
 set "FRESH="
 set "RUN="
 set "BUILDDIR=build"
 set "RUNDIR=run"
-set "WEBKITDIR=C:/WebKit/WebKit/WebKitBuild/Release"
+set "WEBKITDIR=C:/WebKit/WebKit/WebKitBuild/ReleaseGst"
 for %%a in (%*) do (
     if /i "%%a"=="fresh" set "FRESH=--fresh"
     if /i "%%a"=="run" set "RUN=1"
-    if /i "%%a"=="gst" (
-        set "BUILDDIR=build-gst"
-        set "RUNDIR=run-gst"
-        set "WEBKITDIR=C:/WebKit/WebKit/WebKitBuild/ReleaseGst"
-    )
 )
+set "WEBKITDIR_WIN=%WEBKITDIR:/=\%"
+if not exist "%WEBKITDIR_WIN%\bin\WebKit2.dll" goto :no_webkit
 
 rem --- 4. Leftover browser processes keep the WebKit DLLs locked: stop them --------
 for %%p in (Lyra.exe MyBrowser.exe WebKitGPUProcess.exe WebKitWebProcess.exe WebKitNetworkProcess.exe) do (
@@ -74,7 +71,24 @@ for %%d in (run run-gst) do if exist "%~dp0%%d" (
     )
 )
 
-rem --- 4. Configure + build ----------------------------------------------------
+rem --- 5. Configure + build ----------------------------------------------------
+rem run\ used to hold the WebKit build without GStreamer: keep that one aside as run-old\
+rem (nothing is deleted) so no DLL of the old build is left among the new ones.
+if exist "%~dp0run\Lyra.exe" if not exist "%~dp0run\gstreamer-1.0" (
+    if exist "%~dp0run-old" (
+        echo [build] run\ is from the old build and run-old\ already exists: move one of them away first.
+        goto :fail
+    )
+    echo [build] run\ is from the build without GStreamer: keeping it as run-old\
+    move "%~dp0run" "%~dp0run-old" >nul || goto :fail
+)
+rem build\ configured against the other WebKit build: configure it fresh.
+if exist "%BUILDDIR%\CMakeCache.txt" findstr /i /c:"WEBKIT_BUILD_DIR:PATH=%WEBKITDIR%" "%BUILDDIR%\CMakeCache.txt" >nul || (
+    if exist "%BUILDDIR%\CMakeCache.txt" (
+        echo [build] %BUILDDIR% was set up for another WebKit build: configuring it fresh
+        set "FRESH=--fresh"
+    )
+)
 rem A build folder configured when the project lived in C:\WebKit\MyBrowser cannot be
 rem reused from C:\WebKit\Lyra: configure it from scratch.
 if exist "%BUILDDIR%\CMakeCache.txt" findstr /i /c:"WebKit/MyBrowser" "%BUILDDIR%\CMakeCache.txt" >nul && (
@@ -93,6 +107,10 @@ echo [build] OK: %~dp0%RUNDIR%\Lyra.exe
 if defined RUN start "" "%~dp0%RUNDIR%\Lyra.exe"
 exit /b 0
 
+:no_webkit
+echo [build] WebKit with GStreamer not found: %WEBKITDIR%
+echo [build] Build it first with C:\WebKit\build-webkit-gst.bat
+goto :fail
 :no_vs
 echo [build] Visual Studio C++ build tools not found. Install "Desktop development with C++".
 goto :fail

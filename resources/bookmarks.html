@@ -9,6 +9,16 @@
 <html>
 <head>
 <meta charset="utf-8">
+<script>
+// Theme before the first paint (no white flash before the page's script runs).
+(function () {
+  var q = new URLSearchParams(location.search), t = +(q.get("themeMode") || 0);
+  var d = t === 2 || (t === 0 && q.get("sysdark") === "1");
+  document.documentElement.dataset.theme = d ? "dark" : "light";
+  document.documentElement.style.colorScheme = d ? "dark" : "light";
+  document.documentElement.style.background = d ? "#18191C" : "#FAFBFC";
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bookmarks</title>
 <style>

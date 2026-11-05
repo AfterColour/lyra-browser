@@ -50,3 +50,16 @@ void ConfigureGStreamerEnvironment() {
     SetEnvironmentVariableW(L"GST_REGISTRY_1_0", registry.c_str());
     Log("GStreamer plugins: %ls", plugins.c_str());
 }
+
+// WebKit's curl network backend allows only 17 connections in total (6 per site) by default:
+// a heavy page with images, scripts and video from a dozen hosts waits in line for them.
+// Other browsers allow far more in total. The network process reads these at start-up; a
+// value set by the user before starting Lyra wins.
+void ConfigureNetworkEnvironment() {
+    auto setDefault = [](const wchar_t* name, const wchar_t* value) {
+        if (!GetEnvironmentVariableW(name, nullptr, 0)) SetEnvironmentVariableW(name, value);
+    };
+    setDefault(L"WEBKIT_CURL_MAX_TOTAL_CONNECTIONS", L"256");
+    setDefault(L"WEBKIT_CURL_MAX_HOST_CONNECTIONS", L"6");
+    setDefault(L"WEBKIT_CURL_MAXCONNECTS", L"128");      // idle connections kept for reuse
+}

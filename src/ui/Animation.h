@@ -16,3 +16,16 @@ bool AnimHoverEnabled();
 // Exponential approach: the fraction of the remaining distance covered in `dt` seconds for an
 // animation whose time constant is `tauMs` at 100 % speed (about 3 tau to settle).
 float AnimFactor(float dt, float tauMs);
+
+// A popup that has just been shown unfolds downwards from its top edge (bookmark bubble,
+// downloads list, address suggestions). Call right after ShowWindow; the window must already
+// have its final position and size. Nothing happens with animations off.
+void PopupReveal(HWND popup);
+void PopupRevealStop(HWND popup);   // before the popup is resized, hidden or destroyed
+// Shows a popup that is already in place without a flash of an unpainted (white) window: it is
+// painted while DWM keeps it hidden, then appears (and unfolds, see PopupReveal).
+void PopupShow(HWND popup, bool activate);
+// The same for a popup that SetWindowPos(SWP_SHOWWINDOW) is about to show: call Begin before
+// and End after it.
+void PopupShowBegin(HWND popup);
+void PopupShowEnd(HWND popup);

@@ -36,6 +36,8 @@ void HandleTabCrashed(unsigned long long id, int reason);
 // outside the window (WebKit still sees them as visible), the rest are hidden.
 // LayoutWebViews calls this after placing the active view; w x h is the page area.
 void ParkBackgroundViews(int w, int h);
+// A parked tab is kept ready for 20 s, then hidden like the rest (main timer, once a second).
+void ExpireReadyTabs();
 
 // A start page loaded in the background for the next new tab (Settings > Tabs), so Ctrl+T
 // shows it at once. PrepareSpareTab() is run by TIMER_SPARE_TAB; DiscardSpareTab() drops it.
