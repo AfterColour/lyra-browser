@@ -1,5 +1,6 @@
 // Lyra — поле ввода адреса.
 #include "ui/AddressBar.h"
+#include "ui/Suggestions.h"
 #include "core/Url.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -34,7 +35,7 @@ void PositionEdit() {
 void ShowUrlEdit() {
     if (!g_urlEdit) return;
     Tab* t = ActiveTab();
-    std::wstring text = (t && t->url != L"about:blank" && !IsStartPageUrl(t->url)) ? t->url : L"";
+    std::wstring text = (t && t->url != L"about:blank" && !IsInternalPageUrl(t->url)) ? t->url : L"";
     SetWindowTextW(g_urlEdit, text.c_str());
     PositionEdit();
     ShowWindow(g_urlEdit, SW_SHOW);
@@ -50,13 +51,16 @@ LRESULT CALLBACK UrlEditProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
     case WM_KEYDOWN:
         if (w == VK_RETURN) {
+            if (SuggestAccept()) return 0;           // a suggestion was selected with the arrows
             wchar_t buf[2048] = {};
             GetWindowTextW(h, buf, ARRAYSIZE(buf));
             NavigateActive(buf);
             FocusWebView();
             return 0;
         }
-        if (w == VK_ESCAPE) { FocusWebView(); return 0; }
+        if (w == VK_ESCAPE) { if (!SuggestCancel()) FocusWebView(); return 0; }
+        if (w == VK_DOWN && SuggestMove(1)) return 0;
+        if (w == VK_UP && SuggestMove(-1)) return 0;
         if (w == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             SendMessageW(h, EM_SETSEL, 0, -1);
             return 0;

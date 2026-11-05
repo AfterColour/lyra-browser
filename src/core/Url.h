@@ -9,6 +9,12 @@ std::wstring StartPagePath();
 std::wstring StartPageFileUrl();                    // file:///.../start.html, without parameters
 bool IsStartPageUrl(const std::wstring& url);       // any address of the start page (with parameters)
 constexpr const wchar_t* kStartAlias = L"lyra://start";
+// The history page is generated into %LOCALAPPDATA%\Lyra\history.html ("lyra://history").
+std::wstring HistoryPagePath();
+bool IsHistoryPageUrl(const std::wstring& url);
+constexpr const wchar_t* kHistoryAlias = L"lyra://history";
+// Start page or history page: shown with an empty address field.
+inline bool IsInternalPageUrl(const std::wstring& url) { return IsStartPageUrl(url) || IsHistoryPageUrl(url); }
 
 // Host / address shown to the user ("" for blank pages and the start page)
 std::wstring HostOf(const std::wstring& url);

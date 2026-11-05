@@ -11,8 +11,13 @@ std::wstring StartPageUrl(bool welcome = false);
 // "lyra://start" is the start page, everything else goes through ResolveInput.
 std::string ResolveNavigation(const std::wstring& input);
 
-// The look or language changed: reload the open start pages so they follow.
+// The look or language changed: reload the open start (and history) pages so they follow.
 void RefreshStartPages();
+
+// The history page: written to %LOCALAPPDATA%\Lyra\history.html from resources\history.html
+// with the current visits, and its address returned. Ctrl+H / menu: OpenHistory().
+std::wstring HistoryPageUrl();
+void OpenHistory();
 
 // A start page asked for "lyra://setup?..." or "lyra://settings" (see resources/start.html).
 // Called on the main window's message loop, never inside a WebKit callback.

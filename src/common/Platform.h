@@ -17,6 +17,7 @@
 #include <shlobj.h>    // SHGetKnownFolderPath (Downloads folder)
 #include <shlwapi.h>   // UrlCreateFromPathW
 #include <dwmapi.h>
+#include <uxtheme.h>   // SetWindowTheme
 #include <algorithm>
 #include <map>
 #include <cctype>
@@ -51,6 +52,7 @@ using std::max;
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")

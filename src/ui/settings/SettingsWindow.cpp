@@ -825,6 +825,9 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
                                     0, 0, 10, 10, hWnd, (HMENU)(INT_PTR)SET_ID_EDIT, hi, nullptr);
         g_oldSEditProc = (WNDPROC)SetWindowLongPtrW(g_setSearch, GWLP_WNDPROC, (LONG_PTR)SEditProc);
         SetWindowLongPtrW(g_setEdit, GWLP_WNDPROC, (LONG_PTR)SEditProc);
+        // No visual style: a themed (dark mode) edit paints its own grey background.
+        SetWindowTheme(g_setSearch, L"", L"");
+        SetWindowTheme(g_setEdit, L"", L"");
         SRebuildFonts();
         BuildPages();
         SettingsThemeChanged();
@@ -953,7 +956,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         const SPal P = Pal();
         SetTextColor(hdc, ToColorRef(P.text));
         SetBkColor(hdc, ToColorRef(P.field));
-        return (LRESULT)g_fieldBrush;
+        // The stock DC brush with the exact field colour: the edit's background then matches the
+        // field drawn around it in every theme.
+        SetDCBrushColor(hdc, ToColorRef(P.field));
+        return (LRESULT)GetStockObject(DC_BRUSH);
     }
     case WM_COMMAND: {
         HWND from = (HWND)lParam;

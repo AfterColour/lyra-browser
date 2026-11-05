@@ -65,6 +65,8 @@ void LoadSettings() {
     // "NewTabPage" replaced "NewTabMode" (0 home page, 1 blank) when the start page arrived.
     g_prefs.newTabMode  = std::max(0, std::min(2, geti(L"NewTabPage", 0)));
     g_prefs.startFavorites = geti(L"StartFavorites", 1) != 0;
+    g_prefs.startFrequent  = geti(L"StartFrequent", 0) != 0;
+    g_prefs.recordHistory  = geti(L"RecordHistory", 1) != 0;
     g_prefs.onboarded   = geti(L"Onboarded", 0) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
@@ -95,7 +97,8 @@ void SaveSettings() {
     puti(L"TabResizeDelay", g_prefs.tabResizeDelay);
     puti(L"FullUrl", g_prefs.showFullUrl);
     puti(L"CloseAlways", g_prefs.closeAlways); puti(L"NewTabPage", g_prefs.newTabMode);
-    puti(L"StartFavorites", g_prefs.startFavorites); puti(L"Onboarded", g_prefs.onboarded);
+    puti(L"StartFavorites", g_prefs.startFavorites); puti(L"StartFrequent", g_prefs.startFrequent);
+    puti(L"RecordHistory", g_prefs.recordHistory); puti(L"Onboarded", g_prefs.onboarded);
     puti(L"JavaScript", g_prefs.js);     puti(L"Images", g_prefs.images);
     puti(L"LocalStorage", g_prefs.localStorage); puti(L"Databases", g_prefs.databases);
     puti(L"DevTools", g_prefs.devExtras); puti(L"Fullscreen", g_prefs.fullscreen);

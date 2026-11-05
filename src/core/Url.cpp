@@ -29,24 +29,39 @@ static std::wstring LowerCopy(std::wstring s) {
     return s;
 }
 
+// WebKit may spell a file URL slightly differently (case, file:/// vs file://): compare the part
+// after the scheme, ignoring case and the parameters.
+static std::wstring FileUrlTail(std::wstring u) {
+    size_t q = u.find_first_of(L"?#");
+    if (q != std::wstring::npos) u.resize(q);
+    size_t p = 5;
+    while (p < u.size() && u[p] == L'/') ++p;
+    return LowerCopy(u.substr(std::min(p, u.size())));
+}
+
+static std::wstring FileUrlOf(const std::wstring& path) {
+    wchar_t url[2084] = {};
+    DWORD len = ARRAYSIZE(url);
+    return SUCCEEDED(UrlCreateFromPathW(path.c_str(), url, &len, 0)) ? std::wstring(url) : std::wstring();
+}
+
 bool IsStartPageUrl(const std::wstring& url) {
     if (url.compare(0, 5, L"file:") != 0) return false;
-    // WebKit may spell the file URL slightly differently (case, file:/// vs file://): compare the
-    // part after the scheme, ignoring case and the parameters.
-    auto tail = [](std::wstring u) {
-        size_t q = u.find_first_of(L"?#");
-        if (q != std::wstring::npos) u.resize(q);
-        size_t p = 5;
-        while (p < u.size() && u[p] == L'/') ++p;
-        return LowerCopy(u.substr(p));
-    };
-    static const std::wstring mine = tail(StartPageFileUrl());
-    return !mine.empty() && tail(url) == mine;
+    static const std::wstring mine = FileUrlTail(StartPageFileUrl());
+    return !mine.empty() && FileUrlTail(url) == mine;
+}
+
+std::wstring HistoryPagePath() { return g_settingsDir + L"\\history.html"; }
+
+bool IsHistoryPageUrl(const std::wstring& url) {
+    if (url.compare(0, 5, L"file:") != 0) return false;
+    const std::wstring mine = FileUrlTail(FileUrlOf(HistoryPagePath()));
+    return !mine.empty() && FileUrlTail(url) == mine;
 }
 
 // "https://www.example.com/a?b" -> "example.com"
 std::wstring HostOf(const std::wstring& url) {
-    if (url.empty() || url == L"about:blank" || IsStartPageUrl(url)) return std::wstring();
+    if (url.empty() || url == L"about:blank" || IsInternalPageUrl(url)) return std::wstring();
     size_t p = url.find(L"://");
     if (p == std::wstring::npos) return url;
     std::wstring scheme = url.substr(0, p);
@@ -62,7 +77,7 @@ std::wstring HostOf(const std::wstring& url) {
 
 // "https://example.com/path" -> "example.com/path"
 std::wstring DisplayUrl(const std::wstring& url) {
-    if (url.empty() || url == L"about:blank" || IsStartPageUrl(url)) return std::wstring();
+    if (url.empty() || url == L"about:blank" || IsInternalPageUrl(url)) return std::wstring();
     std::wstring s = url;
     if (s.compare(0, 8, L"https://") == 0) s = s.substr(8);
     else if (s.compare(0, 7, L"http://") == 0) s = s.substr(7);

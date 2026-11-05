@@ -13,11 +13,11 @@
 <style>
   :root {
     --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
-    --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06);
+    --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06); --thumb: #EEF0F4;
   }
   :root[data-theme="dark"] {
     --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
-    --hover: rgba(255,255,255,.06); --field: #2E3036; --shadow: none;
+    --hover: rgba(255,255,255,.06); --field: #2E3036; --shadow: 0 0 0 transparent; --thumb: #2D3036;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -48,6 +48,19 @@
             border: 0; background: var(--card); box-shadow: 0 0 0 1px var(--border); color: var(--text2);
             font-size: 12px; line-height: 20px; padding: 0; cursor: pointer; opacity: 0; transition: opacity .12s; }
   .tile:hover .remove, .remove:focus-visible { opacity: 1; }
+  .freq { margin-top: 40px; }
+  .fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  .fcard { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--card);
+           box-shadow: 0 0 0 1px var(--border), var(--shadow); text-decoration: none; color: var(--text); outline: none;
+           transition: transform .12s ease; }
+  .fcard:hover { transform: translateY(-2px); }
+  .fcard:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .thumb { height: 96px; background: var(--thumb); display: flex; align-items: center; justify-content: center;
+           border-bottom: 1px solid var(--border); }
+  .thumb .badge { width: 36px; height: 36px; border-radius: 9px; font-size: 17px; }
+  .fmeta { padding: 9px 12px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .ftitle { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fhost { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .add .icon { background: transparent; box-shadow: 0 0 0 1px var(--border) inset; color: var(--text2); font-size: 26px; font-weight: 300; }
   .corner { position: fixed; right: 20px; bottom: 16px; height: 30px; border: 0; border-radius: 7px;
             background: var(--card); box-shadow: 0 0 0 1px var(--border); padding: 0 12px; font-size: 12px;
@@ -92,6 +105,10 @@
     <h2 id="favTitle"></h2>
     <div class="grid" id="grid"></div>
   </section>
+  <section id="freqSection" class="freq hidden">
+    <h2 id="freqTitle"></h2>
+    <div class="fgrid" id="fgrid"></div>
+  </section>
 </main>
 <button class="corner hidden" id="customize">
   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 4h7M12 4h2M2 12h2M7 12h7"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>
@@ -119,6 +136,7 @@
     <div class="group"><h4 id="wDensity"></h4><div class="seg" data-key="density"></div></div>
     <div class="group"><h4 id="wStart"></h4>
       <label class="check"><input type="checkbox" id="wFav"><span id="wFavText"></span></label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="wFreq"><span id="wFreqText"></span></label>
     </div>
   </div>
   <div class="foot"><button class="btn primary" id="wDone"></button></div>
@@ -133,6 +151,7 @@ const state = {
   layout: +(q.get("layout") || 0),
   density: +(q.get("density") || 0),
   fav: q.get("fav") !== "0",
+  freq: q.get("freq") === "1",
 };
 const systemRu = q.get("sysru") === "1";
 const systemDark = q.get("sysdark") === "1";
@@ -141,7 +160,7 @@ if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.sty
 
 const T = {
   en: {
-    newTab: "New Tab", favorites: "Favorites", add: "Add", customize: "Customize start page",
+    newTab: "New Tab", favorites: "Favorites", frequent: "Frequently Visited", wFreq: "Show frequently visited sites", add: "Add", customize: "Customize start page",
     addTitle: "Add to Favorites", name: "Name", address: "Address", cancel: "Cancel", remove: "Remove",
     wTitle: "Welcome to Lyra", wText: "Set up the basics. Everything can be changed later in Settings.",
     wLang: "Language", wTheme: "Theme", wLayout: "Tabs", wDensity: "Toolbar size", wStart: "Start page",
@@ -150,7 +169,7 @@ const T = {
     layout: ["Compact", "Separate tab bar", "Vertical"], density: ["Compact", "Normal", "Large"],
   },
   ru: {
-    newTab: "Новая вкладка", favorites: "Избранное", add: "Добавить", customize: "Настроить стартовую страницу",
+    newTab: "Новая вкладка", favorites: "Избранное", frequent: "Часто посещаемые", wFreq: "Показывать часто посещаемые", add: "Добавить", customize: "Настроить стартовую страницу",
     addTitle: "Добавить в избранное", name: "Название", address: "Адрес", cancel: "Отмена", remove: "Убрать",
     wTitle: "Добро пожаловать в Lyra", wText: "Настройте основное — всё это можно поменять позже в настройках.",
     wLang: "Язык", wTheme: "Тема", wLayout: "Вкладки", wDensity: "Размер панелей", wStart: "Стартовая страница",
@@ -229,6 +248,31 @@ function renderFavorites() {
   grid.appendChild(add);
 }
 
+// ---- frequently visited (from Lyra's history, passed as ?top=[{u,t}]) ------------------
+function renderFrequent() {
+  let top = [];
+  try { top = JSON.parse(q.get("top") || "[]"); } catch (e) {}
+  const favHosts = new Set(state.fav ? loadFavorites().map((f) => hostOf(f.url)) : []);
+  top = top.filter((e) => e && e.u && !favHosts.has(hostOf(e.u))).slice(0, 8);
+  const section = $("freqSection");
+  section.classList.toggle("hidden", !state.freq || !top.length);
+  section.classList.toggle("freq", state.fav);
+  const grid = $("fgrid");
+  grid.textContent = "";
+  for (const e of top) {
+    const a = document.createElement("a");
+    a.className = "fcard"; a.href = e.u; a.title = e.u;
+    const b = badgeFor({ title: hostOf(e.u), url: e.u });
+    a.innerHTML = '<span class="thumb"><span class="badge"></span></span>' +
+                  '<span class="fmeta"><span class="ftitle"></span><span class="fhost"></span></span>';
+    a.querySelector(".badge").textContent = b.letter;
+    a.querySelector(".badge").style.background = b.color;
+    a.querySelector(".ftitle").textContent = e.t || hostOf(e.u);
+    a.querySelector(".fhost").textContent = hostOf(e.u);
+    grid.appendChild(a);
+  }
+}
+
 function openAdd() {
   $("addName").value = ""; $("addUrl").value = "";
   $("addScrim").classList.remove("hidden");
@@ -254,12 +298,14 @@ $("customize").addEventListener("click", () => { location.href = "lyra://setting
 // ---- welcome -------------------------------------------------------------------
 function setupUrl(extra) {
   return "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
-         "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + (extra || "");
+         "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) + (extra || "");
 }
 function renderWelcome() {
   const s = t();
-  for (const id of ["wTitle", "wText", "wLang", "wTheme", "wLayout", "wDensity", "wStart", "wFavText", "wDone"])
-    $(id).textContent = s[id === "wFavText" ? "wFav" : id];
+  for (const id of ["wTitle", "wText", "wLang", "wTheme", "wLayout", "wDensity", "wStart", "wDone"])
+    $(id).textContent = s[id];
+  $("wFavText").textContent = s.wFav;
+  $("wFreqText").textContent = s.wFreq;
   document.querySelectorAll(".seg").forEach((seg) => {
     const key = seg.dataset.key;
     seg.textContent = "";
@@ -276,7 +322,9 @@ function renderWelcome() {
     });
   });
   $("wFav").checked = state.fav;
+  $("wFreq").checked = state.freq;
 }
+$("wFreq").addEventListener("change", () => { state.freq = $("wFreq").checked; location.href = setupUrl("&live=1"); });
 $("wFav").addEventListener("change", () => { state.fav = $("wFav").checked; location.href = setupUrl("&live=1"); });
 $("wDone").addEventListener("click", () => { location.href = setupUrl("&done=1"); });
 
@@ -286,6 +334,7 @@ function renderTexts() {
   document.title = s.newTab;
   document.documentElement.lang = ru() ? "ru" : "en";
   $("favTitle").textContent = s.favorites;
+  $("freqTitle").textContent = s.frequent;
   $("customizeText").textContent = s.customize;
   $("addTitle").textContent = s.addTitle;
   $("addNameLabel").textContent = s.name;
@@ -304,6 +353,7 @@ if (welcome) {
   $("customize").classList.remove("hidden");
   $("favSection").classList.toggle("hidden", !state.fav);
   renderFavorites();
+  renderFrequent();
 }
 </script>
 </body>

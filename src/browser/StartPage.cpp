@@ -1,5 +1,6 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
+#include "browser/History.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -21,27 +22,117 @@ static bool SystemDark() {
     return false;
 }
 
-std::wstring StartPageUrl(bool welcome) {
+// Parameters every internal page reads: language, theme, accent.
+static std::wstring LookParams() {
     wchar_t accent[8];
     const Color& a = g_th.accent;
     swprintf(accent, 8, L"%02X%02X%02X", a.GetR(), a.GetG(), a.GetB());
+    std::wstring p = L"language=" + std::to_wstring(g_prefs.language);
+    p += L"&themeMode=" + std::to_wstring(g_prefs.themeMode);
+    p += L"&sysru=" + std::wstring(SystemRussian() ? L"1" : L"0");
+    p += L"&sysdark=" + std::wstring(SystemDark() ? L"1" : L"0");
+    p += L"&accent=" + std::wstring(accent);
+    return p;
+}
+
+// [{"u":...,"t":...}, ...] as JSON (JsString escapes are valid JSON)
+static std::wstring EntriesJson(const std::vector<HistoryEntry>& list, bool withTimes) {
+    std::wstring json = L"[";
+    for (size_t i = 0; i < list.size(); ++i) {
+        const HistoryEntry& e = list[i];
+        if (i) json += L",";
+        json += L"{\"u\":" + JsString(e.url) + L",\"t\":" + JsString(e.title);
+        if (withTimes) json += L",\"l\":" + std::to_wstring(e.lastVisit) + L",\"v\":" + std::to_wstring(e.visits);
+        json += L"}";
+    }
+    return json + L"]";
+}
+
+std::wstring StartPageUrl(bool welcome) {
     std::wstring url = StartPageFileUrl();
-    url += L"?language=" + std::to_wstring(g_prefs.language);
-    url += L"&themeMode=" + std::to_wstring(g_prefs.themeMode);
+    url += L"?" + LookParams();
     url += L"&layout=" + std::to_wstring(g_prefs.tabLayout);
     url += L"&density=" + std::to_wstring(g_prefs.density);
     url += L"&fav=" + std::wstring(g_prefs.startFavorites ? L"1" : L"0");
-    url += L"&sysru=" + std::wstring(SystemRussian() ? L"1" : L"0");
-    url += L"&sysdark=" + std::wstring(SystemDark() ? L"1" : L"0");
-    url += L"&accent=" + std::wstring(accent);
+    url += L"&freq=" + std::wstring(g_prefs.startFrequent ? L"1" : L"0");
+    if (g_prefs.startFrequent && !welcome)
+        url += L"&top=" + ToWide(UrlEncode(ToUtf8(EntriesJson(HistoryTopSites(12), false))));
     if (welcome) url += L"&welcome=1";
     return url;
+}
+
+static std::string ReadFileUtf8(const std::wstring& path) {
+    std::string data;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return data;
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(f, &size);
+    data.resize((size_t)std::min<long long>(size.QuadPart, 8LL << 20));
+    DWORD read = 0;
+    if (!data.empty()) ReadFile(f, &data[0], (DWORD)data.size(), &read, nullptr);
+    CloseHandle(f);
+    data.resize(read);
+    return data;
+}
+
+std::wstring HistoryPageUrl() {
+    // resources\history.html sits next to start.html
+    std::wstring tpl = StartPagePath();
+    tpl.replace(tpl.size() - wcslen(L"start.html"), wcslen(L"start.html"), L"history.html");
+    std::string page = ReadFileUtf8(tpl);
+    const std::string marker = "/*LYRA_DATA*/[]";
+    const size_t at = page.find(marker);
+    if (at != std::string::npos) page.replace(at, marker.size(), ToUtf8(EntriesJson(HistoryNewest(5000), true)));
+    const std::wstring out = HistoryPagePath();
+    HANDLE f = CreateFileW(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        if (!page.empty()) WriteFile(f, page.data(), (DWORD)page.size(), &written, nullptr);
+        CloseHandle(f);
+    } else {
+        Log("history page: cannot write %ls", out.c_str());
+    }
+    wchar_t url[2084] = {};
+    DWORD len = ARRAYSIZE(url);
+    if (FAILED(UrlCreateFromPathW(out.c_str(), url, &len, 0))) return std::wstring();
+    return std::wstring(url) + L"?" + LookParams();
+}
+
+static void LoadInTab(Tab& t, const std::wstring& url) {
+    if (WKURLRef u = WKURLCreateWithUTF8CString(ToUtf8(url).c_str())) {
+        WKPageLoadURL(t.page, u);
+        WKRelease(u);
+    }
+}
+
+static void RefreshHistoryPages() {
+    std::wstring fresh;
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (t.state != TabState::Live || !t.page || !IsHistoryPageUrl(t.url)) continue;
+        if (fresh.empty()) fresh = HistoryPageUrl();       // rewrites the file once
+        if (fresh == t.url) WKPageReload(t.page);
+        else LoadInTab(t, fresh);
+    }
+}
+
+void OpenHistory() {
+    for (int i = 0; i < (int)g_tabs.size(); ++i) {
+        if (g_tabs[i]->state == TabState::Live && IsHistoryPageUrl(g_tabs[i]->url)) {
+            SelectTab(i);
+            RefreshHistoryPages();
+            return;
+        }
+    }
+    CreateTab(kHistoryAlias);
 }
 
 std::string ResolveNavigation(const std::wstring& input) {
     std::wstring s = TrimWs(input);
     if (_wcsicmp(s.c_str(), kStartAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://start/") == 0)
         return ToUtf8(StartPageUrl());
+    if (_wcsicmp(s.c_str(), kHistoryAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://history/") == 0)
+        return ToUtf8(HistoryPageUrl());
     return ResolveInput(s);
 }
 
@@ -52,11 +143,22 @@ void RefreshStartPages() {
         if (t.url.find(L"welcome=1") != std::wstring::npos) continue;   // restyles itself as you choose
         const std::wstring fresh = StartPageUrl();
         if (fresh == t.url) continue;
-        if (WKURLRef u = WKURLCreateWithUTF8CString(ToUtf8(fresh).c_str())) {
-            WKPageLoadURL(t.page, u);
-            WKRelease(u);
-        }
+        LoadInTab(t, fresh);
     }
+    RefreshHistoryPages();
+}
+
+// Value of `key` in "a=1&b=x" (still URL-encoded)
+static std::wstring QueryString(const std::wstring& query, const wchar_t* key) {
+    const std::wstring k = std::wstring(key) + L"=";
+    size_t p = 0;
+    while (p < query.size()) {
+        size_t e = query.find(L'&', p);
+        if (e == std::wstring::npos) e = query.size();
+        if (query.compare(p, k.size(), k) == 0) return query.substr(p + k.size(), e - p - k.size());
+        p = e + 1;
+    }
+    return std::wstring();
 }
 
 // "a=1&b=2" -> value of `key`, or -1
@@ -83,6 +185,28 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         ShowSettingsWindow();
         return;
     }
+    if (command == L"lyra://history") {
+        OpenHistory();
+        return;
+    }
+    if (command == L"lyra://history-remove") {
+        HistoryRemove(UrlDecode(QueryString(query, L"url")));
+        HistorySave();
+        return;                                  // the page already hid the row
+    }
+    if (command == L"lyra://history-clear") {
+        const std::wstring range = QueryString(query, L"range");
+        long long since = 0;
+        if (range == L"hour") since = NowUnixMs() - 60LL * 60 * 1000;
+        else if (range == L"day") {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            since = NowUnixMs() - ((long long)st.wHour * 3600 + st.wMinute * 60 + st.wSecond) * 1000LL - st.wMilliseconds;
+        }
+        HistoryClearSince(since);
+        RefreshHistoryPages();
+        return;
+    }
     if (command != L"lyra://setup") return;
 
     auto pick = [&](const wchar_t* key, int& field, int maxValue) {
@@ -96,6 +220,8 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     pick(L"density", g_prefs.density, 2);
     const int fav = QueryInt(query, L"fav");
     if (fav >= 0) g_prefs.startFavorites = fav != 0;
+    const int freq = QueryInt(query, L"freq");
+    if (freq >= 0) g_prefs.startFrequent = freq != 0;
     const bool done = QueryInt(query, L"done") == 1;
     if (done) g_prefs.onboarded = true;
     SaveSettings();

@@ -1,5 +1,7 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "browser/History.h"
+#include "ui/Suggestions.h"
 #include "browser/StartPage.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
@@ -158,7 +160,11 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
     case WM_SIZE:
         UnfreezeTabWidths();
+        SuggestHide();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
+        return 0;
+    case WM_MOVE:
+        SuggestHide();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -272,7 +278,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_COMMAND:
+        if ((HWND)lParam == g_urlEdit && HIWORD(wParam) == EN_CHANGE) {
+            SuggestUpdate();
+            return 0;
+        }
         if ((HWND)lParam == g_urlEdit && HIWORD(wParam) == EN_KILLFOCUS) {
+            SuggestHide();
             ShowWindow(g_urlEdit, SW_HIDE);
             InvalidateChrome();
             return 0;
@@ -367,6 +378,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         // Title / URL / history changes arrive through the page state client; this slow
         // poll (~1 s) is only a safety net.
+        HistorySaveSoon();
         if (g_tick % 32 == 0) {
             for (auto& tp : g_tabs)
                 if (SyncTab(*tp)) dirty = true;
@@ -375,7 +387,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_ACTIVATE:
-        if (LOWORD(wParam) != WA_INACTIVE && !IsEditing()) FocusWebView();
+        if (LOWORD(wParam) == WA_INACTIVE) SuggestHide();
+        else if (!IsEditing()) FocusWebView();
         break;
 
     case WM_APP_CLOSE_TAB: {             // window.close(), or an empty popup that became a download
@@ -407,7 +420,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         Log("WM_CLOSE: shutting down (tabs=%d active=%d)", (int)g_tabs.size(), g_active);
         g_closing = true;
         KillTimer(hWnd, TIMER_UI);
+        SuggestHide();
         CloseAllTabs();
+        HistorySave();
         DestroyWindow(hWnd);
         return 0;
 

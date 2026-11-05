@@ -15,6 +15,7 @@
 //  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
 #include "common/Platform.h"
+#include "browser/History.h"
 #include "browser/StartPage.h"
 #include "app/CrashHandler.h"
 #include "app/Environment.h"
@@ -49,6 +50,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LogOpen();
     SetUnhandledExceptionFilter(CrashFilter);
     LoadSettings();
+    HistoryLoad();
     EnableDarkMenus();
 
     ConfigureGStreamerEnvironment();
@@ -122,6 +124,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     Log("WebKit context released");
     g_ctxs.clear();                      // only now can no WebKit callback refer to a TabCtx any more
     ReleaseResources();
+    HistorySave();
     GdiplusShutdown(gdipToken);
     OleUninitialize();
     return (int)msg.wParam;

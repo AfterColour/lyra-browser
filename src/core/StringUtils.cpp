@@ -1,7 +1,6 @@
 // Lyra — преобразование строк (UTF-8/UTF-16, WKString) и экранирование HTML/JS.
 #include "core/StringUtils.h"
 
-static std::wstring ToWide(const std::string& s);
 
 std::string ToUtf8(const std::wstring& w) {
     if (w.empty()) return std::string();
@@ -11,7 +10,7 @@ std::string ToUtf8(const std::wstring& w) {
     return s;
 }
 
-static std::wstring ToWide(const std::string& s) {
+std::wstring ToWide(const std::string& s) {
     if (s.empty()) return std::wstring();
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
     std::wstring w(n > 0 ? n : 0, L'\0');
@@ -44,6 +43,22 @@ std::string UrlEncode(const std::string& s) {
         else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
     }
     return o;
+}
+
+std::wstring UrlDecode(const std::wstring& s) {
+    std::string bytes;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const wchar_t c = s[i];
+        if (c == L'+') { bytes += ' '; continue; }
+        if (c == L'%' && i + 2 < s.size() && iswxdigit(s[i + 1]) && iswxdigit(s[i + 2])) {
+            bytes += (char)wcstol(s.substr(i + 1, 2).c_str(), nullptr, 16);
+            i += 2;
+            continue;
+        }
+        if (c < 0x80) bytes += (char)c;
+        else bytes += ToUtf8(std::wstring(1, c));
+    }
+    return ToWide(bytes);
 }
 
 std::wstring HtmlEscape(const std::wstring& s) {

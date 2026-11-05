@@ -1,5 +1,6 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
+#include "browser/History.h"
 #include "core/Url.h"
 #include "browser/StartPage.h"
 #include "browser/Tab.h"
@@ -69,6 +70,9 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Favorites", L"Избранное"),
             Tr(L"Sites on the start page. Add them with the + tile.", L"Сайты на стартовой странице. Добавляются плиткой «+»."),
             &g_prefs.startFavorites, []() { SaveSettings(); RefreshStartPages(); }));
+        p.rows.push_back(RToggle(Tr(L"Frequently visited", L"Часто посещаемые"),
+            Tr(L"The sites you open most, from your history.", L"Сайты, которые вы открываете чаще всего, — по истории."),
+            &g_prefs.startFrequent, []() { SaveSettings(); RefreshStartPages(); }));
         p.rows.push_back(RButton(Tr(L"Welcome screen", L"Экран приветствия"),
             Tr(L"The first-run setup: language, theme, tabs.", L"Первоначальная настройка: язык, тема, вкладки."),
             Tr(L"Show", L"Показать"),
@@ -209,6 +213,24 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Web databases", L"Веб-базы данных"),
             Tr(L"Used by some web apps that work offline.", L"Нужны некоторым веб-приложениям для работы офлайн."),
             &g_prefs.databases, web));
+        p.rows.push_back(RHeader(Tr(L"History", L"История")));
+        p.rows.push_back(RToggle(Tr(L"Remember history", L"Сохранять историю"),
+            Tr(L"Visited pages, for the history page, suggestions and frequently visited sites.",
+               L"Посещённые страницы — для истории, подсказок и часто посещаемых сайтов."),
+            &g_prefs.recordHistory, save));
+        p.rows.push_back(RButton(Tr(L"History", L"История"), Tr(L"Ctrl+H", L"Ctrl+H"), Tr(L"Open", L"Открыть"),
+            []() { OpenHistory(); }));
+        p.rows.push_back(RButton(Tr(L"Clear history", L"Очистить историю"),
+            Tr(L"Removes every visited page from Lyra.", L"Удаляет из Lyra все посещённые страницы."),
+            Tr(L"Clear\x2026", L"Очистить\x2026"),
+            []() {
+                if (MessageBoxW(g_setHwnd, Tr(L"Clear all history?", L"Удалить всю историю?"),
+                                Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    HistoryClearSince(0);
+                    RefreshStartPages();
+                }
+            }));
+        p.rows.push_back(RHeader(Tr(L"Note", L"Примечание")));
         p.rows.push_back(RInfo(Tr(L"Changes apply to", L"Изменения действуют для"),
                                Tr(L"pages loaded afterwards", L"страниц, открытых после них")));
         g_pages.push_back(std::move(p));
@@ -223,6 +245,7 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Go to tab 1-8", L"Перейти к вкладке 1–8"), L"Ctrl+1 … 8", true));
         p.rows.push_back(RInfo(Tr(L"Go to last tab", L"Последняя вкладка"), L"Ctrl+9", true));
         p.rows.push_back(RInfo(Tr(L"Reopen closed tab", L"Вернуть закрытую вкладку"), L"Ctrl+Shift+T", true));
+        p.rows.push_back(RInfo(Tr(L"History", L"История"), L"Ctrl+H", true));
         p.rows.push_back(RHeader(Tr(L"Navigation", L"Навигация")));
         p.rows.push_back(RInfo(Tr(L"Address bar", L"Адресная строка"), L"Ctrl+L", true));
         p.rows.push_back(RInfo(Tr(L"Reload", L"Обновить"), L"Ctrl+R  /  F5", true));

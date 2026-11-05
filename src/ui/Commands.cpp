@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "browser/StartPage.h"
 #include "core/Url.h"
 #include "core/Localization.h"
 #include "browser/Tab.h"
@@ -73,6 +74,7 @@ void RunCommand(int cmd) {
         break;
     case CMD_REOPENTAB: ReopenClosedTab(); break;
     case CMD_DEVTOOLS:  ShowWebInspector(); break;
+    case CMD_HISTORY:   OpenHistory(); break;
     }
 }
 
@@ -82,6 +84,7 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  Tr(L"Close Tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
     AppendMenuW(m, MF_STRING | (g_closedUrls.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
+    AppendMenuW(m, MF_STRING, CMD_HISTORY,   Tr(L"History\tCtrl+H", L"История\tCtrl+H"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
     AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
@@ -122,6 +125,7 @@ bool HandleShortcut(const MSG& m) {
         case 'T': RunCommand(CMD_NEWTAB); return true;
         case 'W': RunCommand(CMD_CLOSETAB); return true;
         case 'L': ShowUrlEdit(); return true;
+        case 'H': RunCommand(CMD_HISTORY); return true;
         case VK_OEM_COMMA: RunCommand(CMD_SETTINGS); return true;
         case 'R': ReloadActive(false); return true;
         case VK_OEM_PLUS: case VK_ADD:         RunCommand(CMD_ZOOMIN); return true;

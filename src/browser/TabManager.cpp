@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/History.h"
 #include "browser/StartPage.h"
 #include "core/Localization.h"
 #include "app/Log.h"
@@ -63,10 +64,14 @@ bool SyncTab(Tab& t) {
         if (WKStringRef s = WKURLCopyString(u)) { url = WKStr(s); WKRelease(s); }
         WKRelease(u);
     }
-    if (url != t.url) { t.url = url; changed = true; }
+    const bool urlChanged = url != t.url;
+    if (urlChanged) { t.url = url; changed = true; }
 
     std::wstring title;
     if (WKStringRef ts = WKPageCopyTitle(t.page)) { title = WKStr(ts); WKRelease(ts); }
+    // History: a new address is a visit; a page title arriving later names it.
+    if (urlChanged) HistoryVisit(url, title);
+    else if (!title.empty() && title != t.title) HistorySetTitle(url, title);
     if (title.empty()) {
         title = HostOf(t.url);
         if (title.empty()) title = Tr(L"New Tab", L"Новая вкладка");

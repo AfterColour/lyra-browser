@@ -1,0 +1,193 @@
+<!doctype html>
+<!--
+  Lyra history page (lyra://history, Ctrl+H).
+  This is a template: Lyra copies it to %LOCALAPPDATA%\Lyra\history.html with the visits put in
+  place of the LYRA_DATA marker below (browser/StartPage.cpp), then opens it with
+  ?language=..&themeMode=..&sysru=..&sysdark=..&accent=.. like the start page.
+  Removing visits goes back to Lyra as lyra://history-remove?url=.. / lyra://history-clear?range=..
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>History</title>
+<style>
+  :root {
+    --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
+    --hover: rgba(0,0,0,.045); --field: #FFFFFF; --accent: #0067C0;
+  }
+  :root[data-theme="dark"] {
+    --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
+    --hover: rgba(255,255,255,.06); --field: #2E3036;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 32px 32px 64px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
+  .search { position: relative; width: 300px; max-width: 100%; }
+  .search svg { position: absolute; left: 10px; top: 9px; color: var(--text2); }
+  .search input { width: 100%; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px 0 32px; font: inherit; outline: none; }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .btn { height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+         color: var(--text); font: inherit; cursor: pointer; }
+  .btn:hover { background: var(--hover); }
+  .btn.danger { color: #C42B1C; }
+  :root[data-theme="dark"] .btn.danger { color: #FF8A80; }
+  .day { margin: 22px 0 8px 4px; font-size: 12px; font-weight: 600; color: var(--text2); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 8px 0 14px; text-decoration: none; color: var(--text); }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row:hover { background: var(--hover); }
+  .time { width: 44px; color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+  .badge { width: 18px; height: 18px; border-radius: 5px; color: #fff; font-weight: 700; font-size: 10px; flex: none;
+           display: flex; align-items: center; justify-content: center; }
+  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .host { color: var(--text2); font-size: 12px; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .remove { width: 28px; height: 28px; border-radius: 6px; border: 0; background: none; color: var(--text2); cursor: pointer;
+            opacity: 0; flex: none; font-size: 12px; }
+  .row:hover .remove, .remove:focus-visible { opacity: 1; }
+  .remove:hover { background: var(--hover); color: var(--text); }
+  .empty { text-align: center; color: var(--text2); padding: 80px 0; }
+  .menu { position: absolute; right: 0; top: 38px; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+          box-shadow: 0 12px 32px rgba(0,0,0,.18); padding: 6px; min-width: 220px; z-index: 5; }
+  .menu button { display: block; width: 100%; text-align: left; height: 32px; border: 0; background: none; border-radius: 6px;
+                 color: var(--text); font: inherit; padding: 0 10px; cursor: pointer; }
+  .menu button:hover { background: var(--hover); }
+  .clear { position: relative; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title"></h1>
+    <label class="search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="q" type="search" autocomplete="off">
+    </label>
+    <div class="clear">
+      <button class="btn danger" id="clearBtn"></button>
+      <div class="menu hidden" id="clearMenu">
+        <button data-range="hour" id="cHour"></button>
+        <button data-range="day" id="cDay"></button>
+        <button data-range="all" id="cAll"></button>
+      </div>
+    </div>
+  </header>
+  <div id="list"></div>
+</div>
+<script>
+"use strict";
+// [{u: url, t: title, l: last visit (Unix ms), v: visits}], newest first
+const DATA = /*LYRA_DATA*/[];
+
+const q = new URLSearchParams(location.search);
+const lang = +(q.get("language") || 0), theme = +(q.get("themeMode") || 0);
+const ru = lang === 2 || (lang === 0 && q.get("sysru") === "1");
+const dark = theme === 2 || (theme === 0 && q.get("sysdark") === "1");
+document.documentElement.dataset.theme = dark ? "dark" : "light";
+document.documentElement.lang = ru ? "ru" : "en";
+if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.style.setProperty("--accent", "#" + q.get("accent"));
+
+const S = ru ? {
+  title: "История", search: "Поиск в истории", clear: "Очистить…", hour: "За последний час", day: "За сегодня",
+  all: "Всю историю", confirmAll: "Удалить всю историю?", today: "Сегодня", yesterday: "Вчера",
+  empty: "История пуста", nothing: "Ничего не найдено", remove: "Удалить из истории",
+} : {
+  title: "History", search: "Search history", clear: "Clear…", hour: "Last hour", day: "Today",
+  all: "All history", confirmAll: "Clear all history?", today: "Today", yesterday: "Yesterday",
+  empty: "No history yet", nothing: "Nothing found", remove: "Remove from history",
+};
+const $ = (id) => document.getElementById(id);
+document.title = S.title;
+$("title").textContent = S.title;
+$("q").placeholder = S.search;
+$("clearBtn").textContent = S.clear;
+$("cHour").textContent = S.hour; $("cDay").textContent = S.day; $("cAll").textContent = S.all;
+
+const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
+function badge(url) {
+  const host = hostOf(url);
+  let h = 2166136261 >>> 0;
+  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return { letter: ((host.match(/[\p{L}\p{N}]/u) || ["•"])[0]).toUpperCase(), color: PALETTE[Math.imul(h, 2654435761) >>> 29] };
+}
+const locale = ru ? "ru-RU" : "en-US";
+function dayLabel(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return S.today;
+  if (diff === 1) return S.yesterday;
+  return day.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long",
+                                          year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+}
+
+let removed = new Set();
+function render() {
+  const words = $("q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = $("list");
+  list.textContent = "";
+  const items = DATA.filter((e) => !removed.has(e.u) &&
+    words.every((w) => e.u.toLowerCase().includes(w) || (e.t || "").toLowerCase().includes(w)));
+  if (!items.length) {
+    const p = document.createElement("div");
+    p.className = "empty"; p.textContent = DATA.length ? S.nothing : S.empty;
+    list.appendChild(p);
+    return;
+  }
+  let card = null, current = "";
+  for (const e of items.slice(0, 1500)) {
+    const label = dayLabel(e.l);
+    if (label !== current) {
+      current = label;
+      const h = document.createElement("div");
+      h.className = "day"; h.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+      list.appendChild(h);
+      card = document.createElement("div");
+      card.className = "card";
+      list.appendChild(card);
+    }
+    const a = document.createElement("a");
+    a.className = "row"; a.href = e.u; a.title = e.u;
+    const b = badge(e.u);
+    a.innerHTML = '<span class="time"></span><span class="badge"></span><span class="title"></span><span class="host"></span>' +
+                  '<button class="remove" type="button">✕</button>';
+    a.querySelector(".time").textContent = new Date(e.l).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    a.querySelector(".badge").textContent = b.letter;
+    a.querySelector(".badge").style.background = b.color;
+    a.querySelector(".title").textContent = e.t || hostOf(e.u);
+    a.querySelector(".host").textContent = hostOf(e.u);
+    const rm = a.querySelector(".remove");
+    rm.title = S.remove; rm.setAttribute("aria-label", S.remove);
+    rm.addEventListener("click", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      removed.add(e.u);
+      location.href = "lyra://history-remove?url=" + encodeURIComponent(e.u);
+      render();
+    });
+    card.appendChild(a);
+  }
+}
+$("q").addEventListener("input", render);
+$("clearBtn").addEventListener("click", (e) => { e.stopPropagation(); $("clearMenu").classList.toggle("hidden"); });
+document.addEventListener("click", () => $("clearMenu").classList.add("hidden"));
+$("clearMenu").addEventListener("click", (e) => {
+  const range = e.target.dataset.range;
+  if (!range) return;
+  if (range === "all" && !confirm(S.confirmAll)) return;
+  location.href = "lyra://history-clear?range=" + range;   // Lyra clears and reloads this page
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey && e.key.toLowerCase() === "f") || (e.key === "/" && document.activeElement !== $("q"))) {
+    e.preventDefault(); $("q").focus();
+  }
+});
+render();
+</script>
+</body>
+</html>

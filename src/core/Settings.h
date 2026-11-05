@@ -24,6 +24,8 @@ struct Prefs {
     bool showFullUrl = false;
     bool closeAlways = false;
     bool startFavorites = true;  // start page shows Favorites
+    bool startFrequent = false;  // start page shows frequently visited sites
+    bool recordHistory = true;   // remember visited pages (Settings > Privacy)
     bool onboarded = false;      // the first-run welcome screen was completed
     int  newTabMode = 0;         // 0 start page, 1 blank page, 2 home page
     bool js = true, images = true, localStorage = true, databases = true;
