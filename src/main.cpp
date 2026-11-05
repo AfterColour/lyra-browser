@@ -2052,6 +2052,16 @@ static void ApplyWebPrefs() {
     wchar_t noGpuRaster[4] = {};
     bool cpuRaster = GetEnvironmentVariableW(L"MYBROWSER_DISABLE_GPU_RASTER", noGpuRaster, 4) && noGpuRaster[0] == L'1';
     WKPreferencesSetCanvasUsesAcceleratedDrawing(g_preferences, !cpuRaster);
+
+    // Animated mouse-wheel scrolling, as in other browsers (WebKit's Windows port has it off and
+    // there is no C API for it; the preference key is the generated one).
+    WKStringRef scrollAnimatorKey = WKStringCreateWithUTF8CString("ScrollAnimatorEnabled");
+    WKPreferencesSetBoolValueForKeyForTesting(g_preferences, true, scrollAnimatorKey);
+    WKRelease(scrollAnimatorKey);
+    // Render at the display's refresh rate (120/144/240 Hz), not the nearest 60 fps divisor.
+    WKStringRef near60Key = WKStringCreateWithUTF8CString("PreferPageRenderingUpdatesNear60FPSEnabled");
+    WKPreferencesSetBoolValueForKeyForTesting(g_preferences, false, near60Key);
+    WKRelease(near60Key);
 }
 
 static COLORREF SFieldColor() { return g_dark ? RGB(30, 30, 32) : RGB(236, 236, 238); }

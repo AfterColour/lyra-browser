@@ -16,6 +16,9 @@ set "GST_DEBUG_FILE=%LOGDIR%\gst-%%p.log"
 set "GST_DEBUG_NO_COLOR=1"
 rem WebKit-side trace of the video drawing path (GStreamer logs are compiled out in vcpkg Release).
 set "LYRA_MEDIA_TRACE=%LOGDIR%\trace"
+rem A minidump whenever a page's main thread stalls for 0.7 s or more (crash-report.bat reads them).
+set "LYRA_STALL_DUMPS=C:\WebKit\crashdumps"
+if not exist "%LYRA_STALL_DUMPS%" mkdir "%LYRA_STALL_DUMPS%"
 
 echo [debug] Logs: %LOGDIR%
 start "" "%~dp0run-gst\Lyra.exe"
