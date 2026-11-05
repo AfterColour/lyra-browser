@@ -7,6 +7,8 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "ui/WindowFrame.h"
+#include "browser/Favicons.h"
 #include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -24,6 +26,9 @@ Hit g_hover, g_down;
 std::unique_ptr<Font> g_fText, g_fTab, g_fTabBold, g_fIcon, g_fIconSm, g_fCaption, g_fBadge;
 
 static Hit MakeHit(Hit::Kind k, int i = -1) { Hit h; h.kind = k; h.index = i; return h; }
+
+// Chrome drawn on a transparent buffer (Mica shows through the empty parts)?
+static bool s_paintTransparent = false;
 
 // Animation state. s_target is where everything should be; g_L is what is drawn and hit-tested.
 static Layout s_target;
@@ -430,6 +435,11 @@ static void DrawSiteBadge(Graphics& g, const Tab& t, const RectF& r) {
         Color(110, 86, 207), Color(217, 63, 63), Color(91, 104, 120), Color(59, 138, 121),
         Color(47, 111, 214), Color(199, 104, 28), Color(138, 79, 191), Color(30, 136, 168),
     };
+    if (Bitmap* icon = FaviconFor(t.url)) {          // the site's own icon once it is known
+        const float s = std::floor(S(16));
+        g.DrawImage(icon, RectF(std::floor(r.X + (r.Width - s) / 2), std::floor(r.Y + (r.Height - s) / 2), s, s));
+        return;
+    }
     const std::wstring host = HostOf(t.url);
     wchar_t letter = 0;
     for (wchar_t c : host) if (iswalnum(c)) { letter = (wchar_t)towupper(c); break; }
@@ -468,8 +478,10 @@ static void DrawChrome(Graphics& g, int w, int h) {
     // Backgrounds: chrome, page area (visible only before the first page paints), hairlines
     {
         SolidBrush frame(T.frame), page(T.page);
-        g.FillRectangle(&frame, 0.f, 0.f, fw, L.chromeH);
-        if (L.sideW > 0) g.FillRectangle(&frame, 0.f, L.chromeH, L.sideW, fh - L.chromeH);
+        if (!s_paintTransparent) {                       // with Mica the backdrop is the frame
+            g.FillRectangle(&frame, 0.f, 0.f, fw, L.chromeH);
+            if (L.sideW > 0) g.FillRectangle(&frame, 0.f, L.chromeH, L.sideW, fh - L.chromeH);
+        }
         g.FillRectangle(&page, L.sideW, L.chromeH, fw - L.sideW, fh - L.chromeH);
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
@@ -642,38 +654,25 @@ static void DrawChrome(Graphics& g, int w, int h) {
     }
 }
 
+void UpdateMainBackdrop() {
+    if (!g_hWnd) return;
+    MARGINS m = { 0, 0, 0, 0 };
+    if (!g_fullScreenView) {
+        m.cxLeftWidth = (int)std::ceil(g_L.sideW);
+        m.cyTopHeight = (int)std::ceil(g_L.chromeH);
+    }
+    // No WS_SYSMENU while Mica is on: DWM would draw its own window buttons over ours.
+    if (!g_fullScreenView) FrameSetSystemMenuStyle(g_hWnd, !MicaActive());
+    ApplyBackdrop(g_hWnd, 2 /* DWMSBT_MAINWINDOW: Mica */, m);
+}
+
 void PaintChrome(HDC hdc, const RECT& rc) {
-    const int w = rc.right - rc.left, h = rc.bottom - rc.top;
-    if (w <= 0 || h <= 0 || !g_hWnd) return;
+    if (!g_hWnd) return;
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    // A 32-bit DIB whose alpha is forced to opaque before the blit: GDI+ leaves alpha 0 where it
-    // fills through GDI, and DWM shows such pixels in the former title bar area as transparent.
-    BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;                    // top-down
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP bmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bmp || !bits) { if (bmp) DeleteObject(bmp); return; }
-    HDC mem = CreateCompatibleDC(hdc);
-    HGDIOBJ old = SelectObject(mem, bmp);
-    {
-        Graphics g(mem);
-        g.TranslateTransform(-(REAL)rc.left, -(REAL)rc.top);
-        g.SetSmoothingMode(SmoothingModeHighQuality);
-        g.SetPixelOffsetMode(PixelOffsetModeHalf);
-        g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    s_paintTransparent = MicaActive() && !g_fullScreenView;
+    PaintBuffered(hdc, rc, !s_paintTransparent, [&](Graphics& g) {
+        g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         DrawChrome(g, cr.right, cr.bottom);
-    }
-    GdiFlush();
-    DWORD* px = (DWORD*)bits;
-    for (size_t i = 0, count = (size_t)w * (size_t)h; i < count; ++i) px[i] |= 0xFF000000u;
-    BitBlt(hdc, rc.left, rc.top, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    });
 }

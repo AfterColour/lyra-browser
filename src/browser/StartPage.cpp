@@ -1,5 +1,6 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
+#include "browser/Favicons.h"
 #include "browser/History.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
@@ -32,6 +33,7 @@ static std::wstring LookParams() {
     p += L"&sysru=" + std::wstring(SystemRussian() ? L"1" : L"0");
     p += L"&sysdark=" + std::wstring(SystemDark() ? L"1" : L"0");
     p += L"&accent=" + std::wstring(accent);
+    p += L"&icons=" + ToWide(UrlEncode(ToUtf8(FaviconFolderUrl())));   // cached site icons
     return p;
 }
 
@@ -183,6 +185,16 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
 
     if (command == L"lyra://settings") {
         ShowSettingsWindow();
+        return;
+    }
+    if (command == L"lyra://favicons") {             // the start page lists sites without a cached icon
+        size_t p = 0;
+        while (p < query.size()) {
+            size_t e = query.find(L'&', p);
+            if (e == std::wstring::npos) e = query.size();
+            if (query.compare(p, 2, L"u=") == 0) FaviconFor(UrlDecode(query.substr(p + 2, e - p - 2)));
+            p = e + 1;
+        }
         return;
     }
     if (command == L"lyra://history") {

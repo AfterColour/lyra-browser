@@ -17,3 +17,15 @@ inline bool IsCaptionCode(WPARAM code) { return code == HTMINBUTTON || code == H
 
 // Applies the custom frame right after the window was created (before it is shown).
 void FrameApply(HWND hWnd);
+
+// A single-line edit control placed in the top band of such a window. DWM shows plain GDI
+// drawing there as see-through (grey), so the edit is a layered child with constant full
+// opacity (Windows 8+); if that is refused it falls back to a normal edit.
+HWND CreateOpaqueEdit(HWND parent, int id, HINSTANCE instance);
+
+// With a DWM backdrop (Mica) extended into the client area, DWM draws the system minimise /
+// maximise / close buttons on top of Lyra's own. Windows without WS_SYSMENU get none, so the
+// style is dropped while the backdrop is on; ShowSystemMenu() stands in for the menu Windows
+// would show on Alt+Space or a right-click on the title area.
+void FrameSetSystemMenuStyle(HWND hWnd, bool withSystemMenu);
+void ShowSystemMenu(HWND hWnd, POINT screenPt);

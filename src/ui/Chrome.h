@@ -68,3 +68,5 @@ void RebuildResources();
 void ReleaseResources();
 // Paints the chrome and the empty page area inside `rc` (client coordinates).
 void PaintChrome(HDC hdc, const RECT& rc);
+// Mica behind the tab strip / toolbar / vertical tab list (follows the layout and fullscreen).
+void UpdateMainBackdrop();

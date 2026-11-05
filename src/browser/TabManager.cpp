@@ -70,7 +70,8 @@ bool SyncTab(Tab& t) {
     std::wstring title;
     if (WKStringRef ts = WKPageCopyTitle(t.page)) { title = WKStr(ts); WKRelease(ts); }
     // History: a new address is a visit; a page title arriving later names it.
-    if (urlChanged) HistoryVisit(url, title);
+    // (At the moment the address changes the title can still be the previous page's.)
+    if (urlChanged) HistoryVisit(url, L"");
     else if (!title.empty() && title != t.title) HistorySetTitle(url, title);
     if (title.empty()) {
         title = HostOf(t.url);

@@ -25,6 +25,11 @@ long long NowUnixMs() {
 
 static std::wstring HistoryPath() { return g_settingsDir + L"\\history.tsv"; }
 
+// Titles of Lyra's own empty pages that older builds could record for a site by mistake.
+static bool PlaceholderTitle(const std::wstring& t) {
+    return t == L"New Tab" || t == L"\x041D\x043E\x0432\x0430\x044F \x0432\x043A\x043B\x0430\x0434\x043A\x0430";   // "Новая вкладка"
+}
+
 static std::wstring Lower(std::wstring s) {
     if (!s.empty()) CharLowerBuffW(&s[0], (DWORD)s.size());
     return s;
@@ -87,6 +92,7 @@ void HistoryLoad() {
         e.visits = atoi(line.substr(a + 1, b - a - 1).c_str());
         e.url = ToWide(line.substr(b + 1, c - b - 1));
         e.title = ToWide(line.substr(c + 1));
+        if (PlaceholderTitle(e.title)) e.title.clear();
         if (!e.url.empty() && e.visits > 0) s_entries[e.url] = std::move(e);
     }
     Prune();
@@ -137,7 +143,7 @@ void HistoryVisit(const std::wstring& url, const std::wstring& title) {
 }
 
 void HistorySetTitle(const std::wstring& url, const std::wstring& title) {
-    if (title.empty()) return;
+    if (title.empty() || PlaceholderTitle(title)) return;
     auto it = s_entries.find(url);
     if (it == s_entries.end() || it->second.title == title) return;
     it->second.title = title;

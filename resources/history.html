@@ -108,6 +108,39 @@ $("q").placeholder = S.search;
 $("clearBtn").textContent = S.clear;
 $("cHour").textContent = S.hour; $("cDay").textContent = S.day; $("cAll").textContent = S.all;
 
+// Site icons cached by Lyra (?icons=<folder URL>, files <host>.png); the letter badge stays when
+// there is none yet.
+const ICONS = new URLSearchParams(location.search).get("icons") || "";
+function iconKey(url) {
+  try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; }
+}
+function attachIcon(badgeEl, url, attempt) {
+  attempt = attempt || 0;
+  const key = ICONS && iconKey(url);
+  if (!key) return;
+  const img = new Image();
+  img.onload = () => {
+    badgeEl.textContent = ""; badgeEl.style.background = "transparent";
+    img.style.width = "100%"; img.style.height = "100%"; img.style.borderRadius = "4px"; img.alt = "";
+    badgeEl.appendChild(img);
+  };
+  img.onerror = () => {
+    // Not cached yet: ask Lyra to fetch it, then look again a little later.
+    if (attempt === 0) requestIcon(url);
+    if (attempt < 2) setTimeout(() => attachIcon(badgeEl, url, attempt + 1), attempt === 0 ? 2500 : 7000);
+  };
+  img.src = ICONS + key + ".png" + (attempt ? "?r=" + attempt : "");
+}
+let iconRequests = [], iconTimer = 0;
+function requestIcon(url) {
+  iconRequests.push(url);
+  clearTimeout(iconTimer);
+  iconTimer = setTimeout(() => {
+    const q = iconRequests.slice(0, 40).map((u) => "u=" + encodeURIComponent(u)).join("&");
+    iconRequests = [];
+    if (q) location.href = "lyra://favicons?" + q;     // handled by Lyra, the page stays
+  }, 150);
+}
 const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
 function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
 function badge(url) {
@@ -160,6 +193,7 @@ function render() {
     a.querySelector(".time").textContent = new Date(e.l).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
     a.querySelector(".badge").textContent = b.letter;
     a.querySelector(".badge").style.background = b.color;
+    attachIcon(a.querySelector(".badge"), e.u);
     a.querySelector(".title").textContent = e.t || hostOf(e.u);
     a.querySelector(".host").textContent = hostOf(e.u);
     const rm = a.querySelector(".remove");

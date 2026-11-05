@@ -143,6 +143,13 @@ void BuildPages() {
             { Tr(L"Compact", L"Компактный"), Tr(L"Normal", L"Обычный"), Tr(L"Large", L"Крупный") },
             []() { return g_prefs.density; },
             [layout](int i) { g_prefs.density = i; layout(); }));
+        if (MicaSupported())
+            p.rows.push_back(RToggle(Tr(L"Mica", L"Эффект Mica"),
+                Tr(L"The desktop shows through the tab strip and toolbar, softly blurred.",
+                   L"Фон рабочего стола мягко просвечивает сквозь панели вкладок и инструментов."),
+                &g_prefs.mica, theme));
+        else
+            p.rows.push_back(RInfo(Tr(L"Mica", L"Эффект Mica"), Tr(L"Needs Windows 11 22H2", L"Нужна Windows 11 22H2")));
         p.rows.push_back(RToggleGear(Tr(L"Animations", L"Анимации"),
             Tr(L"Tabs glide, highlights fade. The gear opens the details.",
                L"Вкладки плавно двигаются, подсветка плавно гаснет. Шестерёнка — подробные настройки."),

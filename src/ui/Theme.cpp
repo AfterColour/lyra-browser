@@ -1,5 +1,6 @@
 // Lyra — цвета интерфейса, акцент, светлая/тёмная тема, оформление заголовка окна (DWM).
 #include "ui/Theme.h"
+#include "ui/Chrome.h"
 #include "browser/StartPage.h"
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
@@ -114,6 +115,35 @@ Color WindowsAccentColor() {
     return Color(kAccents[0].r, kAccents[0].g, kAccents[0].b);
 }
 
+bool MicaSupported() {
+    static int supported = -1;
+    if (supported < 0) {
+        // DWMWA_SYSTEMBACKDROP_TYPE needs Windows 11 22H2 (build 22621). RtlGetVersion is not
+        // affected by the manifest-based version lie of GetVersionEx.
+        typedef LONG (WINAPI *RtlGetVersionFn)(OSVERSIONINFOW*);
+        OSVERSIONINFOW v = { sizeof(v) };
+        HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+        RtlGetVersionFn fn = nt ? (RtlGetVersionFn)GetProcAddress(nt, "RtlGetVersion") : nullptr;
+        supported = (fn && fn(&v) == 0 && v.dwMajorVersion >= 10 && v.dwBuildNumber >= 22621) ? 1 : 0;
+    }
+    return supported == 1;
+}
+
+bool MicaActive() {
+    HIGHCONTRASTW hc = { sizeof(hc) };
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON)) return false;
+    return g_prefs.mica && MicaSupported();
+}
+
+void ApplyBackdrop(HWND hwnd, int type, MARGINS margins) {
+    if (!hwnd || !MicaSupported()) return;
+    const bool on = MicaActive();
+    const MARGINS none = { 0, 0, 0, 0 };
+    DwmExtendFrameIntoClientArea(hwnd, on ? &margins : &none);
+    const int backdrop = on ? type : 1;            // 1 = DWMSBT_NONE
+    DwmSetWindowAttribute(hwnd, 38 /* DWMWA_SYSTEMBACKDROP_TYPE */, &backdrop, sizeof(backdrop));
+}
+
 // Light accents (yellow, pale Windows colours) are hard to read on white: darken them in the light
 // theme, and lighten dark ones in the dark theme, keeping the hue.
 static Color ReadableAccent(const Color& c, bool dark) {
@@ -156,6 +186,7 @@ void ApplyTheme(bool dark) {
 
     if (g_hWnd) {
         ApplyDwm(g_hWnd);
+        UpdateMainBackdrop();
         InvalidateRect(g_hWnd, nullptr, FALSE);
         if (g_urlEdit) InvalidateRect(g_urlEdit, nullptr, TRUE);
     }

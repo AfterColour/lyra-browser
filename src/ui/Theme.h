@@ -37,4 +37,11 @@ bool ResolveDark();
 // The accent colour picked in Windows Settings > Personalization > Colors.
 Color WindowsAccentColor();
 void ApplyDwm(HWND hwnd);
+
+// Mica (Windows 11 22H2+): the system backdrop behind the window chrome.
+bool MicaSupported();
+bool MicaActive();                  // supported and turned on in Settings > Appearance
+// Backdrop for `hwnd` (DWMSBT_* type: 2 main window / Mica, 3 transient / Acrylic) over the
+// given band of the client area (MARGINS; -1 = whole window). No effect when Mica is off.
+void ApplyBackdrop(HWND hwnd, int type, MARGINS margins);
 void ApplyTheme(bool dark);

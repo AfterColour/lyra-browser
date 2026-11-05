@@ -25,6 +25,7 @@ static const char kUserAgentAppName[] = "Version/26.0 Safari/605.1.15";
 constexpr UINT WM_APP_CLOSE_TAB    = WM_APP + 1;   // window.close() from a page
 constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminationReason
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
+constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
 constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyra://...; wParam tab id, lParam new std::wstring*
 
 enum Cmd {

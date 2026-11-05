@@ -1,5 +1,6 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "browser/Favicons.h"
 #include "browser/History.h"
 #include "ui/Suggestions.h"
 #include "browser/StartPage.h"
@@ -57,6 +58,7 @@ void RefreshLayout(bool animate) {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
     ComputeLayout(cr.right, animate);
+    UpdateMainBackdrop();
     PositionEdit();
     LayoutWebViews();
     InvalidateChrome();
@@ -143,9 +145,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         g_hWnd = hWnd;
         g_fullScreenMsg = RegisterWindowMessageW(L"WebKitFullScreen");
         g_dpi = GetDpiForWindow(hWnd);
-        g_urlEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL | ES_LEFT,
-                                    0, 0, 10, 10, hWnd, (HMENU)(INT_PTR)ID_URL_EDIT,
-                                    (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE), nullptr);
+        g_urlEdit = CreateOpaqueEdit(hWnd, ID_URL_EDIT, (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE));
         g_oldEditProc = (WNDPROC)SetWindowLongPtrW(g_urlEdit, GWLP_WNDPROC, (LONG_PTR)UrlEditProc);
         RebuildResources();
         ApplyTheme(ResolveDark());
@@ -232,8 +232,23 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (IsCaptionCode(wParam)) return 0;            // not "maximise" when double-clicking a button
         break;
     case WM_NCRBUTTONDOWN:
+        if (IsCaptionCode(wParam)) return 0;
+        break;
     case WM_NCRBUTTONUP:
         if (IsCaptionCode(wParam)) return 0;
+        if (wParam == HTCAPTION && !(GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_SYSMENU)) {
+            ShowSystemMenu(hWnd, POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+            return 0;
+        }
+        break;
+    case WM_SYSCOMMAND:
+        // Alt+Space without WS_SYSMENU (Mica): show the window menu ourselves.
+        if ((wParam & 0xFFF0) == SC_KEYMENU && lParam == ' ' && !(GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_SYSMENU)) {
+            RECT wr;
+            GetWindowRect(hWnd, &wr);
+            ShowSystemMenu(hWnd, POINT{ wr.left + (LONG)S(8), wr.top + (LONG)g_L.chromeH });
+            return 0;
+        }
         break;
     case WM_NCACTIVATE:
         // lParam -1: let Windows update the activation state without repainting a title bar.
@@ -396,6 +411,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (FindTab((unsigned long long)wParam, &index)) CloseTab(index);
         return 0;
     }
+    case WM_APP_FAVICON:
+        FaviconArrived(lParam);
+        InvalidateChrome();
+        return 0;
     case WM_APP_LYRA_URL: {
         std::unique_ptr<std::wstring> url((std::wstring*)lParam);
         if (url && !g_closing) HandleLyraUrl((unsigned long long)wParam, *url);

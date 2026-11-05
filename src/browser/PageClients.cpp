@@ -1,5 +1,6 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
+#include "browser/History.h"
 #include "core/Url.h"
 #include "core/Localization.h"
 #include "app/Log.h"
@@ -88,6 +89,9 @@ static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     t->loading = false;
     t->progress = std::max(t->progress, 0.9f);
     SyncTab(*t);
+    // The finished page's title names its history entry (the title seen when the address
+    // changed may still have been the previous page's).
+    if (WKStringRef ts = WKPageCopyTitle(t->page)) { HistorySetTitle(t->url, WKStr(ts)); WKRelease(ts); }
     InvalidateChrome();
 }
 

@@ -39,8 +39,8 @@
   .tile:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
   .icon { width: 60px; height: 60px; border-radius: 14px; background: var(--card);
           box-shadow: 0 0 0 1px var(--border), var(--shadow);
-          display: flex; align-items: center; justify-content: center; transition: transform .12s ease; }
-  .tile:hover .icon { transform: translateY(-2px); }
+          display: flex; align-items: center; justify-content: center; }
+  .tile:hover .icon { box-shadow: 0 0 0 1px var(--text2), var(--shadow); }
   .badge { width: 30px; height: 30px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 15px;
            display: flex; align-items: center; justify-content: center; }
   .name { font-size: 12px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -51,9 +51,8 @@
   .freq { margin-top: 40px; }
   .fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
   .fcard { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--card);
-           box-shadow: 0 0 0 1px var(--border), var(--shadow); text-decoration: none; color: var(--text); outline: none;
-           transition: transform .12s ease; }
-  .fcard:hover { transform: translateY(-2px); }
+           box-shadow: 0 0 0 1px var(--border), var(--shadow); text-decoration: none; color: var(--text); outline: none; }
+  .fcard:hover { box-shadow: 0 0 0 1px var(--text2), var(--shadow); }
   .fcard:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
   .thumb { height: 96px; background: var(--thumb); display: flex; align-items: center; justify-content: center;
            border-bottom: 1px solid var(--border); }
@@ -208,6 +207,39 @@ function loadFavorites() {
 }
 function saveFavorites(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) {} }
 
+// Site icons cached by Lyra (?icons=<folder URL>, files <host>.png); the letter badge stays when
+// there is none yet.
+const ICONS = new URLSearchParams(location.search).get("icons") || "";
+function iconKey(url) {
+  try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; }
+}
+function attachIcon(badgeEl, url, attempt) {
+  attempt = attempt || 0;
+  const key = ICONS && iconKey(url);
+  if (!key) return;
+  const img = new Image();
+  img.onload = () => {
+    badgeEl.textContent = ""; badgeEl.style.background = "transparent";
+    img.style.width = "100%"; img.style.height = "100%"; img.style.borderRadius = "4px"; img.alt = "";
+    badgeEl.appendChild(img);
+  };
+  img.onerror = () => {
+    // Not cached yet: ask Lyra to fetch it, then look again a little later.
+    if (attempt === 0) requestIcon(url);
+    if (attempt < 2) setTimeout(() => attachIcon(badgeEl, url, attempt + 1), attempt === 0 ? 2500 : 7000);
+  };
+  img.src = ICONS + key + ".png" + (attempt ? "?r=" + attempt : "");
+}
+let iconRequests = [], iconTimer = 0;
+function requestIcon(url) {
+  iconRequests.push(url);
+  clearTimeout(iconTimer);
+  iconTimer = setTimeout(() => {
+    const q = iconRequests.slice(0, 40).map((u) => "u=" + encodeURIComponent(u)).join("&");
+    iconRequests = [];
+    if (q) location.href = "lyra://favicons?" + q;     // handled by Lyra, the page stays
+  }, 150);
+}
 const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
 function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
 function badgeFor(f) {
@@ -230,6 +262,7 @@ function renderFavorites() {
                   '<button class="remove" type="button">✕</button>';
     a.querySelector(".badge").textContent = b.letter;
     a.querySelector(".badge").style.background = b.color;
+    attachIcon(a.querySelector(".badge"), f.url);
     a.querySelector(".name").textContent = f.title || hostOf(f.url);
     const rm = a.querySelector(".remove");
     rm.title = t().remove; rm.setAttribute("aria-label", t().remove);
@@ -252,8 +285,8 @@ function renderFavorites() {
 function renderFrequent() {
   let top = [];
   try { top = JSON.parse(q.get("top") || "[]"); } catch (e) {}
-  const favHosts = new Set(state.fav ? loadFavorites().map((f) => hostOf(f.url)) : []);
-  top = top.filter((e) => e && e.u && !favHosts.has(hostOf(e.u))).slice(0, 8);
+  // Shown next to Favorites even when a site is in both: these are the sites actually used most.
+  top = top.filter((e) => e && e.u).slice(0, 8);
   const section = $("freqSection");
   section.classList.toggle("hidden", !state.freq || !top.length);
   section.classList.toggle("freq", state.fav);
@@ -267,6 +300,7 @@ function renderFrequent() {
                   '<span class="fmeta"><span class="ftitle"></span><span class="fhost"></span></span>';
     a.querySelector(".badge").textContent = b.letter;
     a.querySelector(".badge").style.background = b.color;
+    attachIcon(a.querySelector(".badge"), e.u);
     a.querySelector(".ftitle").textContent = e.t || hostOf(e.u);
     a.querySelector(".fhost").textContent = hostOf(e.u);
     grid.appendChild(a);

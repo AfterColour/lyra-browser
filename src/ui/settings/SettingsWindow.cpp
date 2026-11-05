@@ -18,7 +18,8 @@
 HWND g_setHwnd = nullptr;
 std::vector<SPage> g_pages;
 
-static HWND    g_setSearch = nullptr, g_setEdit = nullptr;
+static HWND    g_setSearch = nullptr;   // unused: the search field is drawn by Lyra (see s_query)
+static HWND    g_setEdit = nullptr;
 static HBRUSH  g_fieldBrush = nullptr;
 static HFONT   g_sEditFont = nullptr;
 static int     g_sEditH = 18;
@@ -36,6 +37,8 @@ static int   g_sCapHover = -1, g_sCapDown = -1;      // window buttons: 0 minimi
 static SRow* g_sEditRow = nullptr;
 
 static float SS(float v) { return v * (float)g_sDpi / 96.f; }
+static bool s_sideTransparent = false;      // sidebar painted over Mica
+static void UpdateSettingsBackdrop();
 
 // ---- colours ---------------------------------------------------------------
 struct SPal { Color bg, side, card, field, border, text, text2, off, hover, pressed; };
@@ -184,12 +187,13 @@ static std::wstring SLower(std::wstring s) {
     return s;
 }
 
-static std::wstring SSearchText() {
-    if (!g_setSearch) return std::wstring();
-    wchar_t buf[256] = {};
-    GetWindowTextW(g_setSearch, buf, 256);
-    return TrimWs(buf);
-}
+// The search field is drawn by Lyra itself (text, selection, system caret) instead of being a
+// Windows edit control: an edit control in the top band of a window without a system title bar
+// is shown by DWM with a grey, see-through background.
+static std::wstring s_query;
+static bool s_searchActive = false, s_queryAllSelected = false;
+
+static std::wstring SSearchText() { return TrimWs(s_query); }
 
 static void SClampScroll() {
     SGeo G = Geo();
@@ -293,21 +297,101 @@ void SettingsOpenPage(int i) {
     if (i < 0 || i >= (int)g_pages.size()) return;
     g_sPage = i;
     g_sScroll = 0.f;
-    if (g_setSearch) {
-        SetWindowTextW(g_setSearch, L"");                 // EN_CHANGE rebuilds the view as well
-        if (GetFocus() != g_setSearch) ShowWindow(g_setSearch, SW_HIDE);
-    }
+    s_query.clear();
+    s_queryAllSelected = false;
     RebuildView();
 }
 
-// The search edit control is shown only while it is used: an idle, empty field is painted by
-// DrawSettings (placeholder included), since the system edit control paints its cue banner with
-// a light background regardless of WM_CTLCOLOREDIT.
-static void ShowSearch() {
-    if (!g_setSearch) return;
-    ShowWindow(g_setSearch, SW_SHOW);
-    SetFocus(g_setSearch);
+// ---- search field ------------------------------------------------------------
+static float SearchTextWidth(const std::wstring& text) {
+    if (text.empty() || !g_setHwnd) return 0.f;
+    HDC dc = GetDC(g_setHwnd);
+    float w = 0.f;
+    {
+        Graphics g(dc);
+        StringFormat fmt(StringFormat::GenericTypographic());
+        fmt.SetFormatFlags(fmt.GetFormatFlags() | StringFormatFlagsMeasureTrailingSpaces | StringFormatFlagsNoWrap);
+        RectF m;
+        g.MeasureString(text.c_str(), -1, g_sfBody.get(), RectF(0, 0, 100000, 1000), &fmt, &m);
+        w = m.Width;
+    }
+    ReleaseDC(g_setHwnd, dc);
+    return w;
+}
+
+// Text start, visible width and scroll offset (long queries scroll left to keep the end visible)
+static void SearchTextGeometry(float* x0, float* avail, float* offset) {
+    const SGeo G = Geo();
+    const RectF sp = SSearchRect(G);
+    *x0 = sp.X + SS(30);
+    *avail = sp.Width - SS(40);
+    *offset = std::max(0.f, SearchTextWidth(s_query) - *avail);
+}
+
+static void SearchUpdateCaret() {
+    if (!s_searchActive || !g_setHwnd || GetFocus() != g_setHwnd) return;
+    float x0, avail, off;
+    SearchTextGeometry(&x0, &avail, &off);
+    const RectF sp = SSearchRect(Geo());
+    const float h = SS(16);
+    SetCaretPos((int)(x0 + SearchTextWidth(s_query) - off), (int)(sp.Y + (sp.Height - h) / 2));
+}
+
+static void SearchActivate() {
+    if (!g_setHwnd) return;
+    SCommitTextEdit();
+    if (GetFocus() != g_setHwnd) SetFocus(g_setHwnd);
+    if (!s_searchActive) {
+        s_searchActive = true;
+        CreateCaret(g_setHwnd, nullptr, std::max(1, (int)SS(1)), (int)SS(16));
+        ShowCaret(g_setHwnd);
+    }
+    SearchUpdateCaret();
     InvalidateRect(g_setHwnd, nullptr, FALSE);
+}
+
+static void SearchDeactivate() {
+    if (!s_searchActive) return;
+    s_searchActive = false;
+    s_queryAllSelected = false;
+    DestroyCaret();
+    if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
+}
+
+static void SearchChanged() {
+    g_sScroll = 0.f;
+    RebuildView();
+    SearchUpdateCaret();
+}
+
+static void SearchType(wchar_t ch) {
+    if (s_queryAllSelected) { s_query.clear(); s_queryAllSelected = false; }
+    if (ch == 8) {                                              // Backspace
+        if (!s_query.empty()) s_query.pop_back();
+    } else if (ch == 127) {                                     // Ctrl+Backspace: the last word
+        while (!s_query.empty() && iswspace(s_query.back())) s_query.pop_back();
+        while (!s_query.empty() && !iswspace(s_query.back())) s_query.pop_back();
+    } else if (ch >= 32 && s_query.size() < 200) {
+        s_query += ch;
+    } else {
+        return;
+    }
+    SearchChanged();
+}
+
+static void SearchPaste() {
+    if (!OpenClipboard(g_setHwnd)) return;
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* text = (const wchar_t*)GlobalLock(h)) {
+            std::wstring t = text;
+            GlobalUnlock(h);
+            for (auto& c : t) if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
+            if (s_queryAllSelected) { s_query.clear(); s_queryAllSelected = false; }
+            s_query += t.substr(0, 200 - std::min<size_t>(200, s_query.size()));
+            SearchChanged();
+        }
+    }
+    CloseClipboard();
 }
 
 
@@ -430,12 +514,13 @@ static void DrawSettings(Graphics& g) {
     const std::wstring query = SSearchText();
     const bool searching = !query.empty();
 
-    { SolidBrush b(P.bg); g.FillRectangle(&b, 0.f, 0.f, G.W, G.H); }
+    // With Mica the sidebar is left transparent: the backdrop shows through (macOS-like).
+    { SolidBrush b(P.bg); g.FillRectangle(&b, s_sideTransparent ? G.sideW : 0.f, 0.f, G.W, G.H); }
 
     // Sidebar
     {
         SolidBrush b(P.side);
-        g.FillRectangle(&b, 0.f, 0.f, G.sideW, G.H);
+        if (!s_sideTransparent) g.FillRectangle(&b, 0.f, 0.f, G.sideW, G.H);
         Pen sep(P.border, 1.f);
         g.DrawLine(&sep, G.sideW - 0.5f, 0.f, G.sideW - 0.5f, G.H);
         SText(g, Tr(L"Lyra Settings", L"Настройки Lyra"), g_sfSide.get(),
@@ -443,11 +528,26 @@ static void DrawSettings(Graphics& g) {
 
         RectF sp = SSearchRect(G);
         FillRound(g, P.field, sp, SS(8));
-        const bool focused = g_setSearch && GetFocus() == g_setSearch;
+        const bool focused = s_searchActive;
         StrokeRound(g, focused ? accent : P.border, sp, SS(8), focused ? SS(1.5f) : 1.f);
         DrawGlyph(g, L"\uE721", RectF(sp.X + SS(6), sp.Y, SS(22), sp.Height), P.text2, g_sfIconSm.get());
-        if (!(g_setSearch && IsWindowVisible(g_setSearch)))
-            SText(g, Tr(L"Search", L"Поиск"), g_sfBody.get(), RectF(sp.X + SS(30), sp.Y, sp.Width - SS(40), sp.Height), P.text2);
+        if (s_query.empty()) {
+            if (!focused)
+                SText(g, Tr(L"Search", L"Поиск"), g_sfBody.get(), RectF(sp.X + SS(30), sp.Y, sp.Width - SS(40), sp.Height), P.text2);
+        } else {
+            float x0, avail, off;
+            SearchTextGeometry(&x0, &avail, &off);
+            const RectF clip(x0, sp.Y, avail, sp.Height);
+            StringFormat fmt(StringFormat::GenericTypographic());
+            fmt.SetFormatFlags(fmt.GetFormatFlags() | StringFormatFlagsMeasureTrailingSpaces | StringFormatFlagsNoWrap);
+            fmt.SetLineAlignment(StringAlignmentCenter);
+            g.SetClip(clip);
+            if (s_queryAllSelected && focused)
+                FillRound(g, WithAlpha(accent, 90), RectF(x0 - off, sp.Y + SS(7), SearchTextWidth(s_query), sp.Height - SS(14)), SS(3));
+            SolidBrush tb(P.text);
+            g.DrawString(s_query.c_str(), -1, g_sfBody.get(), RectF(x0 - off, sp.Y, avail + off + SS(4), sp.Height), &fmt, &tb);
+            g.ResetClip();
+        }
 
         const std::vector<int> side = SidebarPages();
         const int selPage = searching ? -1 : SidebarPageOf(g_sPage);
@@ -767,6 +867,7 @@ void SettingsThemeChanged() {
     if (g_fieldBrush) DeleteObject(g_fieldBrush);
     g_fieldBrush = CreateSolidBrush(ToColorRef(Pal().field));
     ApplyDwm(g_setHwnd);
+    UpdateSettingsBackdrop();
     // The Windows accent swatch shows the current Windows colour
     for (auto& p : g_pages)
         for (auto& r : p.rows)
@@ -777,35 +878,14 @@ void SettingsThemeChanged() {
 }
 
 static void PaintSettings(HDC hdc, const RECT& cr) {
-    const int w = cr.right, h = cr.bottom;
-    if (w <= 0 || h <= 0) return;
-    // 32-bit DIB with opaque alpha (see PaintChrome in ui/Chrome.cpp)
-    BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP bmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bmp || !bits) { if (bmp) DeleteObject(bmp); return; }
-    HDC mem = CreateCompatibleDC(hdc);
-    HGDIOBJ old = SelectObject(mem, bmp);
-    {
-        Graphics g(mem);
-        g.SetSmoothingMode(SmoothingModeHighQuality);
-        g.SetPixelOffsetMode(PixelOffsetModeHalf);
-        g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
-        DrawSettings(g);
-    }
-    GdiFlush();
-    DWORD* px = (DWORD*)bits;
-    for (size_t i = 0, n = (size_t)w * (size_t)h; i < n; ++i) px[i] |= 0xFF000000u;
-    BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    s_sideTransparent = MicaActive();
+    PaintBuffered(hdc, cr, !s_sideTransparent, [](Graphics& g) { DrawSettings(g); });
+}
+
+static void UpdateSettingsBackdrop() {
+    if (!g_setHwnd) return;
+    MARGINS m = { (int)std::ceil(SS(240)), 0, 0, 0 };     // the sidebar
+    ApplyBackdrop(g_setHwnd, 2 /* Mica */, m);
 }
 
 static void SGoBack() {
@@ -819,15 +899,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         g_setHwnd = hWnd;
         g_sDpi = GetDpiForWindow(hWnd);
         HINSTANCE hi = (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE);
-        g_setSearch = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL | ES_LEFT,
-                                      0, 0, 10, 10, hWnd, (HMENU)(INT_PTR)SET_ID_SEARCH, hi, nullptr);
-        g_setEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL | ES_LEFT,
-                                    0, 0, 10, 10, hWnd, (HMENU)(INT_PTR)SET_ID_EDIT, hi, nullptr);
-        g_oldSEditProc = (WNDPROC)SetWindowLongPtrW(g_setSearch, GWLP_WNDPROC, (LONG_PTR)SEditProc);
-        SetWindowLongPtrW(g_setEdit, GWLP_WNDPROC, (LONG_PTR)SEditProc);
-        // No visual style: a themed (dark mode) edit paints its own grey background.
-        SetWindowTheme(g_setSearch, L"", L"");
-        SetWindowTheme(g_setEdit, L"", L"");
+        g_setEdit = CreateOpaqueEdit(hWnd, SET_ID_EDIT, hi);
+        g_oldSEditProc = (WNDPROC)SetWindowLongPtrW(g_setEdit, GWLP_WNDPROC, (LONG_PTR)SEditProc);
+        s_query.clear();
+        s_searchActive = s_queryAllSelected = false;
         SRebuildFonts();
         BuildPages();
         SettingsThemeChanged();
@@ -932,6 +1007,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
     case WM_DPICHANGED: {
         g_sDpi = HIWORD(wParam);
         SRebuildFonts();
+        UpdateSettingsBackdrop();
         const RECT* r = (const RECT*)lParam;
         SetWindowPos(hWnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
@@ -964,13 +1040,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
     case WM_COMMAND: {
         HWND from = (HWND)lParam;
         WORD code = HIWORD(wParam);
-        if (from == g_setSearch) {
-            if (code == EN_CHANGE) { g_sScroll = 0.f; RebuildView(); }
-            else if (code == EN_KILLFOCUS) {
-                if (SSearchText().empty()) ShowWindow(g_setSearch, SW_HIDE);
-                InvalidateRect(hWnd, nullptr, FALSE);
-            } else if (code == EN_SETFOCUS) InvalidateRect(hWnd, nullptr, FALSE);
-        } else if (from == g_setEdit && code == EN_KILLFOCUS) {
+        if (from == g_setEdit && code == EN_KILLFOCUS) {
             SCommitTextEdit();
         }
         return 0;
@@ -1020,9 +1090,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         const float x = (float)GET_X_LPARAM(lParam), y = (float)GET_Y_LPARAM(lParam);
         const SGeo G = Geo();
         SCommitTextEdit();
+        if (SSearchRect(G).Contains(x, y)) { SearchActivate(); return 0; }
+        SearchDeactivate();
         const int si = SSideHit(G, x, y);
         if (si >= 0) { SettingsOpenPage(SidebarPages()[si]); SetFocus(hWnd); return 0; }
-        if (SSearchRect(G).Contains(x, y)) { ShowSearch(); return 0; }
         if (OnDetailPage() && SBackRect(G).Contains(x, y)) { SGoBack(); SetFocus(hWnd); return 0; }
         const int vi = SRowAt(G, x, y);
         if (vi >= 0 && g_view[vi].row) {
@@ -1078,14 +1149,25 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
     case WM_KEYDOWN: {
         const SGeo G = Geo();
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        if (s_searchActive) {                        // keys for the search field
+            if (wParam == VK_ESCAPE) {
+                if (!s_query.empty()) { s_query.clear(); s_queryAllSelected = false; SearchChanged(); }
+                else SearchDeactivate();
+                return 0;
+            }
+            if (ctrl && wParam == 'A') { s_queryAllSelected = !s_query.empty(); InvalidateRect(hWnd, nullptr, FALSE); return 0; }
+            if (ctrl && wParam == 'V') { SearchPaste(); return 0; }
+            if (wParam == VK_DELETE && s_queryAllSelected) { s_query.clear(); s_queryAllSelected = false; SearchChanged(); return 0; }
+            if (wParam == VK_BACK || wParam == VK_RETURN) return 0;   // handled as characters
+        }
         if (wParam == VK_ESCAPE) {
-            if (!SSearchText().empty()) SetWindowTextW(g_setSearch, L"");
+            if (!SSearchText().empty()) { s_query.clear(); SearchChanged(); }
             else if (OnDetailPage()) SGoBack();
             else DestroyWindow(hWnd);
             return 0;
         }
         if (wParam == VK_BACK && OnDetailPage()) { SGoBack(); return 0; }
-        if (ctrl && wParam == 'F') { ShowSearch(); return 0; }
+        if (ctrl && wParam == 'F') { SearchActivate(); return 0; }
         switch (wParam) {
         case VK_UP:    SScrollBy(-SS(48)); return 0;
         case VK_DOWN:  SScrollBy(SS(48)); return 0;
@@ -1096,6 +1178,20 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         }
         break;
     }
+    case WM_CHAR:
+        if (s_searchActive) { SearchType((wchar_t)wParam); return 0; }
+        break;
+    case WM_SETFOCUS:
+        if (s_searchActive) {
+            CreateCaret(hWnd, nullptr, std::max(1, (int)SS(1)), (int)SS(16));
+            ShowCaret(hWnd);
+            SearchUpdateCaret();
+        }
+        return 0;
+    case WM_KILLFOCUS:
+        if (s_searchActive) DestroyCaret();
+        return 0;
+
     case WM_CLOSE:
         DestroyWindow(hWnd);
         return 0;
@@ -1109,7 +1205,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         if (g_sEditFont)  { DeleteObject(g_sEditFont);  g_sEditFont = nullptr; }
         g_sfBody.reset(); g_sfSmall.reset(); g_sfTitle.reset(); g_sfGroup.reset(); g_sfSide.reset();
         g_sfIcon.reset(); g_sfIconSm.reset(); g_sfCaption.reset(); g_sfBadge.reset();
-        g_setSearch = g_setEdit = nullptr;
+        g_setEdit = nullptr;
+        s_searchActive = false;
         g_setHwnd = nullptr;
         return 0;                                  // no PostQuitMessage: this is not the main window
     }

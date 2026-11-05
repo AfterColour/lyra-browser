@@ -3,6 +3,7 @@
 // A popup below the address field (owned by the main window, never activated, so the field
 // keeps the keyboard focus). Rows: "search for" / "go to" what was typed, then history matches.
 #include "ui/Suggestions.h"
+#include "browser/Favicons.h"
 #include "browser/History.h"
 #include "browser/TabManager.h"
 #include "core/Localization.h"
@@ -108,8 +109,14 @@ static void Paint(HDC hdc) {
 
             const float iconS = S(16);
             RectF icon(row.X + S(10), row.Y + (row.Height - iconS) / 2, iconS, iconS);
-            const wchar_t* glyph = r.kind == SuggestRow::Search ? L"" : r.kind == SuggestRow::Go ? L"" : L"";
-            DrawGlyph(g, glyph, icon, T.text2, g_fIconSm.get());
+            Bitmap* fav = r.kind == SuggestRow::History ? FaviconFor(r.url) : nullptr;
+            if (fav) {
+                g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+                g.DrawImage(fav, icon);
+            } else {
+                const wchar_t* glyph = r.kind == SuggestRow::Search ? L"\uE721" : r.kind == SuggestRow::Go ? L"\uE774" : L"\uE81C";
+                DrawGlyph(g, glyph, icon, T.text2, g_fIconSm.get());
+            }
 
             const float tx = icon.GetRight() + S(10);
             const float right = row.GetRight() - S(10);
