@@ -1,0 +1,310 @@
+<!doctype html>
+<!--
+  Lyra start page (and the first-run welcome screen with ?welcome=1).
+  Lyra opens it as file:///<Lyra folder>/resources/start.html?lang=..&theme=..&accent=..&fav=..
+  Favourites are kept in localStorage. Settings changes are sent to Lyra as lyra://setup?...
+  links, which Lyra handles itself (browser/StartPage.cpp) and never loads.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Tab</title>
+<style>
+  :root {
+    --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
+    --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  :root[data-theme="dark"] {
+    --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
+    --hover: rgba(255,255,255,.06); --field: #2E3036; --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--page); color: var(--text);
+    font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-user-select: none; user-select: none;
+  }
+  button { font: inherit; color: inherit; }
+  .hidden { display: none !important; }
+
+  /* ---- start page ---- */
+  main { width: 100%; max-width: 780px; padding: 0 32px 80px; }
+  h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 14px 10px; }
+  .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
+          text-decoration: none; color: var(--text); padding: 6px 0; border-radius: 12px; outline: none; }
+  .tile:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .icon { width: 60px; height: 60px; border-radius: 14px; background: var(--card);
+          box-shadow: 0 0 0 1px var(--border), var(--shadow);
+          display: flex; align-items: center; justify-content: center; transition: transform .12s ease; }
+  .tile:hover .icon { transform: translateY(-2px); }
+  .badge { width: 30px; height: 30px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 15px;
+           display: flex; align-items: center; justify-content: center; }
+  .name { font-size: 12px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .remove { position: absolute; top: 0; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+            border: 0; background: var(--card); box-shadow: 0 0 0 1px var(--border); color: var(--text2);
+            font-size: 12px; line-height: 20px; padding: 0; cursor: pointer; opacity: 0; transition: opacity .12s; }
+  .tile:hover .remove, .remove:focus-visible { opacity: 1; }
+  .add .icon { background: transparent; box-shadow: 0 0 0 1px var(--border) inset; color: var(--text2); font-size: 26px; font-weight: 300; }
+  .corner { position: fixed; right: 20px; bottom: 16px; height: 30px; border: 0; border-radius: 7px;
+            background: var(--card); box-shadow: 0 0 0 1px var(--border); padding: 0 12px; font-size: 12px;
+            display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .corner:hover { background: var(--hover); }
+  .corner svg { color: var(--accent); }
+
+  /* ---- add favourite dialog ---- */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
+  .dialog { width: 360px; background: var(--card); border-radius: 12px; padding: 20px;
+            box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: 10px; }
+  .dialog h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .dialog label { font-size: 12px; color: var(--text2); display: flex; flex-direction: column; gap: 4px; }
+  .dialog input { height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px; font: inherit; outline: none; -webkit-user-select: text; user-select: text; }
+  .dialog input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  .btn { height: 32px; padding: 0 16px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); cursor: pointer; }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* ---- welcome ---- */
+  .welcome { width: 640px; max-width: calc(100% - 32px); background: var(--card); border-radius: 16px;
+             box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.12); overflow: hidden; }
+  .welcome .body { padding: 32px 36px 8px; display: flex; flex-direction: column; gap: 20px; }
+  .welcome h1 { margin: 0; font-size: 24px; font-weight: 600; }
+  .welcome p { margin: 6px 0 0; color: var(--text2); }
+  .group h4 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--text2); }
+  .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .seg button { height: 40px; border-radius: 8px; border: 0; background: var(--page); box-shadow: 0 0 0 1px var(--border); cursor: pointer; }
+  .seg button:hover { background: var(--hover); }
+  .seg button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); font-weight: 600; background: var(--card); }
+  .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+  .welcome .foot { margin-top: 12px; padding: 16px 36px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<main id="start" class="hidden">
+  <section id="favSection">
+    <h2 id="favTitle"></h2>
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+<button class="corner hidden" id="customize">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 4h7M12 4h2M2 12h2M7 12h7"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>
+  <span id="customizeText"></span>
+</button>
+
+<div class="scrim hidden" id="addScrim">
+  <form class="dialog" id="addForm">
+    <h3 id="addTitle"></h3>
+    <label><span id="addNameLabel"></span><input id="addName" autocomplete="off"></label>
+    <label><span id="addUrlLabel"></span><input id="addUrl" autocomplete="off" placeholder="example.com"></label>
+    <div class="row">
+      <button type="button" class="btn" id="addCancel"></button>
+      <button type="submit" class="btn primary" id="addOk"></button>
+    </div>
+  </form>
+</div>
+
+<section class="welcome hidden" id="welcome">
+  <div class="body">
+    <div><h1 id="wTitle"></h1><p id="wText"></p></div>
+    <div class="group"><h4 id="wLang"></h4><div class="seg" data-key="lang"></div></div>
+    <div class="group"><h4 id="wTheme"></h4><div class="seg" data-key="theme"></div></div>
+    <div class="group"><h4 id="wLayout"></h4><div class="seg" data-key="layout"></div></div>
+    <div class="group"><h4 id="wDensity"></h4><div class="seg" data-key="density"></div></div>
+    <div class="group"><h4 id="wStart"></h4>
+      <label class="check"><input type="checkbox" id="wFav"><span id="wFavText"></span></label>
+    </div>
+  </div>
+  <div class="foot"><button class="btn primary" id="wDone"></button></div>
+</section>
+
+<script>
+"use strict";
+const q = new URLSearchParams(location.search);
+const state = {
+  lang: +(q.get("language") || 0),        // 0 as in Windows, 1 English, 2 Russian
+  theme: +(q.get("themeMode") || 0),      // 0 as in Windows, 1 light, 2 dark
+  layout: +(q.get("layout") || 0),
+  density: +(q.get("density") || 0),
+  fav: q.get("fav") !== "0",
+};
+const systemRu = q.get("sysru") === "1";
+const systemDark = q.get("sysdark") === "1";
+const welcome = q.get("welcome") === "1";
+if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.style.setProperty("--accent", "#" + q.get("accent"));
+
+const T = {
+  en: {
+    newTab: "New Tab", favorites: "Favorites", add: "Add", customize: "Customize start page",
+    addTitle: "Add to Favorites", name: "Name", address: "Address", cancel: "Cancel", remove: "Remove",
+    wTitle: "Welcome to Lyra", wText: "Set up the basics. Everything can be changed later in Settings.",
+    wLang: "Language", wTheme: "Theme", wLayout: "Tabs", wDensity: "Toolbar size", wStart: "Start page",
+    wFav: "Show Favorites", wDone: "Get started",
+    lang: ["As in Windows", "English", "Русский"], theme: ["As in Windows", "Light", "Dark"],
+    layout: ["Compact", "Separate tab bar", "Vertical"], density: ["Compact", "Normal", "Large"],
+  },
+  ru: {
+    newTab: "Новая вкладка", favorites: "Избранное", add: "Добавить", customize: "Настроить стартовую страницу",
+    addTitle: "Добавить в избранное", name: "Название", address: "Адрес", cancel: "Отмена", remove: "Убрать",
+    wTitle: "Добро пожаловать в Lyra", wText: "Настройте основное — всё это можно поменять позже в настройках.",
+    wLang: "Язык", wTheme: "Тема", wLayout: "Вкладки", wDensity: "Размер панелей", wStart: "Стартовая страница",
+    wFav: "Показывать избранное", wDone: "Начать",
+    lang: ["Как в Windows", "English", "Русский"], theme: ["Как в Windows", "Светлая", "Тёмная"],
+    layout: ["Компактно", "Отдельной строкой", "Вертикально"], density: ["Компактный", "Обычный", "Крупный"],
+  },
+};
+const ru = () => state.lang === 2 || (state.lang === 0 && systemRu);
+const t = () => (ru() ? T.ru : T.en);
+const $ = (id) => document.getElementById(id);
+
+function applyTheme() {
+  const dark = state.theme === 2 || (state.theme === 0 && systemDark);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+
+// ---- favourites ----------------------------------------------------------------
+const KEY = "lyra.favorites";
+const DEFAULTS_EN = [
+  { title: "YouTube", url: "https://www.youtube.com/" }, { title: "Wikipedia", url: "https://en.wikipedia.org/" },
+  { title: "GitHub", url: "https://github.com/" }, { title: "Gmail", url: "https://mail.google.com/" },
+  { title: "Maps", url: "https://www.google.com/maps" }, { title: "Reddit", url: "https://www.reddit.com/" },
+];
+const DEFAULTS_RU = [
+  { title: "YouTube", url: "https://www.youtube.com/" }, { title: "Википедия", url: "https://ru.wikipedia.org/" },
+  { title: "GitHub", url: "https://github.com/" }, { title: "Хабр", url: "https://habr.com/" },
+  { title: "Почта", url: "https://mail.google.com/" }, { title: "Карты", url: "https://www.google.com/maps" },
+];
+function loadFavorites() {
+  try {
+    const v = JSON.parse(localStorage.getItem(KEY));
+    if (Array.isArray(v)) return v.filter((f) => f && typeof f.url === "string");
+  } catch (e) {}
+  return (ru() ? DEFAULTS_RU : DEFAULTS_EN).slice();
+}
+function saveFavorites(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) {} }
+
+const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
+function badgeFor(f) {
+  const host = hostOf(f.url);
+  let h = 2166136261 >>> 0;
+  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const letter = ((f.title || host).match(/[\p{L}\p{N}]/u) || ["•"])[0].toUpperCase();
+  return { letter, color: PALETTE[Math.imul(h, 2654435761) >>> 29] };   // same colour as the tab badge
+}
+
+function renderFavorites() {
+  const grid = $("grid");
+  grid.textContent = "";
+  const list = loadFavorites();
+  list.forEach((f, i) => {
+    const a = document.createElement("a");
+    a.className = "tile"; a.href = f.url; a.title = f.url;
+    const b = badgeFor(f);
+    a.innerHTML = '<span class="icon"><span class="badge"></span></span><span class="name"></span>' +
+                  '<button class="remove" type="button">✕</button>';
+    a.querySelector(".badge").textContent = b.letter;
+    a.querySelector(".badge").style.background = b.color;
+    a.querySelector(".name").textContent = f.title || hostOf(f.url);
+    const rm = a.querySelector(".remove");
+    rm.title = t().remove; rm.setAttribute("aria-label", t().remove);
+    rm.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const l = loadFavorites(); l.splice(i, 1); saveFavorites(l); renderFavorites();
+    });
+    grid.appendChild(a);
+  });
+  const add = document.createElement("button");
+  add.type = "button"; add.className = "tile add";
+  add.style.border = "0"; add.style.background = "none"; add.style.cursor = "pointer";
+  add.innerHTML = '<span class="icon">+</span><span class="name"></span>';
+  add.querySelector(".name").textContent = t().add;
+  add.addEventListener("click", openAdd);
+  grid.appendChild(add);
+}
+
+function openAdd() {
+  $("addName").value = ""; $("addUrl").value = "";
+  $("addScrim").classList.remove("hidden");
+  $("addUrl").focus();
+}
+function closeAdd() { $("addScrim").classList.add("hidden"); }
+$("addCancel").addEventListener("click", closeAdd);
+$("addScrim").addEventListener("click", (e) => { if (e.target === $("addScrim")) closeAdd(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAdd(); });
+$("addForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  let url = $("addUrl").value.trim();
+  if (!url) { $("addUrl").focus(); return; }
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
+  const list = loadFavorites();
+  list.push({ title: $("addName").value.trim() || hostOf(url), url });
+  saveFavorites(list);
+  closeAdd();
+  renderFavorites();
+});
+$("customize").addEventListener("click", () => { location.href = "lyra://settings"; });
+
+// ---- welcome -------------------------------------------------------------------
+function setupUrl(extra) {
+  return "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
+         "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + (extra || "");
+}
+function renderWelcome() {
+  const s = t();
+  for (const id of ["wTitle", "wText", "wLang", "wTheme", "wLayout", "wDensity", "wStart", "wFavText", "wDone"])
+    $(id).textContent = s[id === "wFavText" ? "wFav" : id];
+  document.querySelectorAll(".seg").forEach((seg) => {
+    const key = seg.dataset.key;
+    seg.textContent = "";
+    s[key].forEach((label, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      b.setAttribute("aria-pressed", String(state[key] === i));
+      b.addEventListener("click", () => {
+        state[key] = i;
+        applyTheme(); renderTexts(); renderWelcome();
+        location.href = setupUrl("&live=1");      // Lyra applies it at once, the page stays
+      });
+      seg.appendChild(b);
+    });
+  });
+  $("wFav").checked = state.fav;
+}
+$("wFav").addEventListener("change", () => { state.fav = $("wFav").checked; location.href = setupUrl("&live=1"); });
+$("wDone").addEventListener("click", () => { location.href = setupUrl("&done=1"); });
+
+// ---- texts ---------------------------------------------------------------------
+function renderTexts() {
+  const s = t();
+  document.title = s.newTab;
+  document.documentElement.lang = ru() ? "ru" : "en";
+  $("favTitle").textContent = s.favorites;
+  $("customizeText").textContent = s.customize;
+  $("addTitle").textContent = s.addTitle;
+  $("addNameLabel").textContent = s.name;
+  $("addUrlLabel").textContent = s.address;
+  $("addCancel").textContent = s.cancel;
+  $("addOk").textContent = s.add;
+}
+
+applyTheme();
+renderTexts();
+if (welcome) {
+  $("welcome").classList.remove("hidden");
+  renderWelcome();
+} else {
+  $("start").classList.remove("hidden");
+  $("customize").classList.remove("hidden");
+  $("favSection").classList.toggle("hidden", !state.fav);
+  renderFavorites();
+}
+</script>
+</body>
+</html>

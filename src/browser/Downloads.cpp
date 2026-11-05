@@ -1,5 +1,6 @@
 // Lyra — загрузки файлов в папку «Загрузки».
 #include "browser/Downloads.h"
+#include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -82,8 +83,9 @@ static void OnDownloadFinished(WKDownloadRef download, const void*) {
     Log("download finished: %ls", path.c_str());
     if (path.empty() || g_closing || !g_hWnd) return;
     const wchar_t* base = wcsrchr(path.c_str(), L'\\');
-    std::wstring msg = std::wstring(L"Downloaded \x201C") + (base ? base + 1 : path.c_str()) +
-                       L"\x201D to your Downloads folder.\n\nShow it in the folder?";
+    std::wstring msg = std::wstring(Tr(L"Downloaded \x201C", L"Файл \x00AB")) + (base ? base + 1 : path.c_str()) +
+                       Tr(L"\x201D to your Downloads folder.\n\nShow it in the folder?",
+                          L"\x00BB сохранён в папку \x00ABЗагрузки\x00BB.\n\nПоказать его в папке?");
     int r;
     { ModalScope modal; r = MessageBoxW(g_hWnd, msg.c_str(), kAppName, MB_YESNO | MB_ICONINFORMATION); }
     if (r == IDYES) {
@@ -99,7 +101,7 @@ static void OnDownloadFailed(WKDownloadRef download, WKErrorRef error, WKDataRef
     if (error) if (WKStringRef s = WKErrorCopyLocalizedDescription(error)) { text = WKStr(s); WKRelease(s); }
     Log("download failed: code=%d %ls", code, text.c_str());
     if (code == 302 || code == 400 || g_closing || !g_hWnd) return;   // cancelled
-    std::wstring msg = L"The download failed.\n\n" + text;
+    std::wstring msg = std::wstring(Tr(L"The download failed.\n\n", L"Не удалось скачать файл.\n\n")) + text;
     ModalScope modal;
     MessageBoxW(g_hWnd, msg.c_str(), kAppName, MB_OK | MB_ICONWARNING);
 }

@@ -1,5 +1,6 @@
 // Lyra — цвета интерфейса, акцент, светлая/тёмная тема, оформление заголовка окна (DWM).
 #include "ui/Theme.h"
+#include "browser/StartPage.h"
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
 #include "ui/MainWindow.h"
@@ -159,4 +160,5 @@ void ApplyTheme(bool dark) {
         if (g_urlEdit) InvalidateRect(g_urlEdit, nullptr, TRUE);
     }
     SettingsThemeChanged();
+    RefreshStartPages();                  // the start page follows the theme and accent
 }

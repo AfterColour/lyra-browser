@@ -1,5 +1,6 @@
 // Lyra — поле ввода адреса.
 #include "ui/AddressBar.h"
+#include "core/Url.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "ui/Chrome.h"
@@ -33,7 +34,7 @@ void PositionEdit() {
 void ShowUrlEdit() {
     if (!g_urlEdit) return;
     Tab* t = ActiveTab();
-    std::wstring text = (t && t->url != L"about:blank") ? t->url : L"";
+    std::wstring text = (t && t->url != L"about:blank" && !IsStartPageUrl(t->url)) ? t->url : L"";
     SetWindowTextW(g_urlEdit, text.c_str());
     PositionEdit();
     ShowWindow(g_urlEdit, SW_SHOW);

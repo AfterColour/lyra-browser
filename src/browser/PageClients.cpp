@@ -1,5 +1,7 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
+#include "core/Url.h"
+#include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/Downloads.h"
 #include "browser/Tab.h"
@@ -17,6 +19,7 @@ static void OnDidFail(WKPageRef, WKNavigationRef, WKErrorRef, WKTypeRef, const v
 static void OnDidFailProvisional(WKPageRef, WKNavigationRef, WKErrorRef error, WKTypeRef, const void* ci);
 static void OnWebProcessDidTerminate(WKPageRef, WKProcessTerminationReason reason, const void* ci);
 static void OnDecidePolicyForResponse(WKPageRef, WKNavigationResponseRef nr, WKFramePolicyListenerRef listener, WKTypeRef, const void*);
+static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKFramePolicyListenerRef listener, WKTypeRef, const void* ci);
 static void OnStateChanged(const void* ci);
 static WKPageRef OnCreateNewPage(WKPageRef, WKPageConfigurationRef conf, WKNavigationActionRef, WKWindowFeaturesRef, const void* ci);
 static void OnPageClose(WKPageRef, const void* ci);
@@ -48,7 +51,7 @@ void LoadInfoPage(Tab& t, const std::wstring& heading, const std::wstring& text,
         L"<p>" + HtmlEscape(text) + L"</p>";
     if (!details.empty()) html += L"<p><code>" + HtmlEscape(details) + L"</code></p>";
     if (!failedUrl.empty())
-        html += L"<button onclick='location.replace(" + HtmlEscape(JsString(failedUrl)) + L")'>Try again</button>";
+        html += L"<button onclick='location.replace(" + HtmlEscape(JsString(failedUrl)) + L")'>" + std::wstring(Tr(L"Try again", L"Повторить")) + L"</button>";
     html += L"</main></body></html>";
 
     WKStringRef body = WKStringCreateWithUTF8CString(ToUtf8(html).c_str());
@@ -131,8 +134,8 @@ static void OnDidFailProvisional(WKPageRef, WKNavigationRef, WKErrorRef error, W
         return;
     if (domain == L"WebKitInternal" || url.empty() || url == L"about:blank") return;
 
-    LoadInfoPage(*t, L"This page can\x2019t be opened",
-                 text.empty() ? L"The server could not be reached." : text,
+    LoadInfoPage(*t, Tr(L"This page can\x2019t be opened", L"Не удаётся открыть страницу"),
+                 text.empty() ? std::wstring(Tr(L"The server could not be reached.", L"Сервер недоступен.")) : text,
                  domain + L" " + std::to_wstring(code) + L" \x2014 " + url, url);
 }
 
@@ -143,6 +146,28 @@ static void OnWebProcessDidTerminate(WKPageRef, WKProcessTerminationReason reaso
     if (reason == kWKProcessTerminationReasonRequestedByClient) return;
     // Do not restart the process from inside the termination notification.
     PostMessageW(g_hWnd, WM_APP_TAB_CRASHED, (WPARAM)t->id, (LPARAM)reason);
+}
+
+// lyra://... addresses are commands from Lyra's own pages (start page, welcome screen): they are
+// never loaded, the main window carries them out (browser/StartPage.cpp).
+static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKFramePolicyListenerRef listener,
+                                    WKTypeRef, const void* ci) {
+    std::wstring url;
+    if (WKURLRequestRef req = WKNavigationActionCopyRequest(action)) {
+        if (WKURLRef u = WKURLRequestCopyURL(req)) {
+            if (WKStringRef s = WKURLCopyString(u)) { url = WKStr(s); WKRelease(s); }
+            WKRelease(u);
+        }
+        WKRelease(req);
+    }
+    if (_wcsnicmp(url.c_str(), L"lyra:", 5) == 0) {
+        WKFramePolicyListenerIgnore(listener);
+        TabCtx* c = (TabCtx*)ci;
+        if (c && g_hWnd && !g_closing)
+            PostMessageW(g_hWnd, WM_APP_LYRA_URL, (WPARAM)c->id, (LPARAM)new std::wstring(url));
+        return;
+    }
+    WKFramePolicyListenerUse(listener);
 }
 
 // Only the main frame decides whether a response is shown or saved.
@@ -283,6 +308,7 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
     WKPageNavigationClientV3 nc = {};
     nc.base.version = 3;
     nc.base.clientInfo = ctx;           // stable heap object, outlives every WebKit callback (see TabCtx)
+    nc.decidePolicyForNavigationAction   = OnDecidePolicyForAction;
     nc.decidePolicyForNavigationResponse = OnDecidePolicyForResponse;
     nc.didStartProvisionalNavigation     = OnDidStart;
     nc.didFailProvisionalNavigation      = OnDidFailProvisional;

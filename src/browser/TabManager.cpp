@@ -1,5 +1,7 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/StartPage.h"
+#include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/PageClients.h"
 #include "browser/Tab.h"
@@ -67,7 +69,7 @@ bool SyncTab(Tab& t) {
     if (WKStringRef ts = WKPageCopyTitle(t.page)) { title = WKStr(ts); WKRelease(ts); }
     if (title.empty()) {
         title = HostOf(t.url);
-        if (title.empty()) title = L"New Tab";
+        if (title.empty()) title = Tr(L"New Tab", L"Новая вкладка");
     }
     if (title != t.title) { t.title = title; changed = titleChanged = true; }
 
@@ -128,7 +130,7 @@ static void Navigate(WKPageRef page, const std::string& utf8Url) {
 }
 
 void NavigateActive(const std::wstring& input) {
-    if (Tab* t = ActiveTab()) Navigate(t->page, ResolveInput(input));
+    if (Tab* t = ActiveTab()) Navigate(t->page, ResolveNavigation(input));
 }
 
 static WKPageConfigurationRef CreatePageConfiguration() {
@@ -200,7 +202,7 @@ void CreateTab(const std::wstring& input) {
     WKPageConfigurationRef conf = CreatePageConfiguration();
     Tab* t = CreateTabWithConfiguration(conf, false);
     WKRelease(conf);
-    if (t) Navigate(t->page, ResolveInput(input));
+    if (t) Navigate(t->page, ResolveNavigation(input));
 }
 
 // Stops every path by which the tab can still be reached from our side:
@@ -322,9 +324,11 @@ void HandleTabCrashed(unsigned long long id, int reason) {
     StopLoadingIndicator(*t);
     std::wstring url = t->url;
     if (reason == kWKProcessTerminationReasonExceededMemoryLimit)
-        LoadInfoPage(*t, L"This page used too much memory",
-                     L"The page was stopped to keep the rest of the browser responsive.", L"", url);
+        LoadInfoPage(*t, Tr(L"This page used too much memory", L"Странице не хватило памяти"),
+                     Tr(L"The page was stopped to keep the rest of the browser responsive.",
+                        L"Страница остановлена, чтобы остальной браузер продолжал работать."), L"", url);
     else
-        LoadInfoPage(*t, L"This page crashed",
-                     L"Something went wrong while displaying this page. Other tabs are not affected.", L"", url);
+        LoadInfoPage(*t, Tr(L"This page crashed", L"Страница аварийно завершилась"),
+                     Tr(L"Something went wrong while displaying this page. Other tabs are not affected.",
+                        L"При показе страницы произошёл сбой. Другие вкладки не пострадали."), L"", url);
 }

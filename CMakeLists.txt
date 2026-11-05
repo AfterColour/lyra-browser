@@ -114,6 +114,17 @@ add_custom_target(webkit_runtime ALL
 add_dependencies(Lyra webkit_runtime)
 
 # ----------------------------------------------------------------------------
+#  Lyra's own pages (start page, welcome screen) -> run/resources
+# ----------------------------------------------------------------------------
+add_custom_target(lyra_resources ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources" "${LYRA_RUN_DIR}/resources"
+    COMMENT "Copying Lyra resources into ${LYRA_RUN_DIR}/resources"
+    VERBATIM
+)
+add_dependencies(Lyra lyra_resources)
+
+# ----------------------------------------------------------------------------
 #  GStreamer runtime (only when WEBKIT_BUILD_DIR is a WebKit built with
 #  -DUSE_GSTREAMER=ON, see C:/WebKit/build-webkit-gst.bat)
 # ----------------------------------------------------------------------------

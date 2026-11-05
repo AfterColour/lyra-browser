@@ -6,7 +6,7 @@ std::wstring g_settingsDir, g_settingsFile;
 
 double       g_zoom = 1.0;
 
-std::wstring g_homePage = L"https://example.com";
+std::wstring g_homePage = L"lyra://start";
 
 std::wstring g_searchEngine = L"https://duckduckgo.com/?q=";
 
@@ -40,14 +40,16 @@ void LoadSettings() {
     GetPrivateProfileStringW(L"Browser", L"Scale", L"1.0", buf, 512, g_settingsFile.c_str());
     g_zoom = _wtof(buf);
     if (g_zoom < 0.25 || g_zoom > 5.0) g_zoom = 1.0;
-    GetPrivateProfileStringW(L"Browser", L"HomePage", L"https://example.com", buf, 512, g_settingsFile.c_str());
+    GetPrivateProfileStringW(L"Browser", L"HomePage", L"lyra://start", buf, 512, g_settingsFile.c_str());
     g_homePage = buf;
+    if (g_homePage == L"https://example.com") g_homePage = L"lyra://start";   // the old placeholder default
     GetPrivateProfileStringW(L"Browser", L"SearchEngine", L"https://duckduckgo.com/?q=", buf, 512, g_settingsFile.c_str());
     g_searchEngine = buf;
 
     auto geti = [&](const wchar_t* k, int d) {
         return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
     };
+    g_prefs.language    = std::max(0, std::min(2, geti(L"Language", 0)));
     g_prefs.themeMode   = std::max(0, std::min(2, geti(L"Theme", 0)));
     // "AccentColor" replaced "Accent" when the Windows accent became option 0.
     g_prefs.accent      = std::max(0, std::min(kAccentCount - 1, geti(L"AccentColor", 0)));
@@ -60,7 +62,10 @@ void LoadSettings() {
     g_prefs.tabResizeDelay = std::max(0, std::min(2000, geti(L"TabResizeDelay", 350)));
     g_prefs.showFullUrl = geti(L"FullUrl", 0) != 0;
     g_prefs.closeAlways = geti(L"CloseAlways", 0) != 0;
-    g_prefs.newTabMode  = std::max(0, std::min(1, geti(L"NewTabMode", 0)));
+    // "NewTabPage" replaced "NewTabMode" (0 home page, 1 blank) when the start page arrived.
+    g_prefs.newTabMode  = std::max(0, std::min(2, geti(L"NewTabPage", 0)));
+    g_prefs.startFavorites = geti(L"StartFavorites", 1) != 0;
+    g_prefs.onboarded   = geti(L"Onboarded", 0) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
     g_prefs.localStorage= geti(L"LocalStorage", 1) != 0;
@@ -82,13 +87,15 @@ void SaveSettings() {
     auto puti = [&](const wchar_t* k, int v) {
         WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
     };
+    puti(L"Language", g_prefs.language);
     puti(L"Theme", g_prefs.themeMode);   puti(L"AccentColor", g_prefs.accent);
     puti(L"Density", g_prefs.density);   puti(L"TabLayout", g_prefs.tabLayout);
     puti(L"Animations", g_prefs.animations); puti(L"AnimationSpeed", g_prefs.animSpeed);
     puti(L"AnimateTabs", g_prefs.animTabs);  puti(L"AnimateHover", g_prefs.animHover);
     puti(L"TabResizeDelay", g_prefs.tabResizeDelay);
     puti(L"FullUrl", g_prefs.showFullUrl);
-    puti(L"CloseAlways", g_prefs.closeAlways); puti(L"NewTabMode", g_prefs.newTabMode);
+    puti(L"CloseAlways", g_prefs.closeAlways); puti(L"NewTabPage", g_prefs.newTabMode);
+    puti(L"StartFavorites", g_prefs.startFavorites); puti(L"Onboarded", g_prefs.onboarded);
     puti(L"JavaScript", g_prefs.js);     puti(L"Images", g_prefs.images);
     puti(L"LocalStorage", g_prefs.localStorage); puti(L"Databases", g_prefs.databases);
     puti(L"DevTools", g_prefs.devExtras); puti(L"Fullscreen", g_prefs.fullscreen);

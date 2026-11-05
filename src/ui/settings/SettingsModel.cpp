@@ -44,3 +44,34 @@ SRow RInfo(const wchar_t* label, const std::wstring& right, bool kbd) {
     SRow r; r.type = SRow::Info; r.label = label; r.right = right; r.kbd = kbd;
     return r;
 }
+
+SRow RToggleGear(const wchar_t* label, const wchar_t* desc, bool* v, std::function<void()> changed,
+                 std::function<void()> openDetails) {
+    SRow r = RToggle(label, desc, v, std::move(changed));
+    r.type = SRow::ToggleGear;
+    r.action = std::move(openDetails);
+    return r;
+}
+
+SRow RSegmented(const wchar_t* label, const wchar_t* desc, std::vector<std::wstring> opts,
+                std::function<int()> get, std::function<void(int)> set) {
+    SRow r = RChoice(label, desc, std::move(opts), std::move(get), std::move(set));
+    r.type = SRow::Segmented;
+    return r;
+}
+
+SRow RCards(const wchar_t* label, int kind, std::vector<std::wstring> opts,
+            std::function<int()> get, std::function<void(int)> set) {
+    SRow r = RChoice(label, L"", std::move(opts), std::move(get), std::move(set));
+    r.type = SRow::Cards;
+    r.cardKind = kind;
+    return r;
+}
+
+SRow RSwatches(const wchar_t* label, std::vector<Color> colors, std::vector<std::wstring> names,
+               std::function<int()> get, std::function<void(int)> set) {
+    SRow r = RChoice(label, L"", std::move(names), std::move(get), std::move(set));
+    r.type = SRow::Swatches;
+    r.colors = std::move(colors);
+    return r;
+}

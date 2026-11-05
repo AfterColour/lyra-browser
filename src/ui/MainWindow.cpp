@@ -1,5 +1,6 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "browser/StartPage.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -12,6 +13,7 @@
 #include "ui/Dialogs.h"
 #include "ui/FullScreen.h"
 #include "ui/Theme.h"
+#include "ui/WindowFrame.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -77,11 +79,6 @@ void ApplyChromeSettings() {
 //  maximise, right-click system menu) and the three window buttons report HTMINBUTTON /
 //  HTMAXBUTTON / HTCLOSE, which also gives the Windows 11 snap layouts flyout on maximise.
 // ----------------------------------------------------------------------------
-static int FrameThicknessY(HWND hWnd) {
-    const UINT dpi = GetDpiForWindow(hWnd);
-    return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-}
-
 // Hover follows the pointer even when the chrome moves under a still mouse (tabs sliding after a
 // close): re-run the hit test at the current cursor position.
 static void RehoverFromCursor(HWND hWnd) {
@@ -124,8 +121,6 @@ static Hit HitFromScreen(HWND hWnd, LPARAM lParam) {
     return HitTest(pt.x, pt.y);
 }
 
-static bool IsCaptionCode(WPARAM code) { return code == HTMINBUTTON || code == HTMAXBUTTON || code == HTCLOSE; }
-
 static void RunCaptionButton(HWND hWnd, Hit::Kind k) {
     switch (k) {
     case Hit::CapMin:   SendMessageW(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0); break;
@@ -167,16 +162,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_NCCALCSIZE:
-        if (wParam) {
-            // Keep the default left/right/bottom frame, drop the title bar.
-            NCCALCSIZE_PARAMS* p = (NCCALCSIZE_PARAMS*)lParam;
-            const LONG top = p->rgrc[0].top;
-            LRESULT r = DefWindowProcW(hWnd, msg, wParam, lParam);
-            p->rgrc[0].top = top;
-            // A maximised window extends past the monitor by the frame thickness.
-            if (IsZoomed(hWnd) && !g_fullScreenView) p->rgrc[0].top += FrameThicknessY(hWnd);
-            return r;
-        }
+        if (wParam) return FrameCalcSize(hWnd, wParam, lParam, g_fullScreenView != nullptr);
         break;
 
     case WM_NCHITTEST: {
@@ -185,14 +171,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (g_fullScreenView) return HTCLIENT;
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ScreenToClient(hWnd, &pt);
-        if (!IsZoomed(hWnd) && pt.y >= 0 && pt.y < (LONG)S(5)) {   // top resize border
-            RECT cr;
-            GetClientRect(hWnd, &cr);
-            const LONG corner = (LONG)S(16);
-            if (pt.x < corner) return HTTOPLEFT;
-            if (pt.x >= cr.right - corner) return HTTOPRIGHT;
-            return HTTOP;
-        }
+        if (LRESULT top = FrameTopResizeHit(hWnd, pt, S(5), S(16))) return top;   // top resize border
         Hit h = HitTest(pt.x, pt.y);
         switch (h.kind) {
         case Hit::CapMin:   return HTMINBUTTON;
@@ -402,6 +381,11 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_CLOSE_TAB: {             // window.close(), or an empty popup that became a download
         int index = -1;
         if (FindTab((unsigned long long)wParam, &index)) CloseTab(index);
+        return 0;
+    }
+    case WM_APP_LYRA_URL: {
+        std::unique_ptr<std::wstring> url((std::wstring*)lParam);
+        if (url && !g_closing) HandleLyraUrl((unsigned long long)wParam, *url);
         return 0;
     }
     case WM_APP_TAB_CRASHED:

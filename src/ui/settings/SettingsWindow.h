@@ -17,3 +17,7 @@ struct SGeo { float W, H, sideW, headerH, vpY, vpH, colX, colW; };
 
 void SettingsThemeChanged();
 void ShowSettingsWindow();
+// Shows page `index` (also a detail page, see SPage::parent).
+void SettingsOpenPage(int index);
+// The interface language changed: rebuild the pages with the new strings.
+void SettingsLanguageChanged();

@@ -10,6 +10,7 @@ extern std::wstring g_homePage;
 extern std::wstring g_searchEngine;
 
 struct Prefs {
+    int  language = 0;           // 0 as in Windows, 1 English, 2 Russian
     int  themeMode = 0;          // 0 system, 1 light, 2 dark
     int  accent = 0;             // index into kAccents (0 = the Windows accent colour)
     int  density = 0;            // toolbar size: 0 compact, 1 normal, 2 large
@@ -22,7 +23,9 @@ struct Prefs {
     int  tabResizeDelay = 350;   // ms after the mouse leaves the tab strip before tabs widen again (0 = never wait)
     bool showFullUrl = false;
     bool closeAlways = false;
-    int  newTabMode = 0;         // 0 home page, 1 blank page
+    bool startFavorites = true;  // start page shows Favorites
+    bool onboarded = false;      // the first-run welcome screen was completed
+    int  newTabMode = 0;         // 0 start page, 1 blank page, 2 home page
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;
     int  defaultFont = 16, minFont = 0;

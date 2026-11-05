@@ -15,6 +15,7 @@
 //  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
 #include "common/Platform.h"
+#include "browser/StartPage.h"
 #include "app/CrashHandler.h"
 #include "app/Environment.h"
 #include "app/Log.h"
@@ -27,6 +28,7 @@
 #include "ui/Commands.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/WindowFrame.h"
 
 // ----------------------------------------------------------------------------
 //  Entry point
@@ -76,7 +78,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         return -1;
     }
     // Apply the custom frame (WM_NCCALCSIZE drops the system title bar) before the window shows.
-    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    FrameApply(hwnd);
 
     // WebKit
     WKContextConfigurationRef contextConf = WKContextConfigurationCreate();
@@ -97,7 +99,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
-    std::wstring startUrl = g_homePage;
+    // First start: the welcome screen (language, theme, tab layout...) instead of the home page.
+    std::wstring startUrl = g_prefs.onboarded ? g_homePage : StartPageUrl(true);
     if (lpCmdLine && *lpCmdLine) {
         std::wstring arg = TrimWs(lpCmdLine);
         if (arg.size() >= 2 && arg.front() == L'"' && arg.back() == L'"') arg = arg.substr(1, arg.size() - 2);

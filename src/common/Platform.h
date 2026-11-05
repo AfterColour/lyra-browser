@@ -41,6 +41,8 @@ using std::max;
 #include <WebKit/WKDownloadRef.h>
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKInspector.h>
+#include <WebKit/WKNavigationActionRef.h>
+#include <WebKit/WKURLRequest.h>
 #include <WebKit/WKNavigationResponseRef.h>
 #include <WebKit/WKPreferencesRefPrivate.h>
 #include <WebKit/WKSecurityOriginRef.h>

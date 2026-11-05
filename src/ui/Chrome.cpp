@@ -7,6 +7,7 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
@@ -434,7 +435,7 @@ static void DrawSiteBadge(Graphics& g, const Tab& t, const RectF& r) {
     for (wchar_t c : host) if (iswalnum(c)) { letter = (wchar_t)towupper(c); break; }
     unsigned hash = 2166136261u;
     for (wchar_t c : host) hash = (hash ^ (unsigned)c) * 16777619u;
-    const Color bg = letter ? kPalette[hash % 8] : Color(105, 112, 122);
+    const Color bg = letter ? kPalette[(hash * 2654435761u) >> 29] : Color(105, 112, 122);   // same as start.html
     FillRound(g, bg, r, S(4));
     if (letter) {
         wchar_t s[2] = { letter, 0 };
@@ -554,7 +555,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const float bs = S(14);
         DrawGlyph(g, L"\uE710", RectF(r.X + S(9), r.Y, bs, r.Height), T.text2, g_fIconSm.get());
         SolidBrush tb(T.text2);
-        g.DrawString(L"New tab", -1, g_fTab.get(),
+        g.DrawString(Tr(L"New tab", L"Новая вкладка"), -1, g_fTab.get(),
                      RectF(r.X + S(9) + bs + S(7), r.Y, r.Width - bs - S(24), r.Height), &tf, &tb);
     } else {
         toolButton(L.newTab, L"\uE710", (int)g_tabs.size() < metrics::kMaxTabs, Hit::NewTab, g_fIcon.get());
@@ -609,7 +610,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
 
             std::wstring label = cur ? (g_prefs.showFullUrl ? DisplayUrl(cur->url) : HostOf(cur->url)) : L"";
             const bool placeholder = label.empty();
-            if (placeholder) label = L"Search or enter address";
+            if (placeholder) label = Tr(L"Search or enter address", L"Поиск или адрес сайта");
             const bool secure = cur && cur->url.compare(0, 8, L"https://") == 0;
 
             const float textL = pill.X + S(28);

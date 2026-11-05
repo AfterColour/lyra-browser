@@ -1,5 +1,7 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "core/Url.h"
+#include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
@@ -16,7 +18,7 @@ static void ShowWebInspector() {
     Tab* t = ActiveTab();
     if (!t || !t->page) return;
     if (!g_prefs.devExtras) {
-        MessageBoxW(g_hWnd, L"Developer tools are turned off. Enable them in Settings \x2192 Webpages.",
+        MessageBoxW(g_hWnd, Tr(L"Developer tools are turned off. Turn them on in Settings \x2192 Webpages.", L"Инструменты разработчика выключены. Включите их в «Настройки \x2192 Веб-страницы»."),
                     kAppName, MB_OK | MB_ICONINFORMATION);
         return;
     }
@@ -56,14 +58,19 @@ static void CopyToClipboard(const std::wstring& s) {
 
 void RunCommand(int cmd) {
     switch (cmd) {
-    case CMD_NEWTAB:    CreateTab(g_prefs.newTabMode == 1 ? std::wstring(L"about:blank") : g_homePage); break;
+    case CMD_NEWTAB:
+        CreateTab(g_prefs.newTabMode == 1 ? std::wstring(L"about:blank")
+                  : g_prefs.newTabMode == 2 ? g_homePage : std::wstring(kStartAlias));
+        break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
     case CMD_ZOOMIN:    SetZoom(g_zoom + 0.1); break;
     case CMD_ZOOMOUT:   SetZoom(g_zoom - 0.1); break;
     case CMD_ZOOMRESET: SetZoom(1.0); break;
-    case CMD_SETHOME:   if (Tab* t = ActiveTab()) { g_homePage = t->url; SaveSettings(); } break;
+    case CMD_SETHOME:
+        if (Tab* t = ActiveTab()) { g_homePage = IsStartPageUrl(t->url) ? std::wstring(kStartAlias) : t->url; SaveSettings(); }
+        break;
     case CMD_REOPENTAB: ReopenClosedTab(); break;
     case CMD_DEVTOOLS:  ShowWebInspector(); break;
     }
@@ -71,20 +78,20 @@ void RunCommand(int cmd) {
 
 void ShowMoreMenu() {
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, CMD_NEWTAB,    L"New Tab\tCtrl+T");
-    AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  L"Close Tab\tCtrl+W");
+    AppendMenuW(m, MF_STRING, CMD_NEWTAB,    Tr(L"New Tab\tCtrl+T", L"Новая вкладка\tCtrl+T"));
+    AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  Tr(L"Close Tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
     AppendMenuW(m, MF_STRING | (g_closedUrls.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
-                L"Reopen Closed Tab\tCtrl+Shift+T");
+                Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, CMD_COPYURL,   L"Copy Address");
-    AppendMenuW(m, MF_STRING, CMD_SETHOME,   L"Set Current Page as Home Page");
+    AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
+    AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, CMD_ZOOMIN,    L"Zoom In\tCtrl++");
-    AppendMenuW(m, MF_STRING, CMD_ZOOMOUT,   L"Zoom Out\tCtrl+-");
-    AppendMenuW(m, MF_STRING, CMD_ZOOMRESET, L"Actual Size\tCtrl+0");
+    AppendMenuW(m, MF_STRING, CMD_ZOOMIN,    Tr(L"Zoom In\tCtrl++", L"Увеличить\tCtrl++"));
+    AppendMenuW(m, MF_STRING, CMD_ZOOMOUT,   Tr(L"Zoom Out\tCtrl+-", L"Уменьшить\tCtrl+-"));
+    AppendMenuW(m, MF_STRING, CMD_ZOOMRESET, Tr(L"Actual Size\tCtrl+0", L"Исходный размер\tCtrl+0"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    if (g_prefs.devExtras) AppendMenuW(m, MF_STRING, CMD_DEVTOOLS, L"Developer Tools\tF12");
-    AppendMenuW(m, MF_STRING, CMD_SETTINGS,  L"Settings...\tCtrl+,");
+    if (g_prefs.devExtras) AppendMenuW(m, MF_STRING, CMD_DEVTOOLS, Tr(L"Developer Tools\tF12", L"Инструменты разработчика\tF12"));
+    AppendMenuW(m, MF_STRING, CMD_SETTINGS,  Tr(L"Settings\x2026\tCtrl+,", L"Настройки\x2026\tCtrl+,"));
     POINT pt = { (LONG)g_L.more.GetRight(), (LONG)g_L.more.GetBottom() };
     ClientToScreen(g_hWnd, &pt);
     int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
