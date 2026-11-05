@@ -75,6 +75,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         MessageBoxW(nullptr, L"Failed to create window", L"Error", MB_ICONERROR);
         return -1;
     }
+    // Apply the custom frame (WM_NCCALCSIZE drops the system title bar) before the window shows.
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     // WebKit
     WKContextConfigurationRef contextConf = WKContextConfigurationCreate();
@@ -116,7 +118,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     if (g_context)     { WKRelease(g_context);     g_context = nullptr; }
     Log("WebKit context released");
     g_ctxs.clear();                      // only now can no WebKit callback refer to a TabCtx any more
-    g_fText.reset(); g_fTab.reset(); g_fIcon.reset(); g_fIconSm.reset();
+    ReleaseResources();
     GdiplusShutdown(gdipToken);
     OleUninitialize();
     return (int)msg.wParam;

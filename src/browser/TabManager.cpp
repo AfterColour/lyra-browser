@@ -84,7 +84,7 @@ void SelectTab(int i) {
     if (g_fullScreenView && (!g_tabs[i]->hwnd || g_tabs[i]->hwnd != g_fullScreenView))
         ExitFullScreenForTabSwitch();
     g_active = i;
-    LayoutWebViews();                    // size the newly active view first, then show it
+    RefreshLayout(true);                 // the compact layout depends on the active tab; also sizes the new view before it shows
     for (int k = 0; k < (int)g_tabs.size(); ++k)
         if (g_tabs[k]->hwnd) ShowWindow(g_tabs[k]->hwnd, k == i ? SW_SHOW : SW_HIDE);
     if (IsEditing()) ShowWindow(g_urlEdit, SW_HIDE);
@@ -152,8 +152,8 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage) 
 
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    int top = (int)g_L.chromeH;
-    RECT r = { 0, top, cr.right, std::max<LONG>(cr.bottom, top + 1) };
+    int top = (int)g_L.chromeH, left = (int)g_L.sideW;
+    RECT r = { left, top, std::max<LONG>(cr.right, left + 1), std::max<LONG>(cr.bottom, top + 1) };
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     if (!view) { Log("CreateTab: WKViewCreate failed"); return nullptr; }
 
@@ -191,7 +191,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage) 
     g_tabs.push_back(std::move(tab));
     Log("tab#%llu CREATED view=%p page=%p hwnd=%p popup=%d (tabs=%d)", raw->id, (void*)raw->view,
         (void*)raw->page, (void*)raw->hwnd, (int)openedByPage, (int)g_tabs.size());
-    RefreshLayout();
+    RefreshLayout(true);                 // the new tab grows in
     SelectTab((int)g_tabs.size() - 1);
     return raw;
 }
@@ -286,7 +286,7 @@ void CloseTab(int i) {
     else if (g_active == i) g_active = std::min(i, (int)g_tabs.size() - 1);
     g_hover = Hit();
     g_down  = Hit();
-    RefreshLayout();                     // g_L.tabs must match g_tabs before any repaint
+    RefreshLayout(true);                 // g_L.tabs must match g_tabs before any repaint
 
     // 2) Hide the dead view and give focus to the surviving tab BEFORE the focused
     //    child window is destroyed.

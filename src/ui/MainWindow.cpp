@@ -4,7 +4,9 @@
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
+#include "core/Settings.h"
 #include "ui/AddressBar.h"
+#include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
 #include "ui/Dialogs.h"
@@ -30,24 +32,27 @@ int    g_clientW = 0;
 static int    g_tick = 0;
 
 static bool   g_trackingMouse = false;
+static bool   g_trackingNc = false;      // TME_NONCLIENT tracking for the window buttons
 
 void LayoutWebViews() {
     if (!g_hWnd) return;
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    int top = g_fullScreenView ? 0 : (int)g_L.chromeH;   // fullscreen: the page covers the tab strip and toolbar
+    // fullscreen: the page covers the tab strip, toolbar and vertical tab list
+    int top = g_fullScreenView ? 0 : (int)g_L.chromeH;
+    int left = g_fullScreenView ? 0 : (int)g_L.sideW;
     int h = std::max(0, (int)cr.bottom - top);
     // Only the visible tab is resized. Hidden tabs are brought to the right size
     // by SelectTab() (which calls this function) right after they are shown, so
     // a window resize no longer sends resize IPC to every background page.
     if (Tab* t = ActiveTab())
-        if (t->hwnd) MoveWindow(t->hwnd, 0, top, cr.right, h, TRUE);
+        if (t->hwnd) MoveWindow(t->hwnd, left, top, std::max(0, (int)cr.right - left), h, TRUE);
 }
 
-void RefreshLayout() {
+void RefreshLayout(bool animate) {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    ComputeLayout(cr.right);
+    ComputeLayout(cr.right, animate);
     PositionEdit();
     LayoutWebViews();
     InvalidateChrome();
@@ -55,6 +60,79 @@ void RefreshLayout() {
 
 void FocusWebView() {
     if (Tab* t = ActiveTab()) if (t->hwnd) SetFocus(t->hwnd);
+}
+
+// Re-reads the toolbar size / tab layout settings: fonts, layout and a full repaint.
+void ApplyChromeSettings() {
+    if (!g_hWnd) return;
+    RebuildResources();
+    RefreshLayout();
+    InvalidateRect(g_hWnd, nullptr, FALSE);
+}
+
+// ----------------------------------------------------------------------------
+//  Custom title bar
+//  The client area covers the whole window except the left/right/bottom resize borders, so the
+//  tabs can sit where the title bar was. Empty chrome reports HTCAPTION (drag, double-click to
+//  maximise, right-click system menu) and the three window buttons report HTMINBUTTON /
+//  HTMAXBUTTON / HTCLOSE, which also gives the Windows 11 snap layouts flyout on maximise.
+// ----------------------------------------------------------------------------
+static int FrameThicknessY(HWND hWnd) {
+    const UINT dpi = GetDpiForWindow(hWnd);
+    return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+}
+
+// Hover follows the pointer even when the chrome moves under a still mouse (tabs sliding after a
+// close): re-run the hit test at the current cursor position.
+static void RehoverFromCursor(HWND hWnd) {
+    if (GetCapture()) return;
+    POINT pt;
+    if (!GetCursorPos(&pt) || WindowFromPoint(pt) != hWnd) return;
+    ScreenToClient(hWnd, &pt);
+    Hit h = HitTest(pt.x, pt.y);
+    if (h.IsCaptionButton()) return;                    // handled by the non-client messages
+    SetHover(h);
+}
+
+// Tabs keep their width after a close with the mouse until the pointer has been outside the tab
+// strip for Settings > Animations > "Tab resize delay".
+static bool s_unfreezeArmed = false;
+static void CheckTabUnfreeze(HWND hWnd) {
+    if (!TabWidthsFrozen()) return;
+    POINT pt;
+    GetCursorPos(&pt);
+    ScreenToClient(hWnd, &pt);
+    const bool inStrip = pt.x >= 0 && pt.x < g_clientW && pt.y >= 0 && pt.y < (LONG)TabStripBottom();
+    if (inStrip) {
+        if (s_unfreezeArmed) { KillTimer(hWnd, TIMER_TAB_UNFREEZE); s_unfreezeArmed = false; }
+    } else if (!s_unfreezeArmed) {
+        SetTimer(hWnd, TIMER_TAB_UNFREEZE, (UINT)std::max(1, g_prefs.tabResizeDelay), nullptr);
+        s_unfreezeArmed = true;
+    }
+}
+
+static void CloseTabWithMouse(HWND hWnd, int index) {
+    FreezeTabWidths();
+    CloseTab(index);
+    RehoverFromCursor(hWnd);
+    CheckTabUnfreeze(hWnd);
+}
+
+static Hit HitFromScreen(HWND hWnd, LPARAM lParam) {
+    POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+    ScreenToClient(hWnd, &pt);
+    return HitTest(pt.x, pt.y);
+}
+
+static bool IsCaptionCode(WPARAM code) { return code == HTMINBUTTON || code == HTMAXBUTTON || code == HTCLOSE; }
+
+static void RunCaptionButton(HWND hWnd, Hit::Kind k) {
+    switch (k) {
+    case Hit::CapMin:   SendMessageW(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0); break;
+    case Hit::CapMax:   SendMessageW(hWnd, WM_SYSCOMMAND, IsZoomed(hWnd) ? SC_RESTORE : SC_MAXIMIZE, 0); break;
+    case Hit::CapClose: SendMessageW(hWnd, WM_SYSCOMMAND, SC_CLOSE, 0); break;
+    default: break;
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -84,8 +162,97 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_SIZE:
+        UnfreezeTabWidths();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         return 0;
+
+    case WM_NCCALCSIZE:
+        if (wParam) {
+            // Keep the default left/right/bottom frame, drop the title bar.
+            NCCALCSIZE_PARAMS* p = (NCCALCSIZE_PARAMS*)lParam;
+            const LONG top = p->rgrc[0].top;
+            LRESULT r = DefWindowProcW(hWnd, msg, wParam, lParam);
+            p->rgrc[0].top = top;
+            // A maximised window extends past the monitor by the frame thickness.
+            if (IsZoomed(hWnd) && !g_fullScreenView) p->rgrc[0].top += FrameThicknessY(hWnd);
+            return r;
+        }
+        break;
+
+    case WM_NCHITTEST: {
+        LRESULT def = DefWindowProcW(hWnd, msg, wParam, lParam);
+        if (def != HTCLIENT) return def;                 // left / right / bottom resize borders
+        if (g_fullScreenView) return HTCLIENT;
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hWnd, &pt);
+        if (!IsZoomed(hWnd) && pt.y >= 0 && pt.y < (LONG)S(5)) {   // top resize border
+            RECT cr;
+            GetClientRect(hWnd, &cr);
+            const LONG corner = (LONG)S(16);
+            if (pt.x < corner) return HTTOPLEFT;
+            if (pt.x >= cr.right - corner) return HTTOPRIGHT;
+            return HTTOP;
+        }
+        Hit h = HitTest(pt.x, pt.y);
+        switch (h.kind) {
+        case Hit::CapMin:   return HTMINBUTTON;
+        case Hit::CapMax:   return HTMAXBUTTON;
+        case Hit::CapClose: return HTCLOSE;
+        case Hit::None:     if (pt.y >= 0 && pt.y < (LONG)g_L.chromeH) return HTCAPTION; break;
+        default: break;
+        }
+        return HTCLIENT;
+    }
+    case WM_NCMOUSEMOVE: {
+        Hit h = IsCaptionCode(wParam) ? HitFromScreen(hWnd, lParam) : Hit();
+        SetHover(h);
+        if (!g_trackingNc) {
+            TRACKMOUSEEVENT t = { sizeof(t), TME_LEAVE | TME_NONCLIENT, hWnd, 0 };
+            TrackMouseEvent(&t);
+            g_trackingNc = true;
+        }
+        CheckTabUnfreeze(hWnd);
+        // Over our window buttons DefWindowProc would paint the hover state of the hidden system
+        // buttons on top of ours ("ghost" buttons): do not pass the message on.
+        if (IsCaptionCode(wParam)) return 0;
+        break;
+    }
+    case WM_NCMOUSELEAVE:
+        g_trackingNc = false;
+        if (g_hover.IsCaptionButton() || g_down.IsCaptionButton()) {
+            g_down = Hit();
+            SetHover(Hit());
+            InvalidateChrome();
+        }
+        CheckTabUnfreeze(hWnd);
+        break;
+    case WM_NCLBUTTONDOWN:
+        if (IsCaptionCode(wParam)) {
+            g_down = HitFromScreen(hWnd, lParam);
+            InvalidateChrome();
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONUP:
+        if (IsCaptionCode(wParam)) {
+            Hit up = HitFromScreen(hWnd, lParam);
+            Hit down = g_down;
+            g_down = Hit();
+            InvalidateChrome();
+            if (up == down) RunCaptionButton(hWnd, up.kind);
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONDBLCLK:
+        if (IsCaptionCode(wParam)) return 0;            // not "maximise" when double-clicking a button
+        break;
+    case WM_NCRBUTTONDOWN:
+    case WM_NCRBUTTONUP:
+        if (IsCaptionCode(wParam)) return 0;
+        break;
+    case WM_NCACTIVATE:
+        // lParam -1: let Windows update the activation state without repainting a title bar.
+        return DefWindowProcW(hWnd, msg, wParam, -1);
 
     case WM_DPICHANGED: {
         g_dpi = HIWORD(wParam);
@@ -102,6 +269,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             EnableDarkMenus();
         }
         break;
+    case WM_DWMCOLORIZATIONCOLORCHANGED:              // Windows accent colour changed
+        ApplyTheme(ResolveDark());
+        break;
 
     case WM_ERASEBKGND:
         return 1;
@@ -109,14 +279,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-        RECT cr;
-        GetClientRect(hWnd, &cr);
-        // Area under the web views (only visible if there are no tabs yet)
-        RECT content = { 0, (LONG)g_L.chromeH, cr.right, cr.bottom };
-        HBRUSH dc = (HBRUSH)GetStockObject(DC_BRUSH);
-        SetDCBrushColor(hdc, ToColorRef(g_th.toolbar));
-        FillRect(hdc, &content, dc);
-        PaintChrome(hdc, cr.right);
+        PaintChrome(hdc, ps.rcPaint);       // chrome + the area under the web view (seen before it paints)
         EndPaint(hWnd, &ps);
         return 0;
     }
@@ -139,18 +302,19 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_MOUSEMOVE: {
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-        if (!(h == g_hover)) { g_hover = h; InvalidateChrome(); }
+        SetHover(h);
         if (!g_trackingMouse) {
             TRACKMOUSEEVENT t = { sizeof(t), TME_LEAVE, hWnd, 0 };
             TrackMouseEvent(&t);
             g_trackingMouse = true;
         }
+        CheckTabUnfreeze(hWnd);
         return 0;
     }
     case WM_MOUSELEAVE:
         g_trackingMouse = false;
-        g_hover = Hit();
-        InvalidateChrome();
+        SetHover(Hit());
+        CheckTabUnfreeze(hWnd);
         return 0;
 
     case WM_LBUTTONDOWN: {
@@ -174,7 +338,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Reload:   ReloadActive(true); break;
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
-            case Hit::TabClose: CloseTab(up.index); break;
+            case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
             default: break;
             }
         }
@@ -188,10 +352,23 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_MBUTTONUP: {
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-        if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTab(h.index);
+        if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);
         return 0;
     }
+    case WM_APP_ANIM_FRAME:
+        AnimOnFrame();
+        RehoverFromCursor(hWnd);
+        return 0;
+
     case WM_TIMER: {
+        if (wParam == TIMER_TAB_UNFREEZE) {
+            KillTimer(hWnd, TIMER_TAB_UNFREEZE);
+            s_unfreezeArmed = false;
+            UnfreezeTabWidths();
+            RefreshLayout(true);
+            RehoverFromCursor(hWnd);
+            return 0;
+        }
         if (wParam != TIMER_UI) break;
         if (g_closing || g_tabOp) return 0;      // never poll tabs while one is being created/destroyed
         bool dirty = false;
@@ -252,6 +429,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_DESTROY:
         KillTimer(hWnd, TIMER_UI);
+        KillTimer(hWnd, TIMER_TAB_UNFREEZE);
+        AnimShutdown();
         if (g_editBrush) { DeleteObject(g_editBrush); g_editBrush = nullptr; }
         if (g_editFont) { DeleteObject(g_editFont); g_editFont = nullptr; }
         PostQuitMessage(0);

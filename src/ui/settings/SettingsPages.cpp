@@ -23,7 +23,7 @@ static void ResetAllSettings() {
     ApplyWebPrefs();
     SetZoom(1.0);                         // also saves
     ApplyTheme(ResolveDark());
-    RefreshLayout();
+    ApplyChromeSettings();
     SaveSettings();
     if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
 }
@@ -33,7 +33,7 @@ void BuildPages() {
     const std::function<void()> save    = []() { SaveSettings(); };
     const std::function<void()> web     = []() { ApplyWebPrefs(); SaveSettings(); };
     const std::function<void()> theme   = []() { ApplyTheme(ResolveDark()); SaveSettings(); };
-    const std::function<void()> layout  = []() { RefreshLayout(); SaveSettings(); };
+    const std::function<void()> layout  = []() { ApplyChromeSettings(); SaveSettings(); };
     const std::function<void()> repaint = []() { InvalidateChrome(); SaveSettings(); };
 
     {   // General
@@ -64,8 +64,31 @@ void BuildPages() {
             []() { return g_prefs.accent; },
             [theme](int i) { g_prefs.accent = i; theme(); }));
         p.rows.push_back(RHeader(L"Toolbar"));
-        p.rows.push_back(RToggle(L"Compact layout", L"Smaller toolbar and tab bar to leave more room for pages.",
-            &g_prefs.compact, layout));
+        p.rows.push_back(RChoice(L"Toolbar size", L"Compact leaves the most room for pages; Large suits touch screens.",
+            { L"Compact", L"Normal", L"Large" },
+            []() { return g_prefs.density; },
+            [layout](int i) { g_prefs.density = i; layout(); }));
+        g_pages.push_back(std::move(p));
+    }
+    {   // Animations
+        SPage p; p.name = L"Animations"; p.icon = L"\uE945";
+        p.rows.push_back(RHeader(L"Animations"));
+        p.rows.push_back(RToggle(L"Animations", L"Turn off to make every change instant.", &g_prefs.animations, repaint));
+        p.rows.push_back(RSlider(L"Speed", L"100% is the default. Higher is faster.", 25, 300, 5,
+            []() { return g_prefs.animSpeed; },
+            [save](int v) { g_prefs.animSpeed = v; save(); },
+            [](int v) { return std::to_wstring(v) + L"%"; }));
+        p.rows.push_back(RHeader(L"Details"));
+        p.rows.push_back(RToggle(L"Moving tabs", L"Tabs slide and grow when they are opened, closed or switched.",
+            &g_prefs.animTabs, repaint));
+        p.rows.push_back(RToggle(L"Hover highlights", L"Buttons and tabs fade their highlight in and out.",
+            &g_prefs.animHover, repaint));
+        p.rows.push_back(RSlider(L"Tab resize delay",
+            L"After closing tabs with the mouse, the others keep their width until the pointer has left the tab bar this long. 0 widens them at once.",
+            0, 2000, 50,
+            []() { return g_prefs.tabResizeDelay; },
+            [save](int v) { g_prefs.tabResizeDelay = v; save(); },
+            [](int v) { return v == 0 ? std::wstring(L"Off") : std::to_wstring(v) + L" ms"; }));
         g_pages.push_back(std::move(p));
     }
     {   // Tabs
@@ -76,7 +99,11 @@ void BuildPages() {
             []() { return g_prefs.newTabMode; },
             [save](int i) { g_prefs.newTabMode = i; save(); }));
         p.rows.push_back(RHeader(L"Tab bar"));
-        p.rows.push_back(RToggle(L"Show close button on every tab", L"Otherwise it appears on the active and hovered tab.",
+        p.rows.push_back(RChoice(L"Tab layout", L"Compact puts the tabs and the address in one row, like Safari.",
+            { L"Compact", L"Separate tab bar", L"Vertical tabs" },
+            []() { return g_prefs.tabLayout; },
+            [layout](int i) { g_prefs.tabLayout = i; layout(); }));
+        p.rows.push_back(RToggle(L"Show close button on every tab", L"Otherwise it appears on the hovered (and, with a tab bar, the active) tab.",
             &g_prefs.closeAlways, repaint));
         p.rows.push_back(RInfo(L"Maximum open tabs", std::to_wstring(metrics::kMaxTabs)));
         p.rows.push_back(RInfo(L"Closing the last tab", L"Closes the window"));

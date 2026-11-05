@@ -49,8 +49,15 @@ void LoadSettings() {
         return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
     };
     g_prefs.themeMode   = std::max(0, std::min(2, geti(L"Theme", 0)));
-    g_prefs.accent      = std::max(0, std::min(kAccentCount - 1, geti(L"Accent", 0)));
-    g_prefs.compact     = geti(L"Compact", 0) != 0;
+    // "AccentColor" replaced "Accent" when the Windows accent became option 0.
+    g_prefs.accent      = std::max(0, std::min(kAccentCount - 1, geti(L"AccentColor", 0)));
+    g_prefs.density     = std::max(0, std::min(2, geti(L"Density", 0)));
+    g_prefs.tabLayout   = std::max(0, std::min(2, geti(L"TabLayout", 0)));
+    g_prefs.animations  = geti(L"Animations", 1) != 0;
+    g_prefs.animSpeed   = std::max(25, std::min(300, geti(L"AnimationSpeed", 100)));
+    g_prefs.animTabs    = geti(L"AnimateTabs", 1) != 0;
+    g_prefs.animHover   = geti(L"AnimateHover", 1) != 0;
+    g_prefs.tabResizeDelay = std::max(0, std::min(2000, geti(L"TabResizeDelay", 350)));
     g_prefs.showFullUrl = geti(L"FullUrl", 0) != 0;
     g_prefs.closeAlways = geti(L"CloseAlways", 0) != 0;
     g_prefs.newTabMode  = std::max(0, std::min(1, geti(L"NewTabMode", 0)));
@@ -75,8 +82,12 @@ void SaveSettings() {
     auto puti = [&](const wchar_t* k, int v) {
         WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
     };
-    puti(L"Theme", g_prefs.themeMode);   puti(L"Accent", g_prefs.accent);
-    puti(L"Compact", g_prefs.compact);   puti(L"FullUrl", g_prefs.showFullUrl);
+    puti(L"Theme", g_prefs.themeMode);   puti(L"AccentColor", g_prefs.accent);
+    puti(L"Density", g_prefs.density);   puti(L"TabLayout", g_prefs.tabLayout);
+    puti(L"Animations", g_prefs.animations); puti(L"AnimationSpeed", g_prefs.animSpeed);
+    puti(L"AnimateTabs", g_prefs.animTabs);  puti(L"AnimateHover", g_prefs.animHover);
+    puti(L"TabResizeDelay", g_prefs.tabResizeDelay);
+    puti(L"FullUrl", g_prefs.showFullUrl);
     puti(L"CloseAlways", g_prefs.closeAlways); puti(L"NewTabMode", g_prefs.newTabMode);
     puti(L"JavaScript", g_prefs.js);     puti(L"Images", g_prefs.images);
     puti(L"LocalStorage", g_prefs.localStorage); puti(L"Databases", g_prefs.databases);

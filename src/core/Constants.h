@@ -3,28 +3,14 @@
 
 #include "common/Platform.h"
 
-// ----------------------------------------------------------------------------
-//  Metrics (in 96-DPI pixels; scaled with S())
-// ----------------------------------------------------------------------------
+// Sizes of the window chrome depend on the toolbar size setting: see ChromeDims in ui/Chrome.h.
 namespace metrics {
-constexpr int kToolbarH   = 46;
-constexpr int kTabBarH    = 34;
-constexpr int kButton     = 32;
-constexpr int kEdge       = 12;
-constexpr int kPillH      = 30;
-constexpr int kPillMaxW   = 720;
-constexpr int kPillRadius = 8;
-constexpr int kTabInsetY  = 4;
-constexpr int kTabRadius  = 7;
-constexpr int kTabMaxW    = 360;
-constexpr int kTabMinW    = 30;
-constexpr int kNewTabW    = 38;
-constexpr int kCloseBtn   = 18;
-constexpr int kMaxTabs    = 20;
+constexpr int kMaxTabs = 20;
 }  // namespace metrics
 
 constexpr int   ID_URL_EDIT = 1001;
 constexpr UINT_PTR TIMER_UI = 1;
+constexpr UINT_PTR TIMER_TAB_UNFREEZE = 2;   // tabs may widen again after a close (see FreezeTabWidths)
 
 // Display name used in the window title, dialogs and the About page.
 static const wchar_t kAppName[] = L"Lyra";
@@ -38,6 +24,7 @@ static const char kUserAgentAppName[] = "Version/26.0 Safari/605.1.15";
 // wParam = tab id.
 constexpr UINT WM_APP_CLOSE_TAB    = WM_APP + 1;   // window.close() from a page
 constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminationReason
+constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 
 enum Cmd {
     CMD_NEWTAB = 301, CMD_CLOSETAB, CMD_COPYURL,

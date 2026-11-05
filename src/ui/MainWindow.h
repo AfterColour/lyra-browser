@@ -13,6 +13,7 @@ extern UINT g_dpi;
 extern int g_clientW;
 
 void LayoutWebViews();
-void RefreshLayout();
+void RefreshLayout(bool animate = false);
 void FocusWebView();
+void ApplyChromeSettings();
 LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);

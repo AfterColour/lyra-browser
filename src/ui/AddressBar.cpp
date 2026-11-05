@@ -20,9 +20,11 @@ bool IsEditing() { return g_urlEdit && IsWindowVisible(g_urlEdit); }
 
 void PositionEdit() {
     if (!g_urlEdit) return;
-    const float padX = S(14);
-    int x = (int)(g_L.pill.X + padX);
-    int w = (int)std::max(10.f, g_L.pill.Width - padX * 2);
+    // Between the search glyph on the left and the reload button (if it is inside the field)
+    const float left = g_L.pill.X + S(28);
+    const float right = g_L.reloadInPill ? g_L.reload.X - S(4) : g_L.pill.GetRight() - S(10);
+    int x = (int)left;
+    int w = (int)std::max(10.f, right - left);
     int h = g_editTextH;
     int y = (int)(g_L.pill.Y + (g_L.pill.Height - (float)h) / 2);
     MoveWindow(g_urlEdit, x, y, w, h, TRUE);

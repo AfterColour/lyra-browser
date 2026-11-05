@@ -75,6 +75,12 @@ for %%d in (run run-gst) do if exist "%~dp0%%d" (
 )
 
 rem --- 4. Configure + build ----------------------------------------------------
+rem A build folder configured when the project lived in C:\WebKit\MyBrowser cannot be
+rem reused from C:\WebKit\Lyra: configure it from scratch.
+if exist "%BUILDDIR%\CMakeCache.txt" findstr /i /c:"WebKit/MyBrowser" "%BUILDDIR%\CMakeCache.txt" >nul && (
+    echo [build] %BUILDDIR% was set up for the old MyBrowser folder: configuring it fresh
+    set "FRESH=--fresh"
+)
 set "RUNPATH=%~dp0%RUNDIR%"
 set "RUNPATH=%RUNPATH:\=/%"
 cmake %FRESH% -S . -B %BUILDDIR% -G Ninja "-DCMAKE_CXX_COMPILER=%CLANGCL%" "-DWEBKIT_BUILD_DIR=%WEBKITDIR%" "-DLYRA_RUN_DIR=%RUNPATH%"
