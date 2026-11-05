@@ -236,19 +236,6 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
     case WM_NCRBUTTONUP:
         if (IsCaptionCode(wParam)) return 0;
-        if (wParam == HTCAPTION && !(GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_SYSMENU)) {
-            ShowSystemMenu(hWnd, POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
-            return 0;
-        }
-        break;
-    case WM_SYSCOMMAND:
-        // Alt+Space without WS_SYSMENU (Mica): show the window menu ourselves.
-        if ((wParam & 0xFFF0) == SC_KEYMENU && lParam == ' ' && !(GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_SYSMENU)) {
-            RECT wr;
-            GetWindowRect(hWnd, &wr);
-            ShowSystemMenu(hWnd, POINT{ wr.left + (LONG)S(8), wr.top + (LONG)g_L.chromeH });
-            return 0;
-        }
         break;
     case WM_NCACTIVATE:
         // lParam -1: let Windows update the activation state without repainting a title bar.

@@ -70,12 +70,32 @@ void InvalidateChrome() {
 // ----------------------------------------------------------------------------
 //  Layout
 // ----------------------------------------------------------------------------
+bool NativeCaptionButtons() {
+    return g_hWnd && !g_fullScreenView && MicaActive();
+}
+
 static void PlaceCaptionButtons(Layout& L, float w, float rowH, const ChromeDims& d) {
-    const float cw = std::floor(S(d.cap));
+    float cw = std::floor(S(d.cap)), capTop = 0, capH = rowH;
+    if (NativeCaptionButtons()) {
+        // The system buttons: Lyra's buttons take exactly their place. DWM gives it in window
+        // coordinates; vertically it is drawn from the top of the client area, also when
+        // maximised (where the window itself starts above the screen edge).
+        float total = std::floor(S(46)) * 3;
+        capH = std::min(rowH, std::floor(S(32)));
+        RECT b = {}, wr = {};
+        POINT o = { 0, 0 };
+        if (SUCCEEDED(DwmGetWindowAttribute(g_hWnd, DWMWA_CAPTION_BUTTON_BOUNDS, &b, sizeof(b))) &&
+            b.right > b.left && b.bottom > b.top && GetWindowRect(g_hWnd, &wr) && ClientToScreen(g_hWnd, &o)) {
+            const float left = (float)(b.left - (o.x - wr.left));     // client coordinates
+            if (left > 0 && left < w) total = w - left;
+            capH = std::min(rowH, (float)(b.bottom - b.top));
+        }
+        cw = total / 3;
+    }
     L.captionH = rowH;
-    L.capClose = RectF(w - cw, 0, cw, rowH);
-    L.capMax   = RectF(w - cw * 2, 0, cw, rowH);
-    L.capMin   = RectF(w - cw * 3, 0, cw, rowH);
+    L.capClose = RectF(w - cw, capTop, cw, capH);
+    L.capMax   = RectF(w - cw * 2, capTop, cw, capH);
+    L.capMin   = RectF(w - cw * 3, capTop, cw, capH);
 }
 
 static void PlaceReloadInPill(Layout& L) {
@@ -288,6 +308,13 @@ static Color Faded(const Color& c, float a) {
     return Color((BYTE)std::lround(c.GetA() * std::max(0.f, std::min(1.f, a))), c.GetR(), c.GetG(), c.GetB());
 }
 
+// `top` painted over the opaque `base` (keeps full opacity).
+static Color Over(const Color& base, const Color& top) {
+    const float k = top.GetA() / 255.f;
+    auto m = [k](BYTE x, BYTE y) { return (BYTE)std::lround(x + ((int)y - (int)x) * k); };
+    return Color(255, m(base.GetR(), top.GetR()), m(base.GetG(), top.GetG()), m(base.GetB(), top.GetB()));
+}
+
 static Color Mix(const Color& a, const Color& b, float k) {
     k = std::max(0.f, std::min(1.f, k));
     auto m = [k](BYTE x, BYTE y) { return (BYTE)std::lround(x + ((int)y - (int)x) * k); };
@@ -488,7 +515,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
     }
 
-    // Window buttons
+    // Window buttons (with Mica DWM draws the system ones)
+    // With Mica DWM draws the system buttons underneath the chrome (Lyra's pixels cover them);
+    // they show through where the chrome is transparent. Lyra then draws only the hover / pressed
+    // state, opaque and fading in, with its own glyph at the same place.
+    const bool nativeCaps = NativeCaptionButtons();
     {
         const bool zoomed = g_hWnd && IsZoomed(g_hWnd);
         struct { const RectF* r; Hit::Kind k; const wchar_t* glyph; bool close; } caps[] = {
@@ -499,6 +530,15 @@ static void DrawChrome(Graphics& g, int w, int h) {
         for (auto& c : caps) {
             const bool p = g_down == MakeHit(c.k, -1) && hov(c.k, -1);
             const float a = p ? 1.f : HoverAmount(MakeHit(c.k, -1));
+            if (nativeCaps) {
+                if (a <= 0.f) continue;
+                const Color fill = c.close ? Over(T.frame, p ? T.closePressed : T.closeHover)
+                                           : Over(T.frame, p ? T.pressed : T.hover);
+                SolidBrush b(Faded(fill, a));
+                g.FillRectangle(&b, *c.r);
+                DrawGlyph(g, c.glyph, *c.r, Faded(c.close ? Color(255, 255, 255) : T.icon, a), g_fCaption.get());
+                continue;
+            }
             if (a > 0.f) {
                 SolidBrush b(c.close ? (p ? T.closePressed : Faded(T.closeHover, a)) : (p ? T.pressed : Faded(T.hover, a)));
                 g.FillRectangle(&b, *c.r);
@@ -661,9 +701,18 @@ void UpdateMainBackdrop() {
         m.cxLeftWidth = (int)std::ceil(g_L.sideW);
         m.cyTopHeight = (int)std::ceil(g_L.chromeH);
     }
-    // No WS_SYSMENU while Mica is on: DWM would draw its own window buttons over ours.
-    if (!g_fullScreenView) FrameSetSystemMenuStyle(g_hWnd, !MicaActive());
     ApplyBackdrop(g_hWnd, 2 /* DWMSBT_MAINWINDOW: Mica */, m);
+    // Switching between Lyra's window buttons and the system ones changes the space they take.
+    static int s_native = -1;
+    const int native = NativeCaptionButtons() ? 1 : 0;
+    if (native != s_native) {
+        const bool first = s_native < 0;
+        s_native = native;
+        if (!first || native) {
+            ComputeLayout(g_clientW);
+            InvalidateChrome();
+        }
+    }
 }
 
 void PaintChrome(HDC hdc, const RECT& rc) {

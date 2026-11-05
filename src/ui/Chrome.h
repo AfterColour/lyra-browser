@@ -70,3 +70,7 @@ void ReleaseResources();
 void PaintChrome(HDC hdc, const RECT& rc);
 // Mica behind the tab strip / toolbar / vertical tab list (follows the layout and fullscreen).
 void UpdateMainBackdrop();
+// With Mica DWM draws the system minimise / maximise / close buttons in the backdrop area (a
+// window without the caption style gets no Mica). Lyra's buttons then take exactly their place
+// and only draw their hover / pressed state; hit-testing and clicks stay Lyra's.
+bool NativeCaptionButtons();
