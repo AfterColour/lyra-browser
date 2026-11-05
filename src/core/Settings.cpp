@@ -1,0 +1,86 @@
+// Lyra — настройки браузера: значения, загрузка и сохранение settings.ini, пути профиля.
+#include "core/Settings.h"
+
+// Settings
+std::wstring g_settingsDir, g_settingsFile;
+
+double       g_zoom = 1.0;
+
+std::wstring g_homePage = L"https://example.com";
+
+std::wstring g_searchEngine = L"https://duckduckgo.com/?q=";
+
+Prefs g_prefs;
+
+// ----------------------------------------------------------------------------
+//  Settings
+// ----------------------------------------------------------------------------
+void InitPaths() {
+    wchar_t base[MAX_PATH] = {};
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        GetTempPathW(MAX_PATH, base);
+    }
+    std::wstring dir = base;
+    while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+    g_settingsDir = dir + L"\\Lyra";
+    g_settingsFile = g_settingsDir + L"\\settings.ini";
+
+    // The browser used to be called MyBrowser: take its profile (settings, cookies, history)
+    // along the first time Lyra starts.
+    std::wstring oldDir = dir + L"\\MyBrowser";
+    if (GetFileAttributesW(g_settingsDir.c_str()) == INVALID_FILE_ATTRIBUTES
+        && GetFileAttributesW(oldDir.c_str()) != INVALID_FILE_ATTRIBUTES)
+        MoveFileW(oldDir.c_str(), g_settingsDir.c_str());
+}
+
+void LoadSettings() {
+    CreateDirectoryW(g_settingsDir.c_str(), nullptr);
+    wchar_t buf[512] = {};
+    GetPrivateProfileStringW(L"Browser", L"Scale", L"1.0", buf, 512, g_settingsFile.c_str());
+    g_zoom = _wtof(buf);
+    if (g_zoom < 0.25 || g_zoom > 5.0) g_zoom = 1.0;
+    GetPrivateProfileStringW(L"Browser", L"HomePage", L"https://example.com", buf, 512, g_settingsFile.c_str());
+    g_homePage = buf;
+    GetPrivateProfileStringW(L"Browser", L"SearchEngine", L"https://duckduckgo.com/?q=", buf, 512, g_settingsFile.c_str());
+    g_searchEngine = buf;
+
+    auto geti = [&](const wchar_t* k, int d) {
+        return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
+    };
+    g_prefs.themeMode   = std::max(0, std::min(2, geti(L"Theme", 0)));
+    g_prefs.accent      = std::max(0, std::min(kAccentCount - 1, geti(L"Accent", 0)));
+    g_prefs.compact     = geti(L"Compact", 0) != 0;
+    g_prefs.showFullUrl = geti(L"FullUrl", 0) != 0;
+    g_prefs.closeAlways = geti(L"CloseAlways", 0) != 0;
+    g_prefs.newTabMode  = std::max(0, std::min(1, geti(L"NewTabMode", 0)));
+    g_prefs.js          = geti(L"JavaScript", 1) != 0;
+    g_prefs.images      = geti(L"Images", 1) != 0;
+    g_prefs.localStorage= geti(L"LocalStorage", 1) != 0;
+    g_prefs.databases   = geti(L"Databases", 1) != 0;
+    g_prefs.devExtras   = geti(L"DevTools", 1) != 0;
+    g_prefs.fullscreen  = geti(L"Fullscreen", 1) != 0;
+    g_prefs.webAudio    = geti(L"WebAudio", 1) != 0;
+    g_prefs.defaultFont = std::max(9, std::min(32, geti(L"DefaultFont", 16)));
+    g_prefs.minFont     = std::max(0, std::min(24, geti(L"MinFont", 0)));
+}
+
+void SaveSettings() {
+    wchar_t buf[64];
+    swprintf(buf, 64, L"%.2f", g_zoom);
+    WritePrivateProfileStringW(L"Browser", L"Scale", buf, g_settingsFile.c_str());
+    WritePrivateProfileStringW(L"Browser", L"HomePage", g_homePage.c_str(), g_settingsFile.c_str());
+    WritePrivateProfileStringW(L"Browser", L"SearchEngine", g_searchEngine.c_str(), g_settingsFile.c_str());
+
+    auto puti = [&](const wchar_t* k, int v) {
+        WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
+    };
+    puti(L"Theme", g_prefs.themeMode);   puti(L"Accent", g_prefs.accent);
+    puti(L"Compact", g_prefs.compact);   puti(L"FullUrl", g_prefs.showFullUrl);
+    puti(L"CloseAlways", g_prefs.closeAlways); puti(L"NewTabMode", g_prefs.newTabMode);
+    puti(L"JavaScript", g_prefs.js);     puti(L"Images", g_prefs.images);
+    puti(L"LocalStorage", g_prefs.localStorage); puti(L"Databases", g_prefs.databases);
+    puti(L"DevTools", g_prefs.devExtras); puti(L"Fullscreen", g_prefs.fullscreen);
+    puti(L"WebAudio", g_prefs.webAudio);
+    puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
+}

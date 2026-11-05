@@ -38,12 +38,29 @@ set(LYRA_RUN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/run" CACHE PATH "Output / run fold
 # ----------------------------------------------------------------------------
 #  Lyra.exe
 # ----------------------------------------------------------------------------
-add_executable(Lyra WIN32
-    src/main.cpp
-    src/Lyra.exe.manifest     # DPI awareness, Common Controls v6, Windows 10/11
+# Sources are grouped by folder (see src/README.md):
+#   app/      startup helpers: log, crash handler, environment
+#   core/     settings, constants, string and URL helpers (no windows)
+#   browser/  tabs and everything that talks to WebKit
+#   ui/       main window, tab strip/toolbar, address bar, theme, dialogs
+#   ui/settings/  the settings window
+# A new .cpp/.h under src/ is picked up automatically on the next build.
+file(GLOB_RECURSE LYRA_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
 
+add_executable(Lyra WIN32
+    ${LYRA_SOURCES}
+    src/Lyra.exe.manifest     # DPI awareness, Common Controls v6, Windows 10/11
+)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${LYRA_SOURCES})
+
+# Windows, GDI+ and WebKit headers are compiled once and reused by every source file.
+target_precompile_headers(Lyra PRIVATE src/common/Platform.h)
+
 target_include_directories(Lyra PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${WEBKIT_BUILD_DIR}/WebKit/Headers"
     "${WEBKIT_BUILD_DIR}/JavaScriptCore/Headers"
     "${WEBKIT_BUILD_DIR}/WTF/Headers"
