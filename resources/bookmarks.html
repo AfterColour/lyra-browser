@@ -1,0 +1,511 @@
+<!doctype html>
+<!--
+  Lyra bookmarks page (lyra://bookmarks, Ctrl+Shift+O).
+  This is a template: Lyra copies it to %LOCALAPPDATA%\Lyra\bookmarks.html with the bookmarks put
+  in place of the LYRA_DATA marker below (browser/StartPage.cpp), then opens it with
+  ?language=..&themeMode=..&sysru=..&sysdark=..&accent=..&icons=..&importers=[{k,n}] like the
+  start page. Changes go back to Lyra as lyra://bookmarks-<command>?... (see HandleLyraUrl).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bookmarks</title>
+<style>
+  :root {
+    --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
+    --hover: rgba(0,0,0,.045); --field: #FFFFFF; --accent: #0067C0; --sel: rgba(0,103,192,.10);
+  }
+  :root[data-theme="dark"] {
+    --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
+    --hover: rgba(255,255,255,.06); --field: #2E3036; --sel: rgba(120,170,255,.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 32px 64px; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
+  .search { position: relative; width: 280px; max-width: 100%; }
+  .search svg { position: absolute; left: 10px; top: 9px; color: var(--text2); }
+  .search input { width: 100%; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px 0 32px; font: inherit; outline: none; }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .btn { height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+         color: var(--text); font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .btn.danger { color: #C42B1C; }
+  :root[data-theme="dark"] .btn.danger { color: #FF8A80; }
+  .pop { position: relative; }
+  .menu { position: absolute; right: 0; top: 38px; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+          box-shadow: 0 12px 32px rgba(0,0,0,.18); padding: 6px; min-width: 220px; z-index: 5; }
+  .menu button { display: block; width: 100%; text-align: left; height: 32px; border: 0; background: none; border-radius: 6px;
+                 color: var(--text); font: inherit; padding: 0 10px; cursor: pointer; }
+  .menu button:hover { background: var(--hover); }
+  .menu .note { color: var(--text2); padding: 6px 10px; max-width: 260px; }
+
+  .cols { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  nav { position: sticky; top: 16px; }
+  .folder { display: flex; align-items: center; gap: 8px; height: 32px; border-radius: 7px; padding: 0 8px; cursor: pointer;
+            color: var(--text); user-select: none; }
+  .folder:hover { background: var(--hover); }
+  .folder.sel { background: var(--sel); font-weight: 600; }
+  .folder.drop { box-shadow: 0 0 0 2px var(--accent) inset; }
+  .folder .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder .count { color: var(--text2); font-size: 12px; font-weight: 400; }
+  .ficon { width: 18px; height: 18px; flex: none; color: var(--text2); display: flex; align-items: center; justify-content: center; }
+  .folder.sel .ficon { color: var(--accent); }
+
+  .listhead { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 10px 4px; }
+  .listhead h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .listhead .sub { color: var(--text2); font-size: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 8px 0 14px; text-decoration: none; color: var(--text);
+         position: relative; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row:hover { background: var(--hover); }
+  .row.dragging { opacity: .4; }
+  .row.drop-before::before, .row.drop-after::after { content: ""; position: absolute; left: 8px; right: 8px; height: 2px;
+         background: var(--accent); border-radius: 1px; }
+  .row.drop-before::before { top: -1px; }
+  .row.drop-after::after { bottom: -1px; }
+  .row.drop-into { box-shadow: 0 0 0 2px var(--accent) inset; }
+  .badge { width: 18px; height: 18px; border-radius: 5px; color: #fff; font-weight: 700; font-size: 10px; flex: none;
+           display: flex; align-items: center; justify-content: center; }
+  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .host { color: var(--text2); font-size: 12px; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act { width: 28px; height: 28px; border-radius: 6px; border: 0; background: none; color: var(--text2); cursor: pointer;
+         opacity: 0; flex: none; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+  .row:hover .act, .act:focus-visible { opacity: 1; }
+  .act:hover { background: var(--hover); color: var(--text); }
+  .empty { text-align: center; color: var(--text2); padding: 64px 0; }
+
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .dialog { width: 380px; max-width: calc(100% - 32px); background: var(--card); border-radius: 12px; padding: 20px;
+            box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: 10px; }
+  .dialog h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .dialog p { margin: 0; color: var(--text2); }
+  .dialog label { font-size: 12px; color: var(--text2); display: flex; flex-direction: column; gap: 4px; }
+  .dialog input { height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px; font: inherit; outline: none; }
+  .dialog input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--card); color: var(--text);
+           border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.2);
+           padding: 8px 8px 8px 16px; display: flex; align-items: center; gap: 12px; z-index: 20; }
+  .toast .btn { height: 28px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title"></h1>
+    <label class="search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="q" type="search" autocomplete="off">
+    </label>
+    <button class="btn" id="newFolder"></button>
+    <div class="pop">
+      <button class="btn" id="importBtn"></button>
+      <div class="menu hidden" id="importMenu"></div>
+    </div>
+  </header>
+  <div class="cols">
+    <nav id="tree"></nav>
+    <section>
+      <div class="listhead"><h2 id="listTitle"></h2><span class="sub" id="listSub"></span></div>
+      <div id="list"></div>
+    </section>
+  </div>
+</div>
+
+<div class="scrim hidden" id="scrim">
+  <form class="dialog" id="dialog">
+    <h3 id="dTitle"></h3>
+    <p id="dText" class="hidden"></p>
+    <label id="dNameRow"><span id="dNameLabel"></span><input id="dName" autocomplete="off"></label>
+    <label id="dUrlRow"><span id="dUrlLabel"></span><input id="dUrl" autocomplete="off"></label>
+    <div class="buttons">
+      <button type="button" class="btn" id="dCancel"></button>
+      <button type="submit" class="btn primary" id="dOk"></button>
+    </div>
+  </form>
+</div>
+<div class="toast hidden" id="toast"><span id="toastText"></span><button class="btn" id="toastBtn"></button></div>
+
+<script>
+"use strict";
+// [{i: id, p: parent id, f: 1 for a folder, t: title, u: address}], folders in tree order.
+// Folder 1 is Favorites (the start page), folder 2 is Bookmarks.
+let DATA = /*LYRA_DATA*/[];
+
+const q = new URLSearchParams(location.search);
+const lang = +(q.get("language") || 0), theme = +(q.get("themeMode") || 0);
+const ru = lang === 2 || (lang === 0 && q.get("sysru") === "1");
+const dark = theme === 2 || (theme === 0 && q.get("sysdark") === "1");
+document.documentElement.dataset.theme = dark ? "dark" : "light";
+document.documentElement.lang = ru ? "ru" : "en";
+if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) {
+  const a = q.get("accent");
+  document.documentElement.style.setProperty("--accent", "#" + a);
+  const r = parseInt(a.slice(0, 2), 16), g = parseInt(a.slice(2, 4), 16), b = parseInt(a.slice(4, 6), 16);
+  document.documentElement.style.setProperty("--sel", `rgba(${r},${g},${b},${dark ? .18 : .10})`);
+}
+let importers = [];
+try { importers = JSON.parse(q.get("importers") || "[]"); } catch (e) {}
+
+const S = ru ? {
+  title: "Закладки", search: "Поиск в закладках", newFolder: "Новая папка", import: "Импорт…",
+  favorites: "Избранное", bookmarks: "Закладки", favSub: "Показываются на стартовой странице",
+  empty: "Здесь пока пусто. Добавляйте страницы звёздочкой в адресной строке или перетаскивайте их сюда.",
+  nothing: "Ничего не найдено", found: "Найдено", edit: "Изменить", remove: "Удалить", name: "Название", address: "Адрес",
+  editBm: "Изменить закладку", editFolder: "Переименовать папку", folderName: "Название папки", create: "Создать",
+  save: "Сохранить", cancel: "Отмена", removed: "Закладка удалена", undo: "Вернуть",
+  delFolder: "Удалить папку?", delFolderText: (n) => `Вместе с папкой удалится всё, что в ней (${n}).`,
+  noImport: "Других браузеров с закладками не найдено (Chrome, Edge, Яндекс, Opera, Brave, Vivaldi).",
+  importFrom: "Из ", imported: (n) => n > 0 ? `Импортировано закладок: ${n}` : "Новых закладок не найдено",
+  importFail: "Не удалось прочитать закладки этого браузера",
+  items: (n) => n + " " + (n % 10 === 1 && n % 100 !== 11 ? "закладка" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "закладки" : "закладок"),
+} : {
+  title: "Bookmarks", search: "Search bookmarks", newFolder: "New Folder", import: "Import…",
+  favorites: "Favorites", bookmarks: "Bookmarks", favSub: "Shown on the start page",
+  empty: "Nothing here yet. Add pages with the star in the address bar or drag them here.",
+  nothing: "Nothing found", found: "Found", edit: "Edit", remove: "Delete", name: "Name", address: "Address",
+  editBm: "Edit Bookmark", editFolder: "Rename Folder", folderName: "Folder name", create: "Create",
+  save: "Save", cancel: "Cancel", removed: "Bookmark deleted", undo: "Undo",
+  delFolder: "Delete folder?", delFolderText: (n) => `Everything inside it is deleted too (${n}).`,
+  noImport: "No other browsers with bookmarks were found (Chrome, Edge, Yandex, Opera, Brave, Vivaldi).",
+  importFrom: "From ", imported: (n) => n > 0 ? `Imported ${n} bookmark${n === 1 ? "" : "s"}` : "No new bookmarks found",
+  importFail: "Could not read this browser's bookmarks",
+  items: (n) => n + (n === 1 ? " bookmark" : " bookmarks"),
+};
+const $ = (id) => document.getElementById(id);
+document.title = S.title;
+$("title").textContent = S.title;
+$("q").placeholder = S.search;
+$("newFolder").textContent = S.newFolder;
+$("importBtn").textContent = S.import;
+
+function send(cmd, params) {
+  const qs = Object.entries(params).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+  location.href = "lyra://bookmarks-" + cmd + (qs ? "?" + qs : "");
+}
+
+// ---- icons (same as the start page) ---------------------------------------------
+const ICONS = q.get("icons") || "";
+function iconKey(url) {
+  try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; }
+}
+function attachIcon(badgeEl, url, attempt) {
+  attempt = attempt || 0;
+  const key = ICONS && iconKey(url);
+  if (!key) return;
+  const img = new Image();
+  img.onload = () => {
+    badgeEl.textContent = ""; badgeEl.style.background = "transparent";
+    img.style.width = "100%"; img.style.height = "100%"; img.style.borderRadius = "4px"; img.alt = "";
+    badgeEl.appendChild(img);
+  };
+  img.onerror = () => {
+    if (attempt === 0) requestIcon(url);
+    if (attempt < 2) setTimeout(() => attachIcon(badgeEl, url, attempt + 1), attempt === 0 ? 2500 : 7000);
+  };
+  img.src = ICONS + key + ".png" + (attempt ? "?r=" + attempt : "");
+}
+let iconRequests = [], iconTimer = 0;
+function requestIcon(url) {
+  iconRequests.push(url);
+  clearTimeout(iconTimer);
+  iconTimer = setTimeout(() => {
+    const qs = iconRequests.slice(0, 40).map((u) => "u=" + encodeURIComponent(u)).join("&");
+    iconRequests = [];
+    if (qs) location.href = "lyra://favicons?" + qs;
+  }, 150);
+}
+const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, "") || url; } catch (e) { return url; } }
+function badge(url, title) {
+  const host = hostOf(url);
+  let h = 2166136261 >>> 0;
+  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return { letter: (((title || host).match(/[\p{L}\p{N}]/u) || ["•"])[0]).toUpperCase(), color: PALETTE[Math.imul(h, 2654435761) >>> 29] };
+}
+const FOLDER_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M1.75 4.25c0-.55.45-1 1-1h3.1l1.4 1.5h6c.55 0 1 .45 1 1v6.5c0 .55-.45 1-1 1H2.75c-.55 0-1-.45-1-1z"/></svg>';
+const STAR_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="m8 1.9 1.85 3.75 4.15.6-3 2.92.7 4.12L8 11.35l-3.7 1.94.7-4.12-3-2.92 4.15-.6z"/></svg>';
+const BOOK_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4 1.75h8c.4 0 .75.35.75.75v11.6L8 11.1l-4.75 3V2.5c0-.4.35-.75.75-.75z"/></svg>';
+const EDIT_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M10.6 2.6l2.8 2.8-8 8H2.6v-2.8z"/></svg>';
+
+// ---- model -----------------------------------------------------------------------
+const byId = (id) => DATA.find((b) => b.i === id);
+const children = (id) => DATA.filter((b) => b.p === id && b.i !== id);
+function nameOf(b) { return b.i === 1 ? S.favorites : b.i === 2 ? S.bookmarks : (b.t || hostOf(b.u || "")); }
+function countIn(id) { let n = 0; for (const c of children(id)) n += c.f ? countIn(c.i) : 1; return n; }
+function isInside(id, folder) {          // is `id` the folder itself or somewhere inside it
+  for (let b = byId(id); b; b = byId(b.p)) if (b.i === folder) return true;
+  return false;
+}
+function pathOf(id) {
+  const names = [];
+  for (let b = byId(id); b; b = byId(b.p)) names.unshift(nameOf(b));
+  return names.join(" › ");
+}
+
+let current = 1;
+try { const s = +sessionStorage.getItem("lyra.bm.folder"); if (s && byId(s) && byId(s).f) current = s; } catch (e) {}
+function select(id) {
+  current = id;
+  try { sessionStorage.setItem("lyra.bm.folder", String(id)); } catch (e) {}
+  $("q").value = "";
+  render();
+}
+
+// ---- drag and drop -----------------------------------------------------------------
+let dragId = 0;
+function clearDropMarks() {
+  document.querySelectorAll(".drop, .drop-before, .drop-after, .drop-into").forEach((el) =>
+    el.classList.remove("drop", "drop-before", "drop-after", "drop-into"));
+}
+// Moves `id` into `folder` before the child now at `index` (-1: at the end), here and in Lyra.
+function moveTo(id, folder, index) {
+  if (!id || isInside(folder, id)) return;
+  const item = byId(id);
+  const siblings = children(folder).filter((b) => b.i !== id);
+  let pos = index;
+  if (item.p === folder && index >= 0) {
+    const own = children(folder).findIndex((b) => b.i === id);
+    if (own >= 0 && own < index) pos = index - 1;
+  }
+  DATA.splice(DATA.indexOf(item), 1);
+  item.p = folder;
+  if (pos >= 0 && pos < siblings.length) DATA.splice(DATA.indexOf(siblings[pos]), 0, item);
+  else if (siblings.length) DATA.splice(DATA.indexOf(siblings[siblings.length - 1]) + 1, 0, item);
+  else DATA.splice(DATA.indexOf(byId(folder)) + 1, 0, item);
+  send("move", { id, folder, index });
+  render();
+}
+
+// ---- rendering -----------------------------------------------------------------------
+function renderTree() {
+  const nav = $("tree");
+  nav.textContent = "";
+  const add = (b, depth) => {
+    const el = document.createElement("div");
+    el.className = "folder" + (b.i === current && !$("q").value.trim() ? " sel" : "");
+    el.style.paddingLeft = (8 + depth * 16) + "px";
+    el.innerHTML = '<span class="ficon"></span><span class="fname"></span><span class="count"></span>';
+    el.querySelector(".ficon").innerHTML = b.i === 1 ? STAR_SVG : b.i === 2 ? BOOK_SVG : FOLDER_SVG;
+    el.querySelector(".fname").textContent = nameOf(b);
+    const n = countIn(b.i);
+    el.querySelector(".count").textContent = n ? String(n) : "";
+    el.addEventListener("click", () => select(b.i));
+    el.addEventListener("dragover", (e) => {
+      if (!dragId || isInside(b.i, dragId)) return;
+      e.preventDefault(); clearDropMarks(); el.classList.add("drop");
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("drop"));
+    el.addEventListener("drop", (e) => { e.preventDefault(); clearDropMarks(); moveTo(dragId, b.i, -1); dragId = 0; });
+    nav.appendChild(el);
+    for (const c of children(b.i)) if (c.f) add(c, depth + 1);
+  };
+  for (const root of [1, 2]) if (byId(root)) add(byId(root), 0);
+}
+
+function makeRow(b, index, showPath) {
+  const a = document.createElement(b.f ? "div" : "a");
+  a.className = "row";
+  if (!b.f) { a.href = b.u; a.title = b.u; }
+  a.draggable = true;
+  a.innerHTML = '<span class="badge"></span><span class="title"></span><span class="host"></span>' +
+                '<button class="act edit" type="button"></button><button class="act del" type="button">✕</button>';
+  const bd = a.querySelector(".badge");
+  if (b.f) { bd.innerHTML = FOLDER_SVG; bd.style.color = "var(--text2)"; a.style.cursor = "pointer"; }
+  else {
+    const g = badge(b.u, b.t);
+    bd.textContent = g.letter; bd.style.background = g.color;
+    attachIcon(bd, b.u);
+  }
+  a.querySelector(".title").textContent = nameOf(b);
+  a.querySelector(".host").textContent = showPath ? pathOf(b.p) : b.f ? S.items(countIn(b.i)) : hostOf(b.u);
+  const ed = a.querySelector(".edit"), del = a.querySelector(".del");
+  ed.innerHTML = EDIT_SVG; ed.title = S.edit; ed.setAttribute("aria-label", S.edit);
+  del.title = S.remove; del.setAttribute("aria-label", S.remove);
+  ed.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); editItem(b); });
+  del.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); removeItem(b); });
+  if (b.f) a.addEventListener("click", () => select(b.i));
+
+  a.addEventListener("dragstart", (e) => {
+    dragId = b.i; a.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    if (!b.f) { e.dataTransfer.setData("text/uri-list", b.u); e.dataTransfer.setData("text/plain", b.u); }
+  });
+  a.addEventListener("dragend", () => { a.classList.remove("dragging"); clearDropMarks(); dragId = 0; });
+  if (!showPath) {
+    a.addEventListener("dragover", (e) => {
+      if (!dragId || dragId === b.i) return;
+      e.preventDefault();
+      const r = a.getBoundingClientRect(), y = e.clientY - r.top;
+      clearDropMarks();
+      if (b.f && y > r.height * .25 && y < r.height * .75 && !isInside(b.i, dragId)) a.classList.add("drop-into");
+      else a.classList.add(y < r.height / 2 ? "drop-before" : "drop-after");
+    });
+    a.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const into = a.classList.contains("drop-into"), after = a.classList.contains("drop-after");
+      clearDropMarks();
+      if (into) moveTo(dragId, b.i, -1);
+      else moveTo(dragId, b.p, index + (after ? 1 : 0));
+      dragId = 0;
+    });
+  }
+  return a;
+}
+
+function render() {
+  renderTree();
+  const list = $("list");
+  list.textContent = "";
+  const words = $("q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  let items, searching = words.length > 0;
+  if (searching) {
+    items = DATA.filter((b) => !b.f && words.every((w) => (b.u || "").toLowerCase().includes(w) || (b.t || "").toLowerCase().includes(w)));
+    $("listTitle").textContent = S.found;
+    $("listSub").textContent = items.length ? S.items(items.length) : "";
+  } else {
+    const folder = byId(current) || byId(1);
+    current = folder.i;
+    items = children(current);
+    $("listTitle").textContent = nameOf(folder);
+    $("listSub").textContent = current === 1 ? S.favSub : (folder.p ? pathOf(folder.p) : "");
+  }
+  if (!items.length) {
+    const p = document.createElement("div");
+    p.className = "empty"; p.textContent = searching ? S.nothing : S.empty;
+    list.appendChild(p);
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "card";
+  items.slice(0, 2000).forEach((b, i) => card.appendChild(makeRow(b, i, searching)));
+  list.appendChild(card);
+}
+
+// ---- dialogs -------------------------------------------------------------------------
+let dialogDone = null;
+function openDialog(opts) {
+  $("dTitle").textContent = opts.title;
+  $("dText").classList.toggle("hidden", !opts.text);
+  $("dText").textContent = opts.text || "";
+  $("dNameRow").classList.toggle("hidden", opts.name === undefined);
+  $("dUrlRow").classList.toggle("hidden", opts.url === undefined);
+  $("dNameLabel").textContent = opts.nameLabel || S.name;
+  $("dUrlLabel").textContent = S.address;
+  $("dName").value = opts.name || "";
+  $("dUrl").value = opts.url || "";
+  $("dCancel").textContent = S.cancel;
+  $("dOk").textContent = opts.ok;
+  $("dOk").classList.toggle("danger", !!opts.danger);
+  $("dOk").classList.toggle("primary", !opts.danger);
+  dialogDone = opts.done;
+  $("scrim").classList.remove("hidden");
+  const focus = opts.name !== undefined ? $("dName") : $("dOk");
+  focus.focus();
+  if (focus.select) focus.select();
+}
+function closeDialog() { $("scrim").classList.add("hidden"); dialogDone = null; }
+$("dCancel").addEventListener("click", closeDialog);
+$("scrim").addEventListener("mousedown", (e) => { if (e.target === $("scrim")) closeDialog(); });
+$("dialog").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const done = dialogDone;
+  closeDialog();
+  if (done) done($("dName").value.trim(), $("dUrl").value.trim());
+});
+
+function editItem(b) {
+  openDialog({
+    title: b.f ? S.editFolder : S.editBm, name: nameOf(b), url: b.f ? undefined : b.u, ok: S.save,
+    done: (name, url) => {
+      if (!b.f && url && !/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
+      b.t = name || (b.f ? b.t : hostOf(b.u));
+      if (!b.f && url) b.u = url;
+      send("rename", b.f ? { id: b.i, t: b.t } : { id: b.i, t: b.t, u: b.u });
+      render();
+    },
+  });
+}
+
+let toastTimer = 0, undo = null;
+function toast(text, undoFn) {
+  $("toastText").textContent = text;
+  $("toastBtn").textContent = S.undo;
+  $("toastBtn").classList.toggle("hidden", !undoFn);
+  undo = undoFn;
+  $("toast").classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 6000);
+}
+$("toastBtn").addEventListener("click", () => { $("toast").classList.add("hidden"); if (undo) undo(); undo = null; });
+
+function removeItem(b) {
+  const doRemove = () => {
+    const gone = DATA.filter((x) => isInside(x.i, b.i));
+    DATA = DATA.filter((x) => !gone.includes(x));
+    send("remove", { id: b.i });
+    if (isInside(current, b.i) || !byId(current)) current = b.p;
+    render();
+  };
+  if (b.f) {
+    const n = countIn(b.i);
+    if (n === 0) { doRemove(); return; }
+    openDialog({ title: S.delFolder, text: S.delFolderText(S.items(n)), ok: S.remove, danger: true, done: doRemove });
+    return;
+  }
+  const index = children(b.p).findIndex((x) => x.i === b.i);
+  doRemove();
+  // Undo puts it back where it was (Lyra reloads the page with the new bookmark).
+  toast(S.removed, () => send("add", { folder: b.p, index, t: b.t, u: b.u }));
+}
+
+$("newFolder").addEventListener("click", () => {
+  openDialog({ title: S.newFolder, name: "", nameLabel: S.folderName, ok: S.create,
+               done: (name) => send("folder", { parent: current, t: name || S.newFolder }) });
+});
+
+// ---- import ------------------------------------------------------------------------------
+(function buildImport() {
+  const menu = $("importMenu");
+  if (!importers.length) {
+    const p = document.createElement("div");
+    p.className = "note"; p.textContent = S.noImport;
+    menu.appendChild(p);
+  }
+  for (const im of importers) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = S.importFrom + im.n;
+    b.addEventListener("click", () => send("import", { from: im.k }));
+    menu.appendChild(b);
+  }
+})();
+$("importBtn").addEventListener("click", (e) => { e.stopPropagation(); $("importMenu").classList.toggle("hidden"); });
+document.addEventListener("click", () => $("importMenu").classList.add("hidden"));
+{
+  const n = q.get("imported");
+  if (n !== null) toast(+n < 0 ? S.importFail : S.imported(+n));
+}
+
+$("q").addEventListener("input", render);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("scrim").classList.contains("hidden")) { closeDialog(); return; }
+  if ((e.ctrlKey && e.key.toLowerCase() === "f") || (e.key === "/" && document.activeElement !== $("q") &&
+      document.activeElement.tagName !== "INPUT")) {
+    e.preventDefault(); $("q").focus();
+  }
+});
+render();
+</script>
+</body>
+</html>

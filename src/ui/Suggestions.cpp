@@ -1,8 +1,10 @@
 // Lyra — подсказки под адресной строкой: поиск и совпадения из истории.
 //
 // A popup below the address field (owned by the main window, never activated, so the field
-// keeps the keyboard focus). Rows: "search for" / "go to" what was typed, then history matches.
+// keeps the keyboard focus). Rows: "search for" / "go to" what was typed, then bookmarks and
+// history matches.
 #include "ui/Suggestions.h"
+#include "browser/Bookmarks.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "browser/TabManager.h"
@@ -16,7 +18,8 @@
 #include "ui/Theme.h"
 
 struct SuggestRow {
-    enum Kind { Search, Go, History } kind = Search;
+    enum Kind { Search, Go, History, Bookmark } kind = Search;
+    bool IsPage() const { return kind == History || kind == Bookmark; }
     std::wstring title, url;
 };
 
@@ -48,7 +51,7 @@ static void SetEditText(const std::wstring& text) {
 
 static void Navigate(const SuggestRow& r) {
     SuggestHide();
-    NavigateActive(r.kind == SuggestRow::History ? r.url : s_typed);
+    NavigateActive(r.IsPage() ? r.url : s_typed);
     FocusWebView();
 }
 
@@ -109,12 +112,13 @@ static void Paint(HDC hdc) {
 
             const float iconS = S(16);
             RectF icon(row.X + S(10), row.Y + (row.Height - iconS) / 2, iconS, iconS);
-            Bitmap* fav = r.kind == SuggestRow::History ? FaviconFor(r.url) : nullptr;
+            Bitmap* fav = r.IsPage() ? FaviconFor(r.url) : nullptr;
             if (fav) {
                 g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
                 g.DrawImage(fav, icon);
             } else {
-                const wchar_t* glyph = r.kind == SuggestRow::Search ? L"\uE721" : r.kind == SuggestRow::Go ? L"\uE774" : L"\uE81C";
+                const wchar_t* glyph = r.kind == SuggestRow::Search ? L"\uE721" : r.kind == SuggestRow::Go ? L"\uE774"
+                                     : r.kind == SuggestRow::Bookmark ? L"\uE734" : L"\uE81C";
                 DrawGlyph(g, glyph, icon, T.text2, g_fIconSm.get());
             }
 
@@ -122,7 +126,7 @@ static void Paint(HDC hdc) {
             const float right = row.GetRight() - S(10);
             std::wstring main = r.title, extra;
             if (r.kind == SuggestRow::Search) extra = std::wstring(L"  \x2014  ") + Tr(L"Search", L"Поиск");
-            else if (r.kind == SuggestRow::History) extra = L"  \x2014  " + DisplayUrl(r.url);
+            else if (r.IsPage()) extra = L"  \x2014  " + DisplayUrl(r.url);
             RectF m;
             g.MeasureString(main.c_str(), -1, g_fText.get(), RectF(0, 0, 10000, 1000), &sf, &m);
             const float mainW = std::min(m.Width + S(1), (right - tx) * (extra.empty() ? 1.f : 0.6f));
@@ -218,27 +222,42 @@ void SuggestUpdate() {
     s_hover = -1;
     if (text.empty()) { SuggestHide(); return; }
 
-    const std::vector<HistoryEntry> matches = HistoryMatch(text, 6);
-    SuggestRow first;
-    first.kind = LooksLikeAddress(text) ? SuggestRow::Go : SuggestRow::Search;
-    first.title = text;
-    // An address typed exactly like the start of a visited one goes first, as in other browsers.
-    bool historyFirst = false;
-    if (!matches.empty()) {
-        std::wstring bare = DisplayUrl(matches[0].url);
-        if (bare.compare(0, 4, L"www.") == 0) bare = bare.substr(4);
-        historyFirst = _wcsnicmp(bare.c_str(), text.c_str(), text.size()) == 0;
+    // Bookmarks first (up to three), then visited pages; one row per address, seven at most.
+    std::vector<SuggestRow> pages;
+    auto seen = [&](const std::wstring& url) {
+        for (auto& r : pages) if (r.url == url) return true;
+        return false;
+    };
+    for (const ::Bookmark& b : BookmarksMatch(text, 3)) {
+        SuggestRow r;
+        r.kind = SuggestRow::Bookmark;
+        r.url = b.url;
+        r.title = b.title.empty() ? HostOf(b.url) : b.title;
+        pages.push_back(r);
     }
-    auto pushHistory = [&](const HistoryEntry& e) {
+    for (const HistoryEntry& e : HistoryMatch(text, 6)) {
+        if (pages.size() >= 6) break;
+        if (seen(e.url)) continue;
         SuggestRow r;
         r.kind = SuggestRow::History;
         r.url = e.url;
         r.title = e.title.empty() ? HostOf(e.url) : e.title;
-        s_rows.push_back(r);
+        pages.push_back(r);
+    }
+    SuggestRow first;
+    first.kind = LooksLikeAddress(text) ? SuggestRow::Go : SuggestRow::Search;
+    first.title = text;
+    // An address typed exactly like the start of a known one goes first, as in other browsers.
+    auto startsWithTyped = [&](const SuggestRow& r) {
+        std::wstring bare = DisplayUrl(r.url);
+        if (bare.compare(0, 4, L"www.") == 0) bare = bare.substr(4);
+        return _wcsnicmp(bare.c_str(), text.c_str(), text.size()) == 0;
     };
-    if (historyFirst) pushHistory(matches[0]);
+    size_t lead = pages.size();
+    for (size_t i = 0; i < pages.size(); ++i) if (startsWithTyped(pages[i])) { lead = i; break; }
+    if (lead < pages.size()) s_rows.push_back(pages[lead]);
     s_rows.push_back(first);
-    for (size_t i = historyFirst ? 1 : 0; i < matches.size(); ++i) pushHistory(matches[i]);
+    for (size_t i = 0; i < pages.size(); ++i) if (i != lead) s_rows.push_back(pages[i]);
 
     EnsurePopup();
     if (!s_popup) return;
@@ -264,7 +283,7 @@ bool SuggestMove(int delta) {
     if (next >= n) next = -1;
     s_sel = next;
     // The field shows the selected address; back at "nothing selected" it shows what was typed.
-    if (s_sel >= 0 && s_rows[s_sel].kind == SuggestRow::History) SetEditText(s_rows[s_sel].url);
+    if (s_sel >= 0 && s_rows[s_sel].IsPage()) SetEditText(s_rows[s_sel].url);
     else SetEditText(s_typed);
     InvalidateRect(s_popup, nullptr, FALSE);
     return true;

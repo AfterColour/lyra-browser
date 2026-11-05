@@ -8,6 +8,7 @@
 #include "core/Constants.h"
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
+#include "ui/BookmarkPopup.h"
 #include "ui/Chrome.h"
 #include "ui/MainWindow.h"
 #include "ui/settings/SettingsWindow.h"
@@ -75,6 +76,8 @@ void RunCommand(int cmd) {
     case CMD_REOPENTAB: ReopenClosedTab(); break;
     case CMD_DEVTOOLS:  ShowWebInspector(); break;
     case CMD_HISTORY:   OpenHistory(); break;
+    case CMD_BOOKMARKS: OpenBookmarks(); break;
+    case CMD_BOOKMARK_PAGE: BookmarkCurrentPage(); break;
     }
 }
 
@@ -85,6 +88,13 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING | (g_closedUrls.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
     AppendMenuW(m, MF_STRING, CMD_HISTORY,   Tr(L"History\tCtrl+H", L"История\tCtrl+H"));
+    AppendMenuW(m, MF_STRING, CMD_BOOKMARKS, Tr(L"Bookmarks\tCtrl+Shift+O", L"Закладки\tCtrl+Shift+O"));
+    {
+        const Tab* t = ActiveTab();
+        AppendMenuW(m, MF_STRING | ((t && CanBookmark(t->url)) ? 0 : MF_GRAYED), CMD_BOOKMARK_PAGE,
+                    (t && IsBookmarkedCached(t->url)) ? Tr(L"Edit Bookmark\tCtrl+D", L"Изменить закладку\tCtrl+D")
+                                                      : Tr(L"Bookmark This Page\tCtrl+D", L"Добавить в закладки\tCtrl+D"));
+    }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
     AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
@@ -119,6 +129,7 @@ bool HandleShortcut(const MSG& m) {
     if (ctrl && shift && !alt) {
         if (k == 'T') { ReopenClosedTab(); return true; }
         if (k == 'I') { ShowWebInspector(); return true; }
+        if (k == 'O') { RunCommand(CMD_BOOKMARKS); return true; }
     }
     if (ctrl && !alt) {
         switch (k) {
@@ -126,6 +137,7 @@ bool HandleShortcut(const MSG& m) {
         case 'W': RunCommand(CMD_CLOSETAB); return true;
         case 'L': ShowUrlEdit(); return true;
         case 'H': RunCommand(CMD_HISTORY); return true;
+        case 'D': RunCommand(CMD_BOOKMARK_PAGE); return true;
         case VK_OEM_COMMA: RunCommand(CMD_SETTINGS); return true;
         case 'R': ReloadActive(false); return true;
         case VK_OEM_PLUS: case VK_ADD:         RunCommand(CMD_ZOOMIN); return true;

@@ -16,6 +16,7 @@
 #include "core/Settings.h"
 #include "core/Url.h"
 #include "ui/AddressBar.h"
+#include "ui/BookmarkPopup.h"
 #include "ui/Animation.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
@@ -98,10 +99,19 @@ static void PlaceCaptionButtons(Layout& L, float w, float rowH, const ChromeDims
     L.capMin   = RectF(w - cw * 3, capTop, cw, capH);
 }
 
+// The star sits at the right end of the address field (left of reload when that is inside).
+static void PlaceStar(Layout& L) {
+    const float rb = std::floor(L.pill.Height - S(6));
+    const float right = L.reloadInPill ? L.reload.X - S(1) : L.pill.GetRight() - S(3);
+    L.star = RectF(right - rb, L.pill.Y + (L.pill.Height - rb) / 2, rb, rb);
+    if (L.pill.Width < S(220)) L.star = RectF();         // too narrow: no star
+}
+
 static void PlaceReloadInPill(Layout& L) {
     const float rb = std::floor(L.pill.Height - S(6));
     L.reload = RectF(L.pill.GetRight() - rb - S(3), L.pill.Y + (L.pill.Height - rb) / 2, rb, rb);
     L.reloadInPill = true;
+    PlaceStar(L);
 }
 
 static void ComputeTarget(Layout& L, int clientW) {
@@ -182,6 +192,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.more   = RectF(w - edge - btn, by, btn, btn);
         const float pl = L.reload.GetRight() + S(8), pr = L.more.X - S(8);
         L.pill = RectF(std::floor(pl), strip + std::floor((bar - tabH) / 2), std::floor(std::max(S(80), pr - pl)), tabH);
+        PlaceStar(L);
     } else {   // vertical
         L.chromeH = bar;
         L.sideW = std::floor(S(d.sideW));
@@ -369,11 +380,18 @@ static RectF CloseRect(int i) {
     return RectF(r.GetRight() - S(5) - c, r.Y + (r.Height - c) / 2, c, c);
 }
 
+// The bookmark star: for web pages and files, while the address is not being edited.
+static bool StarShown() {
+    if (g_L.star.Width <= 0 || IsEditing()) return false;
+    const Tab* t = ActiveTab();
+    return t && CanBookmark(t->url);
+}
+
 static bool CloseVisible(int i) {
     if (i < 0 || i >= (int)g_L.tabs.size()) return false;
     const bool overTab = (g_hover.kind == Hit::TabBody || g_hover.kind == Hit::TabClose) && g_hover.index == i;
     if (IsCompactActive(i))      // Safari: the active tab shows its close button while hovered
-        return !IsEditing() && (g_hover.kind == Hit::Pill || g_hover.kind == Hit::Reload ||
+        return !IsEditing() && (g_hover.kind == Hit::Pill || g_hover.kind == Hit::Reload || g_hover.kind == Hit::Star ||
                                 (g_hover.kind == Hit::TabClose && g_hover.index == i));
     if (g_L.tabs[i].Width < S(60)) return false;
     if (g_L.mode == kLayoutCompact) return overTab || g_prefs.closeAlways;
@@ -395,6 +413,7 @@ Hit HitTest(int px, int py) {
         if (L.more.Contains(x, y))     return MakeHit(Hit::More);
         if (L.mode != kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
         if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
+        if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     for (int i = n - 1; i >= 0; --i)
@@ -619,6 +638,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const float rad = S(7);
         float pillHover = HoverAmount(MakeHit(Hit::Pill, -1));
         if (L.reloadInPill) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reload, -1)));
+        pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Star, -1)));
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
@@ -666,7 +686,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             const bool secure = cur && cur->url.compare(0, 8, L"https://") == 0;
 
             const float textL = pill.X + S(28);
-            const float textR = L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
+            const bool star = StarShown();
+            const float textR = star ? L.star.X - S(2) : L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -690,6 +711,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
 
             if (L.reloadInPill)
                 toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, g_fIconSm.get());
+            if (star) {
+                const bool marked = IsBookmarkedCached(cur->url);
+                hoverFill(L.star, MakeHit(Hit::Star, -1), dwn(Hit::Star, -1) || BookmarkPopupVisible(), S(6));
+                DrawGlyph(g, marked ? L"\uE735" : L"\uE734", L.star, marked ? T.accent : T.icon, g_fIconSm.get());
+            }
         }
     }
 }

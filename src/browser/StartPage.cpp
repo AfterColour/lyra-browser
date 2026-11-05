@@ -1,5 +1,6 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
+#include "browser/Bookmarks.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "app/Log.h"
@@ -9,6 +10,7 @@
 #include "core/Settings.h"
 #include "core/StringUtils.h"
 #include "core/Url.h"
+#include "ui/Chrome.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/settings/SettingsWindow.h"
@@ -59,6 +61,16 @@ std::wstring StartPageUrl(bool welcome) {
     url += L"&freq=" + std::wstring(g_prefs.startFrequent ? L"1" : L"0");
     if (g_prefs.startFrequent && !welcome)
         url += L"&top=" + ToWide(UrlEncode(ToUtf8(EntriesJson(HistoryTopSites(12), false))));
+    if (!welcome) {
+        // Favorites = the bookmarks in the Favorites folder (sub-folders are not shown).
+        std::wstring favs = L"[";
+        for (const Bookmark& b : BookmarkChildren(kFavoritesFolder)) {
+            if (b.folder) continue;
+            if (favs.size() > 1) favs += L",";
+            favs += L"{\"i\":" + std::to_wstring(b.id) + L",\"u\":" + JsString(b.url) + L",\"t\":" + JsString(b.title) + L"}";
+        }
+        url += L"&favs=" + ToWide(UrlEncode(ToUtf8(favs + L"]")));
+    }
     if (welcome) url += L"&welcome=1";
     return url;
 }
@@ -77,27 +89,58 @@ static std::string ReadFileUtf8(const std::wstring& path) {
     return data;
 }
 
-std::wstring HistoryPageUrl() {
-    // resources\history.html sits next to start.html
+// resources\<name> (next to start.html) with `json` in place of the LYRA_DATA marker, written to
+// `out`; returns the file URL of `out` (without parameters).
+static std::wstring WriteGeneratedPage(const wchar_t* name, const std::wstring& out, const std::wstring& json) {
     std::wstring tpl = StartPagePath();
-    tpl.replace(tpl.size() - wcslen(L"start.html"), wcslen(L"start.html"), L"history.html");
+    tpl.replace(tpl.size() - wcslen(L"start.html"), wcslen(L"start.html"), name);
     std::string page = ReadFileUtf8(tpl);
     const std::string marker = "/*LYRA_DATA*/[]";
     const size_t at = page.find(marker);
-    if (at != std::string::npos) page.replace(at, marker.size(), ToUtf8(EntriesJson(HistoryNewest(5000), true)));
-    const std::wstring out = HistoryPagePath();
+    if (at != std::string::npos) page.replace(at, marker.size(), ToUtf8(json));
     HANDLE f = CreateFileW(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
         if (!page.empty()) WriteFile(f, page.data(), (DWORD)page.size(), &written, nullptr);
         CloseHandle(f);
     } else {
-        Log("history page: cannot write %ls", out.c_str());
+        Log("internal page: cannot write %ls", out.c_str());
     }
     wchar_t url[2084] = {};
     DWORD len = ARRAYSIZE(url);
     if (FAILED(UrlCreateFromPathW(out.c_str(), url, &len, 0))) return std::wstring();
-    return std::wstring(url) + L"?" + LookParams();
+    return url;
+}
+
+std::wstring HistoryPageUrl() {
+    const std::wstring url = WriteGeneratedPage(L"history.html", HistoryPagePath(), EntriesJson(HistoryNewest(5000), true));
+    return url.empty() ? url : url + L"?" + LookParams();
+}
+
+// [{"i":id,"p":parent,"f":1,"t":title,"u":url}] in tree order
+static std::wstring BookmarksJson() {
+    std::wstring json = L"[";
+    for (const Bookmark& b : BookmarksAll()) {
+        if (json.size() > 1) json += L",";
+        json += L"{\"i\":" + std::to_wstring(b.id) + L",\"p\":" + std::to_wstring(b.parent);
+        if (b.folder) json += L",\"f\":1";
+        json += L",\"t\":" + JsString(b.title);
+        if (!b.folder) json += L",\"u\":" + JsString(b.url);
+        json += L"}";
+    }
+    return json + L"]";
+}
+
+std::wstring BookmarksPageUrl() {
+    const std::wstring url = WriteGeneratedPage(L"bookmarks.html", BookmarksPagePath(), BookmarksJson());
+    if (url.empty()) return url;
+    std::wstring importers = L"[";
+    for (auto& [key, name] : BookmarkImporters()) {
+        if (importers.size() > 1) importers += L",";
+        importers += L"{\"k\":" + JsString(key) + L",\"n\":" + JsString(name) + L"}";
+    }
+    importers += L"]";
+    return url + L"?" + LookParams() + L"&importers=" + ToWide(UrlEncode(ToUtf8(importers)));
 }
 
 static void LoadInTab(Tab& t, const std::wstring& url) {
@@ -118,6 +161,30 @@ static void RefreshHistoryPages() {
     }
 }
 
+// Rewrites the bookmarks page (a tab restored later must not show old bookmarks) and reloads the
+// open ones, except the tab `skip` (it changed itself).
+static void RefreshBookmarksPages(unsigned long long skip = 0, const std::wstring& extra = L"") {
+    const std::wstring fresh = BookmarksPageUrl();
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (t.state != TabState::Live || !t.page || !IsBookmarksPageUrl(t.url)) continue;
+        if (t.id == skip) continue;
+        if (fresh == t.url && extra.empty()) WKPageReload(t.page);
+        else LoadInTab(t, fresh + extra);
+    }
+}
+
+void OpenBookmarks() {
+    for (int i = 0; i < (int)g_tabs.size(); ++i) {
+        if (g_tabs[i]->state == TabState::Live && IsBookmarksPageUrl(g_tabs[i]->url)) {
+            SelectTab(i);
+            RefreshBookmarksPages();
+            return;
+        }
+    }
+    CreateTab(kBookmarksAlias);
+}
+
 void OpenHistory() {
     for (int i = 0; i < (int)g_tabs.size(); ++i) {
         if (g_tabs[i]->state == TabState::Live && IsHistoryPageUrl(g_tabs[i]->url)) {
@@ -135,8 +202,31 @@ std::string ResolveNavigation(const std::wstring& input) {
         return ToUtf8(StartPageUrl());
     if (_wcsicmp(s.c_str(), kHistoryAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://history/") == 0)
         return ToUtf8(HistoryPageUrl());
+    if (_wcsicmp(s.c_str(), kBookmarksAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://bookmarks/") == 0)
+        return ToUtf8(BookmarksPageUrl());
     return ResolveInput(s);
 }
+
+static void ReloadStartPages(unsigned long long skip) {
+    for (auto& tp : g_tabs) {
+        Tab& t = *tp;
+        if (t.state != TabState::Live || !t.page || !IsStartPageUrl(t.url) || t.id == skip) continue;
+        if (t.url.find(L"welcome=1") != std::wstring::npos) continue;
+        const std::wstring fresh = StartPageUrl();
+        if (fresh != t.url) LoadInTab(t, fresh);
+    }
+}
+
+// A page that changed bookmarks itself (removed, renamed, moved one) already shows the change:
+// it is not reloaded, so it keeps its scroll position and search.
+static unsigned long long s_quietTab = 0;
+
+static void OnBookmarksChanged() {
+    ReloadStartPages(s_quietTab);
+    RefreshBookmarksPages(s_quietTab);
+    InvalidateChrome();                          // the star in the address field
+}
+static const bool s_hooked = (g_bookmarksChanged = &OnBookmarksChanged, true);
 
 void RefreshStartPages() {
     for (auto& tp : g_tabs) {
@@ -148,6 +238,7 @@ void RefreshStartPages() {
         LoadInTab(t, fresh);
     }
     RefreshHistoryPages();
+    RefreshBookmarksPages();
 }
 
 // Value of `key` in "a=1&b=x" (still URL-encoded)
@@ -176,6 +267,54 @@ static int QueryInt(const std::wstring& query, const wchar_t* key) {
     return -1;
 }
 
+static long long QueryId(const std::wstring& query, const wchar_t* key) {
+    const std::wstring v = QueryString(query, key);
+    return v.empty() ? -1 : _wtoi64(v.c_str());
+}
+
+// lyra://bookmarks-<verb>?... from the start page or the bookmarks page.
+static void HandleBookmarksCommand(unsigned long long tabId, const std::wstring& verb, const std::wstring& query) {
+    const bool quiet = verb == L"remove" || verb == L"rename" || verb == L"move";
+    s_quietTab = quiet ? tabId : 0;
+    if (verb == L"add") {
+        const long long folder = QueryId(query, L"folder");
+        const long long index = QueryId(query, L"index");
+        std::wstring u = UrlDecode(QueryString(query, L"u"));
+        if (!u.empty()) BookmarkAdd(folder > 0 ? folder : kFavoritesFolder, UrlDecode(QueryString(query, L"t")), u, (int)index);
+    } else if (verb == L"folder") {
+        const long long parent = QueryId(query, L"parent");
+        BookmarkAddFolder(parent > 0 ? parent : kBookmarksFolder, UrlDecode(QueryString(query, L"t")));
+    } else if (verb == L"remove") {
+        BookmarkRemove(QueryId(query, L"id"));
+    } else if (verb == L"rename") {
+        const long long id = QueryId(query, L"id");
+        const std::wstring u = UrlDecode(QueryString(query, L"u"));
+        if (!u.empty()) BookmarkSetUrl(id, u);
+        BookmarkRename(id, UrlDecode(QueryString(query, L"t")));
+    } else if (verb == L"move") {
+        BookmarkMove(QueryId(query, L"id"), QueryId(query, L"folder"), (int)QueryId(query, L"index"));
+    } else if (verb == L"import") {
+        const int n = BookmarkImport(UrlDecode(QueryString(query, L"from")));
+        // The page that asked shows how many came in.
+        int index = -1;
+        if (Tab* t = FindTab(tabId, &index)) LoadInTab(*t, BookmarksPageUrl() + L"&imported=" + std::to_wstring(n));
+    } else if (verb == L"favs") {
+        // The start page used to keep Favorites itself: it hands them over once (t=..&u=.. pairs).
+        std::vector<std::pair<std::wstring, std::wstring>> list;
+        std::wstring title;
+        size_t p = 0;
+        while (p < query.size()) {
+            size_t e = query.find(L'&', p);
+            if (e == std::wstring::npos) e = query.size();
+            if (query.compare(p, 2, L"t=") == 0) title = UrlDecode(query.substr(p + 2, e - p - 2));
+            else if (query.compare(p, 2, L"u=") == 0) { list.emplace_back(title, UrlDecode(query.substr(p + 2, e - p - 2))); title.clear(); }
+            p = e + 1;
+        }
+        BookmarkReplaceFavorites(list);
+    }
+    s_quietTab = 0;
+}
+
 void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     Log("lyra url: %ls", url.c_str());
     const size_t q = url.find(L'?');
@@ -199,6 +338,14 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     }
     if (command == L"lyra://history") {
         OpenHistory();
+        return;
+    }
+    if (command == L"lyra://bookmarks") {
+        OpenBookmarks();
+        return;
+    }
+    if (command.compare(0, 17, L"lyra://bookmarks-") == 0) {
+        HandleBookmarksCommand(tabId, command.substr(17), query);
         return;
     }
     if (command == L"lyra://history-remove") {

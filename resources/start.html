@@ -33,6 +33,9 @@
   /* ---- start page ---- */
   main { width: 100%; max-width: 780px; padding: 0 32px 80px; }
   h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+  .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .shead a { color: var(--text2); font-size: 12px; text-decoration: none; border-radius: 6px; padding: 2px 6px; }
+  .shead a:hover { color: var(--text); background: var(--hover); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 14px 10px; }
   .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
           text-decoration: none; color: var(--text); padding: 6px 0; border-radius: 12px; outline: none; }
@@ -101,7 +104,7 @@
 <body>
 <main id="start" class="hidden">
   <section id="favSection">
-    <h2 id="favTitle"></h2>
+    <div class="shead"><h2 id="favTitle"></h2><a href="lyra://bookmarks" id="allBookmarks"></a></div>
     <div class="grid" id="grid"></div>
   </section>
   <section id="freqSection" class="freq hidden">
@@ -159,7 +162,7 @@ if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.sty
 
 const T = {
   en: {
-    newTab: "New Tab", favorites: "Favorites", frequent: "Frequently Visited", wFreq: "Show frequently visited sites", add: "Add", customize: "Customize start page",
+    allBookmarks: "All bookmarks", newTab: "New Tab", favorites: "Favorites", frequent: "Frequently Visited", wFreq: "Show frequently visited sites", add: "Add", customize: "Customize start page",
     addTitle: "Add to Favorites", name: "Name", address: "Address", cancel: "Cancel", remove: "Remove",
     wTitle: "Welcome to Lyra", wText: "Set up the basics. Everything can be changed later in Settings.",
     wLang: "Language", wTheme: "Theme", wLayout: "Tabs", wDensity: "Toolbar size", wStart: "Start page",
@@ -168,7 +171,7 @@ const T = {
     layout: ["Compact", "Separate tab bar", "Vertical"], density: ["Compact", "Normal", "Large"],
   },
   ru: {
-    newTab: "Новая вкладка", favorites: "Избранное", frequent: "Часто посещаемые", wFreq: "Показывать часто посещаемые", add: "Добавить", customize: "Настроить стартовую страницу",
+    allBookmarks: "Все закладки", newTab: "Новая вкладка", favorites: "Избранное", frequent: "Часто посещаемые", wFreq: "Показывать часто посещаемые", add: "Добавить", customize: "Настроить стартовую страницу",
     addTitle: "Добавить в избранное", name: "Название", address: "Адрес", cancel: "Отмена", remove: "Убрать",
     wTitle: "Добро пожаловать в Lyra", wText: "Настройте основное — всё это можно поменять позже в настройках.",
     wLang: "Язык", wTheme: "Тема", wLayout: "Вкладки", wDensity: "Размер панелей", wStart: "Стартовая страница",
@@ -187,25 +190,25 @@ function applyTheme() {
 }
 
 // ---- favourites ----------------------------------------------------------------
-const KEY = "lyra.favorites";
-const DEFAULTS_EN = [
-  { title: "YouTube", url: "https://www.youtube.com/" }, { title: "Wikipedia", url: "https://en.wikipedia.org/" },
-  { title: "GitHub", url: "https://github.com/" }, { title: "Gmail", url: "https://mail.google.com/" },
-  { title: "Maps", url: "https://www.google.com/maps" }, { title: "Reddit", url: "https://www.reddit.com/" },
-];
-const DEFAULTS_RU = [
-  { title: "YouTube", url: "https://www.youtube.com/" }, { title: "Википедия", url: "https://ru.wikipedia.org/" },
-  { title: "GitHub", url: "https://github.com/" }, { title: "Хабр", url: "https://habr.com/" },
-  { title: "Почта", url: "https://mail.google.com/" }, { title: "Карты", url: "https://www.google.com/maps" },
-];
-function loadFavorites() {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEY));
-    if (Array.isArray(v)) return v.filter((f) => f && typeof f.url === "string");
-  } catch (e) {}
-  return (ru() ? DEFAULTS_RU : DEFAULTS_EN).slice();
+// The bookmarks in Lyra's Favorites folder: ?favs=[{i: id, u: url, t: title}].
+let FAVS = [];
+try { FAVS = JSON.parse(q.get("favs") || "[]").filter((f) => f && typeof f.u === "string"); } catch (e) {}
+function lyraCommand(cmd, params) {
+  const qs = Object.entries(params).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+  location.href = "lyra://bookmarks-" + cmd + (qs ? "?" + qs : "");
 }
-function saveFavorites(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) {} }
+// Older builds kept Favorites in this page's storage: hand them to Lyra once (it reloads the page).
+const OLD_KEY = "lyra.favorites";
+function migrateOldFavorites() {
+  let old = null;
+  try { old = JSON.parse(localStorage.getItem(OLD_KEY)); } catch (e) {}
+  if (!Array.isArray(old)) return false;
+  try { localStorage.removeItem(OLD_KEY); } catch (e) {}
+  const pairs = old.filter((f) => f && typeof f.url === "string")
+                   .map((f) => "t=" + encodeURIComponent(f.title || "") + "&u=" + encodeURIComponent(f.url));
+  location.href = "lyra://bookmarks-favs?" + pairs.join("&");
+  return true;
+}
 
 // Site icons cached by Lyra (?icons=<folder URL>, files <host>.png); the letter badge stays when
 // there is none yet.
@@ -253,8 +256,8 @@ function badgeFor(f) {
 function renderFavorites() {
   const grid = $("grid");
   grid.textContent = "";
-  const list = loadFavorites();
-  list.forEach((f, i) => {
+  FAVS.forEach((fav) => {
+    const f = { title: fav.t, url: fav.u };
     const a = document.createElement("a");
     a.className = "tile"; a.href = f.url; a.title = f.url;
     const b = badgeFor(f);
@@ -268,7 +271,9 @@ function renderFavorites() {
     rm.title = t().remove; rm.setAttribute("aria-label", t().remove);
     rm.addEventListener("click", (e) => {
       e.preventDefault(); e.stopPropagation();
-      const l = loadFavorites(); l.splice(i, 1); saveFavorites(l); renderFavorites();
+      FAVS = FAVS.filter((x) => x !== fav);
+      lyraCommand("remove", { id: fav.i });          // the page updates itself, Lyra does not reload it
+      renderFavorites();
     });
     grid.appendChild(a);
   });
@@ -321,11 +326,8 @@ $("addForm").addEventListener("submit", (e) => {
   let url = $("addUrl").value.trim();
   if (!url) { $("addUrl").focus(); return; }
   if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
-  const list = loadFavorites();
-  list.push({ title: $("addName").value.trim() || hostOf(url), url });
-  saveFavorites(list);
   closeAdd();
-  renderFavorites();
+  lyraCommand("add", { folder: 1, t: $("addName").value.trim() || hostOf(url), u: url });   // Lyra reloads the page
 });
 $("customize").addEventListener("click", () => { location.href = "lyra://settings"; });
 
@@ -368,6 +370,7 @@ function renderTexts() {
   document.title = s.newTab;
   document.documentElement.lang = ru() ? "ru" : "en";
   $("favTitle").textContent = s.favorites;
+  $("allBookmarks").textContent = s.allBookmarks;
   $("freqTitle").textContent = s.frequent;
   $("customizeText").textContent = s.customize;
   $("addTitle").textContent = s.addTitle;
@@ -382,7 +385,7 @@ renderTexts();
 if (welcome) {
   $("welcome").classList.remove("hidden");
   renderWelcome();
-} else {
+} else if (!migrateOldFavorites()) {
   $("start").classList.remove("hidden");
   $("customize").classList.remove("hidden");
   $("favSection").classList.toggle("hidden", !state.fav);

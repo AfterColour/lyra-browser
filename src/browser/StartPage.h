@@ -19,6 +19,11 @@ void RefreshStartPages();
 std::wstring HistoryPageUrl();
 void OpenHistory();
 
+// The bookmarks page, generated the same way into %LOCALAPPDATA%\Lyra\bookmarks.html
+// (with the browsers bookmarks can be imported from). Ctrl+Shift+O / menu: OpenBookmarks().
+std::wstring BookmarksPageUrl();
+void OpenBookmarks();
+
 // A start page asked for "lyra://setup?..." or "lyra://settings" (see resources/start.html).
 // Called on the main window's message loop, never inside a WebKit callback.
 void HandleLyraUrl(unsigned long long tabId, const std::wstring& url);

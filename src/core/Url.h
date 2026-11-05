@@ -13,8 +13,14 @@ constexpr const wchar_t* kStartAlias = L"lyra://start";
 std::wstring HistoryPagePath();
 bool IsHistoryPageUrl(const std::wstring& url);
 constexpr const wchar_t* kHistoryAlias = L"lyra://history";
-// Start page or history page: shown with an empty address field.
-inline bool IsInternalPageUrl(const std::wstring& url) { return IsStartPageUrl(url) || IsHistoryPageUrl(url); }
+// The bookmarks page, generated the same way into %LOCALAPPDATA%\Lyra\bookmarks.html.
+std::wstring BookmarksPagePath();
+bool IsBookmarksPageUrl(const std::wstring& url);
+constexpr const wchar_t* kBookmarksAlias = L"lyra://bookmarks";
+// Lyra's own pages: shown with an empty address field, never bookmarked or recorded.
+inline bool IsInternalPageUrl(const std::wstring& url) {
+    return IsStartPageUrl(url) || IsHistoryPageUrl(url) || IsBookmarksPageUrl(url);
+}
 
 // Host / address shown to the user ("" for blank pages and the start page)
 std::wstring HostOf(const std::wstring& url);

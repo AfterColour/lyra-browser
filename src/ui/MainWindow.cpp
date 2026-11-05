@@ -10,6 +10,7 @@
 #include "core/Constants.h"
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
+#include "ui/BookmarkPopup.h"
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
@@ -161,10 +162,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SIZE:
         UnfreezeTabWidths();
         SuggestHide();
+        BookmarkPopupClose();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         return 0;
     case WM_MOVE:
         SuggestHide();
+        BookmarkPopupClose();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -328,6 +331,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Back:     GoBack(); break;
             case Hit::Forward:  GoForward(); break;
             case Hit::Reload:   ReloadActive(true); break;
+            case Hit::Star:     BookmarkCurrentPage(); break;
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;

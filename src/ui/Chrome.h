@@ -28,13 +28,14 @@ struct Layout {
     float captionH = 0;              // height of the row holding the window buttons
     bool  reloadInPill = true;       // false: reload is a toolbar button (separate layout)
     RectF back, fwd, more, pill, reload, newTab;
+    RectF star;                      // bookmark star at the right end of the address field
     RectF capMin, capMax, capClose;
     std::vector<RectF> tabs;         // one per tab; in the compact layout the active one is the address field
 };
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }

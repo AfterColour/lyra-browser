@@ -59,6 +59,14 @@ bool IsHistoryPageUrl(const std::wstring& url) {
     return !mine.empty() && FileUrlTail(url) == mine;
 }
 
+std::wstring BookmarksPagePath() { return g_settingsDir + L"\\bookmarks.html"; }
+
+bool IsBookmarksPageUrl(const std::wstring& url) {
+    if (url.compare(0, 5, L"file:") != 0) return false;
+    const std::wstring mine = FileUrlTail(FileUrlOf(BookmarksPagePath()));
+    return !mine.empty() && FileUrlTail(url) == mine;
+}
+
 // "https://www.example.com/a?b" -> "example.com"
 std::wstring HostOf(const std::wstring& url) {
     if (url.empty() || url == L"about:blank" || IsInternalPageUrl(url)) return std::wstring();

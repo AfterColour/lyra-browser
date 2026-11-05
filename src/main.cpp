@@ -15,6 +15,7 @@
 //  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
 #include "common/Platform.h"
+#include "browser/Bookmarks.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
@@ -52,6 +53,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     SetUnhandledExceptionFilter(CrashFilter);
     LoadSettings();
     HistoryLoad();
+    BookmarksLoad();
     EnableDarkMenus();
 
     ConfigureGStreamerEnvironment();
