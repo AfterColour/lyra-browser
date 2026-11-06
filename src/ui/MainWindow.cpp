@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
+#include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "ui/PermissionPrompt.h"
 #include "browser/Session.h"
@@ -356,6 +357,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
             case Hit::TabAudio: MediaToggleMute(up.index); break;
+            case Hit::Key:      PasswordsSiteMenu(); break;
             default: break;
             }
         }

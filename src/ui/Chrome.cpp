@@ -10,6 +10,7 @@
 #include "ui/WindowFrame.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
+#include "browser/Passwords.h"
 #include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -429,6 +430,7 @@ static bool CloseVisible(int i) {
                           g_hover.kind == Hit::TabAudio) && g_hover.index == i;
     if (IsCompactActive(i))      // Safari: the active tab shows its close button while hovered
         return !IsEditing() && (g_hover.kind == Hit::Pill || g_hover.kind == Hit::Reload || g_hover.kind == Hit::Star ||
+                                g_hover.kind == Hit::Key ||
                                 ((g_hover.kind == Hit::TabClose || g_hover.kind == Hit::TabAudio) && g_hover.index == i));
     if (g_L.tabs[i].Width < S(60)) return false;
     if (g_L.mode == kLayoutCompact) return overTab || g_prefs.closeAlways;
@@ -442,6 +444,23 @@ static bool AudioShown(int i) {
     if (!t.audible && !t.muted) return false;
     if (IsCompactActive(i)) return !IsEditing();
     return g_L.tabs[i].Width >= S(60);
+}
+
+static RectF AudioRect(int i);
+
+// The key in the address field: the site has saved passwords (a click shows them).
+static bool KeyShown() {
+    if (IsEditing() || !g_prefs.savePasswords || g_L.star.Width <= 0) return false;
+    const Tab* t = ActiveTab();
+    return t && PasswordsCountForUrl(t->url) > 0;
+}
+
+static RectF KeyRect() {
+    const float c = S(22);
+    const RectF& pill = g_L.pill;
+    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
+    return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
 }
 
 static RectF AudioRect(int i) {
@@ -474,6 +493,7 @@ Hit HitTest(int px, int py) {
         if (L.mode != kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
         if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
+        if (KeyShown() && KeyRect().Contains(x, y)) return MakeHit(Hit::Key);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     for (int i = n - 1; i >= 0; --i)
@@ -743,6 +763,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         float pillHover = HoverAmount(MakeHit(Hit::Pill, -1));
         if (L.reloadInPill) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reload, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Star, -1)));
+        pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Key, -1)));
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
@@ -832,6 +853,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             float textR = star ? L.star.X - S(2) : L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
             const bool audioHere = IsCompactActive(g_active) && AudioShown(g_active);
             if (audioHere) textR = AudioRect(g_active).X - S(2);
+            const bool keyHere = KeyShown();
+            if (keyHere) textR = std::min(textR, KeyRect().X - S(2));
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -864,6 +887,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 RectF a = AudioRect(g_active);
                 hoverFill(a, MakeHit(Hit::TabAudio, g_active), dwn(Hit::TabAudio, g_active), S(6));
                 DrawGlyph(g, g_tabs[g_active]->muted ? L"\uE74F" : L"\uE767", a, T.icon, g_fIconSm.get());
+            }
+            if (keyHere) {
+                const RectF k = KeyRect();
+                hoverFill(k, MakeHit(Hit::Key, -1), dwn(Hit::Key, -1), S(6));
+                DrawGlyph(g, L"\uE8D7", k, T.icon, g_fIconSm.get());
             }
         }
     }

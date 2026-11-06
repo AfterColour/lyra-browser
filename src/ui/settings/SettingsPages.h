@@ -16,3 +16,4 @@ static const EngineDef kEngines[] = {
 constexpr int kEngineCount = (int)(sizeof(kEngines) / sizeof(kEngines[0]));
 
 void BuildPages();
+void OpenPasswordsSettings();      // Settings > Privacy > Saved passwords (menu, key in the address field)

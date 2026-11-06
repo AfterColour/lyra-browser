@@ -43,6 +43,8 @@ static void ResetAllSettings() {
     if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
 }
 
+static int s_passwordsPageIndex = -1;
+
 static void CopyText(const std::wstring& s) {
     if (!OpenClipboard(g_setHwnd)) return;
     EmptyClipboard();
@@ -77,6 +79,13 @@ static void PasswordActions(const std::string& origin, const std::wstring& usern
             SettingsLanguageChanged();                   // rebuilds the list
         }
     }
+}
+
+void OpenPasswordsSettings() {
+    ShowSettingsWindow();
+    if (s_passwordsPageIndex < 0) return;
+    SettingsOpenPage(s_passwordsPageIndex);
+    SettingsLanguageChanged();                           // rebuilt: the list is up to date
 }
 
 void BuildPages() {
@@ -471,6 +480,7 @@ void BuildPages() {
             }
         }
         s_passwordsPage = (int)g_pages.size();
+        s_passwordsPageIndex = s_passwordsPage;
         g_pages.push_back(std::move(p));
     }
 }

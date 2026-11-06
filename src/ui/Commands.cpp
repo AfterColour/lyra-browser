@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "ui/settings/SettingsPages.h"
 #include "browser/AdBlock.h"
 #include "ui/FindBar.h"
 #include "ui/Print.h"
@@ -84,6 +85,7 @@ void RunCommand(int cmd) {
     case CMD_BOOKMARK_PAGE: BookmarkCurrentPage(); break;
     case CMD_FIND:      FindBarShow(); break;
     case CMD_PRINT:     PrintActivePage(); break;
+    case CMD_PASSWORDS: OpenPasswordsSettings(); break;
     case CMD_ADBLOCK_SITE:
         if (Tab* t = ActiveTab()) {
             AdBlockSetAllowedOn(t->url, !AdBlockAllowedOn(t->url));
@@ -101,6 +103,7 @@ void ShowMoreMenu() {
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
     AppendMenuW(m, MF_STRING, CMD_HISTORY,   Tr(L"History\tCtrl+H", L"История\tCtrl+H"));
     AppendMenuW(m, MF_STRING, CMD_BOOKMARKS, Tr(L"Bookmarks\tCtrl+Shift+O", L"Закладки\tCtrl+Shift+O"));
+    AppendMenuW(m, MF_STRING, CMD_PASSWORDS, Tr(L"Passwords", L"Пароли"));
     AppendMenuW(m, MF_STRING, CMD_DOWNLOADS, Tr(L"Downloads\tCtrl+J", L"Загрузки\tCtrl+J"));
     {
         const Tab* t = ActiveTab();

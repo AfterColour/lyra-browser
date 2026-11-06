@@ -27,5 +27,8 @@ void PasswordsDelete(const std::string& origin, const std::wstring& username);
 void PasswordsRemoveNever(const std::string& origin);
 std::wstring PasswordsSiteName(const std::string& origin);
 
+size_t PasswordsCountForUrl(const std::wstring& url);   // sign-ins saved for the page's site (the key in the address field)
+void PasswordsSiteMenu();            // the key: copy a saved sign-in, open the list
+
 void PasswordsInit();                // after AdBlockInit (the shared user content controller)
 void PasswordsShutdown();

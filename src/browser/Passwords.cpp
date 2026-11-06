@@ -6,7 +6,10 @@
 #include "browser/TabManager.h"
 #include "core/Settings.h"
 #include "core/StringUtils.h"
+#include "core/Localization.h"
+#include "ui/MainWindow.h"
 #include "ui/PermissionPrompt.h"
+#include "ui/settings/SettingsPages.h"
 
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKPageFullScreenClient.h>      // WKCompletionListenerComplete
@@ -360,6 +363,72 @@ void PasswordsDelete(const std::string& origin, const std::wstring& username) {
 void PasswordsRemoveNever(const std::string& origin) {
     s_never.erase(std::remove(s_never.begin(), s_never.end(), origin), s_never.end());
     Save();
+}
+
+// "https://example.com/path" -> "https://example.com" (as WebKit writes origins).
+static std::string OriginOfUrl(const std::wstring& url) {
+    const size_t scheme = url.find(L"://");
+    if (scheme == std::wstring::npos) return std::string();
+    size_t end = url.find_first_of(L"/?#", scheme + 3);
+    if (end == std::wstring::npos) end = url.size();
+    std::wstring o = url.substr(0, end);
+    const size_t at = o.find(L'@', scheme + 3);          // user:pass@host
+    if (at != std::wstring::npos) o = o.substr(0, scheme + 3) + o.substr(at + 1);
+    for (auto& ch : o) ch = (wchar_t)towlower(ch);
+    std::string s = ToUtf8(o);
+    if (s.size() > 4 && s.compare(s.size() - 4, 4, ":443") == 0 && s.rfind("https://", 0) == 0) s.resize(s.size() - 4);
+    if (s.size() > 3 && s.compare(s.size() - 3, 3, ":80") == 0 && s.rfind("http://", 0) == 0) s.resize(s.size() - 3);
+    return s;
+}
+
+size_t PasswordsCountForUrl(const std::wstring& url) {
+    if (s_saved.empty()) return 0;
+    const std::string origin = OriginOfUrl(url);
+    size_t n = 0;
+    for (auto& p : s_saved) if (p.origin == origin) ++n;
+    return n;
+}
+
+static void CopyText(const std::wstring& s) {
+    if (!OpenClipboard(g_hWnd)) return;
+    EmptyClipboard();
+    const size_t bytes = (s.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        memcpy(GlobalLock(h), s.c_str(), bytes);
+        GlobalUnlock(h);
+        if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h);
+    }
+    CloseClipboard();
+}
+
+void PasswordsSiteMenu() {
+    Tab* t = ActiveTab();
+    if (!t) return;
+    const std::string origin = OriginOfUrl(t->url);
+    std::vector<SavedPassword> here;
+    for (auto& p : s_saved) if (p.origin == origin) here.push_back(p);
+    HMENU m = CreatePopupMenu();
+    std::wstring head = Tr(L"Saved for ", L"Сохранено для ") + PasswordsSiteName(origin);
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, head.c_str());
+    for (size_t i = 0; i < here.size(); ++i) {
+        const std::wstring user = here[i].username.empty() ? std::wstring(Tr(L"(no username)", L"(без имени)")) : here[i].username;
+        HMENU sub = CreatePopupMenu();
+        AppendMenuW(sub, MF_STRING, 1000 + i * 2, Tr(L"Copy username", L"Копировать имя пользователя"));
+        AppendMenuW(sub, MF_STRING, 1001 + i * 2, Tr(L"Copy password", L"Копировать пароль"));
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, user.c_str());
+    }
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 1, Tr(L"Manage passwords\x2026", L"Управление паролями\x2026"));
+    POINT pt;
+    GetCursorPos(&pt);
+    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_hWnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == 1) OpenPasswordsSettings();
+    else if (cmd >= 1000 && (size_t)(cmd - 1000) / 2 < here.size()) {
+        const SavedPassword& p = here[(cmd - 1000) / 2];
+        CopyText((cmd - 1000) % 2 ? p.password : p.username);
+    }
+    for (auto& p : here) SecureZeroMemory(&p.password[0], p.password.size() * sizeof(wchar_t));
 }
 
 void PasswordsInit() {
