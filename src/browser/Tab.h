@@ -21,6 +21,7 @@ struct Tab {
     bool  canFwd  = false;
     float progress = 0.f;   // animated 0..1
     float fade     = 0.f;   // progress bar opacity 0..1
+    bool  privateTab = false;       // private (incognito): own memory-only cookies/storage, no history, not in the session
     bool  audible = false;          // the page plays sound (speaker on the tab)
     bool  muted = false;            // muted with the tab's speaker
     bool  openedByPage = false;     // created by window.open / target=_blank

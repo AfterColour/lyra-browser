@@ -68,6 +68,7 @@ void RunCommand(int cmd) {
         CreateTab(g_prefs.newTabMode == 1 ? std::wstring(L"about:blank")
                   : g_prefs.newTabMode == 2 ? g_homePage : std::wstring(kStartAlias));
         break;
+    case CMD_NEWPRIVATE: CreatePrivateTab(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -98,6 +99,7 @@ void RunCommand(int cmd) {
 void ShowMoreMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, CMD_NEWTAB,    Tr(L"New Tab\tCtrl+T", L"Новая вкладка\tCtrl+T"));
+    AppendMenuW(m, MF_STRING, CMD_NEWPRIVATE, Tr(L"New Private Tab\tCtrl+Shift+N", L"Новая приватная вкладка\tCtrl+Shift+N"));
     AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  Tr(L"Close Tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
     AppendMenuW(m, MF_STRING | (g_closedUrls.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
@@ -156,6 +158,7 @@ bool HandleShortcut(const MSG& m) {
         if (k == 'T') { ReopenClosedTab(); return true; }
         if (k == 'I') { ShowWebInspector(); return true; }
         if (k == 'O') { RunCommand(CMD_BOOKMARKS); return true; }
+        if (k == 'N') { RunCommand(CMD_NEWPRIVATE); return true; }
     }
     if (ctrl && !alt) {
         switch (k) {

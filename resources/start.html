@@ -22,6 +22,7 @@
 <title>New Tab</title>
 <style>
   :root {
+    --priv: #8A4FBF;
     --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
     --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06); --thumb: #EEF0F4;
   }
@@ -95,6 +96,30 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
 
+  /* ---- private tab ---- */
+  .private { position: relative; width: 680px; max-width: calc(100% - 32px); padding: 0 0 40px; }
+  .private .mark { position: fixed; left: 50%; top: 50%; width: 560px; height: 560px; transform: translate(-50%, -50%);
+                   color: var(--priv); opacity: .07; pointer-events: none; z-index: 0; }
+  .private .content { position: relative; z-index: 1; }
+  .private .head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .private .logo { width: 44px; height: 44px; border-radius: 12px; background: var(--priv); color: #fff;
+                   display: flex; align-items: center; justify-content: center; flex: none; }
+  .private h1 { margin: 0; font-size: 24px; font-weight: 600; }
+  .private .lead { margin: 0 0 22px; color: var(--text2); font-size: 14px; line-height: 1.5; }
+  .private .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .private .col { background: var(--card); border-radius: 12px; padding: 16px 18px;
+                  box-shadow: 0 0 0 1px var(--border), var(--shadow); }
+  .private .col h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .private .col h3 .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center;
+                          justify-content: center; color: #fff; font-size: 11px; flex: none; }
+  .private .col.hidesit h3 .dot { background: var(--priv); }
+  .private .col.shows h3 .dot { background: #C7681C; }
+  .private ul { margin: 0; padding: 0 0 0 18px; color: var(--text2); line-height: 1.55; }
+  .private li { margin: 3px 0; }
+  .private li b { color: var(--text); font-weight: 600; }
+  .private .hint { margin-top: 18px; color: var(--text2); font-size: 12px; }
+  @media (max-width: 640px) { .private .cols { grid-template-columns: 1fr; } }
+
   /* ---- welcome ---- */
   .welcome { width: 640px; max-width: calc(100% - 32px); background: var(--card); border-radius: 16px;
              box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.12); overflow: hidden; }
@@ -139,6 +164,22 @@
   </form>
 </div>
 
+<section class="private hidden" id="private">
+  <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c5 0 8.6 4.1 9.7 6.3a1.6 1.6 0 0 1 0 1.4 13 13 0 0 1-2.6 3.4"/><path d="M6.6 6.6A13.3 13.3 0 0 0 2.3 11.3a1.6 1.6 0 0 0 0 1.4C3.4 14.9 7 19 12 19a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+  <div class="content">
+    <div class="head">
+      <span class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c5 0 8.6 4.1 9.7 6.3a1.6 1.6 0 0 1 0 1.4 13 13 0 0 1-2.6 3.4"/><path d="M6.6 6.6A13.3 13.3 0 0 0 2.3 11.3a1.6 1.6 0 0 0 0 1.4C3.4 14.9 7 19 12 19a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></span>
+      <h1 id="pTitle"></h1>
+    </div>
+    <p class="lead" id="pLead"></p>
+    <div class="cols">
+      <div class="col hidesit"><h3><span class="dot">&#10003;</span><span id="pForgets"></span></h3><ul id="pForgetsList"></ul></div>
+      <div class="col shows"><h3><span class="dot">!</span><span id="pShows"></span></h3><ul id="pShowsList"></ul></div>
+    </div>
+    <p class="hint" id="pHint"></p>
+  </div>
+</section>
+
 <section class="welcome hidden" id="welcome">
   <div class="body">
     <div><h1 id="wTitle"></h1><p id="wText"></p></div>
@@ -179,6 +220,17 @@ const T = {
     wFav: "Show Favorites", wDone: "Get started",
     lang: ["As in Windows", "English", "Русский"], theme: ["As in Windows", "Light", "Dark"],
     layout: ["Compact", "Separate tab bar", "Vertical"], density: ["Compact", "Normal", "Large"],
+    pTab: "Private Tab", pTitle: "You are browsing privately",
+    pLead: "When you close the last private tab, Lyra forgets everything these tabs did. Other people using this computer will not see it.",
+    pForgets: "Lyra does not keep", pShows: "Private browsing does not hide",
+    pForgetsList: ["<b>History</b> of the pages you visit", "<b>Cookies</b> and site data — sign-ins end with the tabs",
+                   "<b>Cache</b> and temporary files", "<b>Passwords</b> you type (Lyra does not offer to save them)",
+                   "<b>The tabs themselves</b> — they are not restored after a restart"],
+    pShowsList: ["<b>Downloaded files</b> and <b>bookmarks</b> you add — they stay",
+                 "Your activity on <b>the websites</b> you visit — especially once you sign in",
+                 "Which sites you visit — <b>your internet provider</b>, employer or school network can see it",
+                 "Your <b>IP address</b> and location — use a VPN for that"],
+    pHint: "Type an address or a search in the address field above. Ctrl+Shift+N opens another private tab.",
   },
   ru: {
     allBookmarks: "Все закладки", newTab: "Новая вкладка", favorites: "Избранное", frequent: "Часто посещаемые", wFreq: "Показывать часто посещаемые", add: "Добавить", customize: "Настроить стартовую страницу",
@@ -188,6 +240,17 @@ const T = {
     wFav: "Показывать избранное", wDone: "Начать",
     lang: ["Как в Windows", "English", "Русский"], theme: ["Как в Windows", "Светлая", "Тёмная"],
     layout: ["Компактно", "Отдельной строкой", "Вертикально"], density: ["Компактный", "Обычный", "Крупный"],
+    pTab: "Приватная вкладка", pTitle: "Вы в приватном режиме",
+    pLead: "Когда закроется последняя приватная вкладка, Lyra забудет всё, что в них происходило. Другие пользователи этого компьютера этого не увидят.",
+    pForgets: "Lyra не сохраняет", pShows: "Приватный режим не скрывает",
+    pForgetsList: ["<b>Историю</b> посещённых страниц", "<b>Куки</b> и данные сайтов — входы на сайты закончатся вместе с вкладками",
+                   "<b>Кэш</b> и временные файлы", "<b>Пароли</b>, которые вы вводите (Lyra не предлагает их сохранить)",
+                   "<b>Сами вкладки</b> — они не восстановятся после перезапуска"],
+    pShowsList: ["<b>Скачанные файлы</b> и <b>закладки</b>, которые вы добавите, — они останутся",
+                 "Ваши действия на <b>сайтах</b>, которые вы посещаете, — особенно если вы на них вошли",
+                 "Какие сайты вы посещаете — это видят <b>интернет-провайдер</b>, работодатель или сеть учебного заведения",
+                 "Ваш <b>IP-адрес</b> и местоположение — для этого нужен VPN"],
+    pHint: "Введите адрес или поисковый запрос в адресной строке выше. Ctrl+Shift+N откроет ещё одну приватную вкладку.",
   },
 };
 const ru = () => state.lang === 2 || (state.lang === 0 && systemRu);
@@ -390,9 +453,23 @@ function renderTexts() {
   $("addOk").textContent = s.add;
 }
 
+function renderPrivate() {
+  const s = t();
+  document.title = s.pTab;
+  for (const id of ["pTitle", "pLead", "pForgets", "pShows", "pHint"]) $(id).textContent = s[id];
+  for (const id of ["pForgetsList", "pShowsList"]) {
+    const ul = $(id);
+    ul.textContent = "";
+    for (const html of s[id]) { const li = document.createElement("li"); li.innerHTML = html; ul.appendChild(li); }
+  }
+}
+
 applyTheme();
 renderTexts();
-if (welcome) {
+if (q.get("private") === "1") {
+  $("private").classList.remove("hidden");
+  renderPrivate();
+} else if (welcome) {
   $("welcome").classList.remove("hidden");
   renderWelcome();
 } else if (!migrateOldFavorites()) {

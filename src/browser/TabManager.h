@@ -28,6 +28,7 @@ void NavigateActive(const std::wstring& input);
 Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, bool select = true);
 WKPageConfigurationRef CreatePageConfigurationForTab();   // the settings every tab gets (caller releases)
 void CreateTab(const std::wstring& input);
+void CreatePrivateTab();             // Ctrl+Shift+N: a private (incognito) tab
 void ReopenClosedTab();
 void CloseTab(int i);
 void CloseAllTabs();

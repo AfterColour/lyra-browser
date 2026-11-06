@@ -583,6 +583,13 @@ static void DrawSiteBadge(Graphics& g, const Tab& t, const RectF& r) {
     }
 }
 
+// A private tab: an eye crossed out on purple, instead of the site icon.
+static const Color kPrivateTint(255, 138, 79, 191);
+static void DrawPrivateBadge(Graphics& g, const RectF& r) {
+    FillRound(g, kPrivateTint, r, S(4));
+    DrawGlyph(g, L"\uED1A", r, Color(255, 255, 255, 255), g_fCaption.get());
+}
+
 static void DrawChrome(Graphics& g, int w, int h) {
     const Theme& T = g_th;
     const Layout& L = g_L;
@@ -718,7 +725,9 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const float bs = S(14);
         const bool badgeOnly = r.Width < S(48);
         const float bx = badgeOnly ? r.X + (r.Width - bs) / 2 : r.X + S(9);
-        DrawSiteBadge(g, tab, RectF(std::floor(bx), std::floor(r.Y + (r.Height - bs) / 2), bs, bs));
+        const RectF badge(std::floor(bx), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);
+        if (tab.privateTab) DrawPrivateBadge(g, badge);
+        else DrawSiteBadge(g, tab, badge);
 
         const bool showClose = CloseVisible(i);
         if (!badgeOnly) {
@@ -840,12 +849,16 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 DrawGlyph(g, L"\uE711", c, T.text2, g_fCaption.get());
             } else {
                 const float s = std::min(S(18), pill.Height - S(6));
-                DrawGlyph(g, L"\uE721", RectF(pill.X + S(5), pill.Y + (pill.Height - s) / 2, s, s), T.text2, g_fIconSm.get());
+                const RectF gr(pill.X + S(5), pill.Y + (pill.Height - s) / 2, s, s);
+                if (cur && cur->privateTab) DrawGlyph(g, L"\uED1A", gr, kPrivateTint, g_fIconSm.get());
+                else DrawGlyph(g, L"\uE721", gr, T.text2, g_fIconSm.get());
             }
 
             std::wstring label = cur ? (g_prefs.showFullUrl ? DisplayUrl(cur->url) : HostOf(cur->url)) : L"";
             const bool placeholder = label.empty();
-            if (placeholder) label = Tr(L"Search or enter address", L"Поиск или адрес сайта");
+            if (placeholder) label = (cur && cur->privateTab)
+                ? Tr(L"Private tab \x2014 search or enter address", L"Приватная вкладка \x2014 поиск или адрес")
+                : Tr(L"Search or enter address", L"Поиск или адрес сайта");
             const bool secure = cur && cur->url.compare(0, 8, L"https://") == 0;
 
             const float textL = pill.X + S(28);

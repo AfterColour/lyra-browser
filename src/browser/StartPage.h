@@ -6,6 +6,8 @@
 // Address of the start page with the current language, theme, accent and options
 // (`welcome`: the first-run screen instead).
 std::wstring StartPageUrl(bool welcome = false);
+// The start page of a private tab: what private browsing hides and what it does not.
+std::wstring PrivatePageUrl();
 
 // What to load for something typed in the address bar / a home page setting:
 // "lyra://start" is the start page, everything else goes through ResolveInput.

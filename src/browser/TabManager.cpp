@@ -84,7 +84,8 @@ bool SyncTab(Tab& t) {
     if (WKStringRef ts = WKPageCopyTitle(t.page)) { title = WKStr(ts); WKRelease(ts); }
     // History: a new address is a visit; a page title arriving later names it.
     // (At the moment the address changes the title can still be the previous page's.)
-    if (urlChanged) HistoryVisit(url, L"");
+    if (t.privateTab) { }                         // private tabs leave no history
+    else if (urlChanged) HistoryVisit(url, L"");
     else if (!title.empty() && title != t.title) HistorySetTitle(url, title);
     if (title.empty()) {
         title = HostOf(t.url);
@@ -393,6 +394,30 @@ void CreateTab(const std::wstring& input) {
     if (t) Navigate(t->page, ResolveNavigation(input));
 }
 
+// Private tabs share one memory-only website data store (cookies, storage, cache). It is
+// dropped with the last private tab, so whatever they kept is gone.
+static WKWebsiteDataStoreRef s_privateStore = nullptr;
+
+void CreatePrivateTab() {
+    if (!s_privateStore) s_privateStore = WKWebsiteDataStoreCreateNonPersistentDataStore();
+    WKPageConfigurationRef conf = CreatePageConfiguration();
+    if (s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
+    Tab* t = CreateTabWithConfiguration(conf, false);
+    WKRelease(conf);
+    if (!t) return;
+    t->privateTab = true;
+    InvalidateChrome();
+    Navigate(t->page, ToUtf8(PrivatePageUrl()));
+}
+
+static void ReleasePrivateStoreIfUnused() {
+    if (!s_privateStore) return;
+    for (auto& t : g_tabs) if (t->privateTab) return;
+    WKRelease(s_privateStore);
+    s_privateStore = nullptr;
+    Log("private: the last private tab closed, its data is gone");
+}
+
 // Stops every path by which the tab can still be reached from our side:
 // callbacks (context detached) and anything that looks tabs up (it must already
 // be out of g_tabs). Does not touch WebKit.
@@ -438,6 +463,7 @@ static void DestroyTab(Tab& t) {
 }
 
 static void RememberClosedTab(const Tab& t) {
+    if (t.privateTab) return;
     if (t.url.empty() || t.url == L"about:blank") return;
     g_closedUrls.push_back(t.url);
     if (g_closedUrls.size() > 25) g_closedUrls.erase(g_closedUrls.begin());
@@ -489,6 +515,7 @@ void CloseTab(int i) {
 
     // 3) Only now release the WebKit objects.
     DestroyTab(*dead);
+    ReleasePrivateStoreIfUnused();
     InvalidateChrome();
     Log("CloseTab: done (tabs=%d)", (int)g_tabs.size());
 }

@@ -243,6 +243,10 @@ void OpenHistory() {
     CreateTab(kHistoryAlias);
 }
 
+std::wstring PrivatePageUrl() {
+    return StartPageFileUrl() + L"?" + LookParams() + L"&private=1";
+}
+
 std::string ResolveNavigation(const std::wstring& input) {
     std::wstring s = TrimWs(input);
     if (_wcsicmp(s.c_str(), kStartAlias) == 0 || _wcsicmp(s.c_str(), L"lyra://start/") == 0)
@@ -261,7 +265,7 @@ static void ReloadStartPages(unsigned long long skip) {
         Tab& t = *tp;
         if (t.state != TabState::Live || !t.page || !IsStartPageUrl(t.url) || t.id == skip) continue;
         if (t.url.find(L"welcome=1") != std::wstring::npos) continue;
-        const std::wstring fresh = StartPageUrl();
+        const std::wstring fresh = t.privateTab ? PrivatePageUrl() : StartPageUrl();
         if (fresh != t.url) LoadInTab(t, fresh);
     }
 }
@@ -282,7 +286,7 @@ void RefreshStartPages() {
         Tab& t = *tp;
         if (t.state != TabState::Live || !t.page || !IsStartPageUrl(t.url)) continue;
         if (t.url.find(L"welcome=1") != std::wstring::npos) continue;   // restyles itself as you choose
-        const std::wstring fresh = StartPageUrl();
+        const std::wstring fresh = t.privateTab ? PrivatePageUrl() : StartPageUrl();
         if (fresh == t.url) continue;
         LoadInTab(t, fresh);
     }

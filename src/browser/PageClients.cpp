@@ -237,9 +237,12 @@ static void OnStateChanged(const void* ci) {
 // the new page to its opener; we must create the view from it and return the page +1.
 static WKPageRef OnCreateNewPage(WKPageRef, WKPageConfigurationRef conf, WKNavigationActionRef,
                                  WKWindowFeaturesRef, const void* ci) {
-    if (!ResolveTab(ci, "createNewPage")) return nullptr;
+    Tab* opener = ResolveTab(ci, "createNewPage");
+    if (!opener) return nullptr;
+    const bool priv = opener->privateTab;     // the configuration carries the opener's data store
     Tab* t = CreateTabWithConfiguration(conf, true);
     if (!t) return nullptr;
+    t->privateTab = priv;
     return (WKPageRef)WKRetain(t->page);
 }
 

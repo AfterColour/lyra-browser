@@ -107,11 +107,18 @@ DWORD s_lastSave = 0;
 
 std::string Build(bool clean, std::string* signature) {
     std::ostringstream out, sig;
-    out << "LyraSession 1\nclean " << (clean ? 1 : 0) << "\nactive " << std::max(0, g_active) << "\n";
+    // Private tabs are never saved; the active index counts only the saved ones.
+    int activeSaved = 0, saved = 0;
+    for (int i = 0; i < (int)g_tabs.size(); ++i) {
+        if (g_tabs[i]->state != TabState::Live || g_tabs[i]->privateTab) continue;
+        if (i <= g_active) activeSaved = saved;
+        ++saved;
+    }
+    out << "LyraSession 1\nclean " << (clean ? 1 : 0) << "\nactive " << activeSaved << "\n";
     sig << g_active << '|';
     for (auto& tp : g_tabs) {
         const Tab& t = *tp;
-        if (t.state != TabState::Live) continue;
+        if (t.state != TabState::Live || t.privateTab) continue;
         std::wstring url = t.lazyPending ? t.lazyUrl : SavedUrl(t.url);
         if (url.empty()) url = t.url;
         std::string state;

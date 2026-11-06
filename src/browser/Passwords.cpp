@@ -222,6 +222,7 @@ void Prune() {
 
 void OfferSave(WKPageRef page, const std::string& origin, std::wstring user, const std::wstring& password) {
     if (!g_prefs.savePasswords || password.empty() || IsNever(origin)) return;
+    if (Tab* pt = TabOfPage(page)) if (pt->privateTab) return;      // nothing is kept from private tabs
     // A step with only the password (the name was on the previous page): the site's only sign-in.
     if (user.empty()) {
         int n = 0;
