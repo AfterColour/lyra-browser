@@ -1,6 +1,7 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
 #include "browser/AdBlock.h"
+#include "browser/Permissions.h"
 #include "browser/Downloads.h"
 #include "browser/History.h"
 #include "core/Url.h"
@@ -253,6 +254,19 @@ void BuildPages() {
             status = AdBlockStatusText();
             p.rows.push_back(RButton(Tr(L"Filter lists", L"Списки фильтров"), status.c_str(),
                 Tr(L"Update", L"Обновить"), []() { AdBlockUpdateNow(); }));
+        }
+        p.rows.push_back(RHeader(Tr(L"Site permissions", L"Разрешения сайтов")));
+        {
+            static std::wstring count;                   // the row label must outlive the page build
+            count = std::to_wstring(PermissionsCount()) + Tr(L" answers remembered (notifications, location)",
+                                                             L" запомненных ответов (уведомления, местоположение)");
+            p.rows.push_back(RButton(Tr(L"Notifications and location", L"Уведомления и местоположение"), count.c_str(),
+                Tr(L"Reset", L"Сбросить"), []() {
+                    if (MessageBoxW(g_setHwnd, Tr(L"Forget every site's answer? Sites will ask again.",
+                                                  L"Забыть ответы для всех сайтов? Сайты спросят снова."),
+                                    Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES)
+                        PermissionsReset();
+                }));
         }
         p.rows.push_back(RHeader(Tr(L"History", L"История")));
         p.rows.push_back(RToggle(Tr(L"Remember history", L"Сохранять историю"),

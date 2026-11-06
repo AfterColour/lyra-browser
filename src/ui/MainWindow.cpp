@@ -1,6 +1,7 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
+#include "browser/Permissions.h"
 #include "browser/Session.h"
 #include "ui/FindBar.h"
 #include "ui/Print.h"
@@ -454,6 +455,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_ADBLOCK:
         AdBlockListsReady(lParam);
+        return 0;
+    case WM_APP_TRAY:
+        PermissionsTrayMessage(wParam, lParam);
+        return 0;
+    case WM_APP_GEO:
+        PermissionsGeolocationResult(lParam);
         return 0;
     case WM_APP_FAVICON:
         FaviconArrived(lParam);

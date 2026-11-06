@@ -1,6 +1,7 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
 #include "browser/AdBlock.h"
+#include "browser/Permissions.h"
 #include "ui/FindBar.h"
 #include "browser/History.h"
 #include "core/Settings.h"
@@ -374,6 +375,10 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
     ui.runJavaScriptPrompt  = OnJsPrompt;
     ui.runOpenPanel         = OnRunOpenPanel;
     ui.printFrame           = OnPrintFrame;
+    ui.decidePolicyForNotificationPermissionRequest = [](WKPageRef page, WKSecurityOriginRef origin,
+            WKNotificationPermissionRequestRef request, const void*) { PermissionsDecideNotifications(page, origin, request); };
+    ui.decidePolicyForGeolocationPermissionRequest = [](WKPageRef page, WKFrameRef, WKSecurityOriginRef origin,
+            WKGeolocationPermissionRequestRef request, const void*) { PermissionsDecideGeolocation(page, origin, request); };
     WKPageSetPageUIClient(page, &ui.base);
 
     WKPageFindClientV0 fc = {};
