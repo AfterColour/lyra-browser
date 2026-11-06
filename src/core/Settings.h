@@ -36,6 +36,7 @@ struct Prefs {
     int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
     bool spareTab = true;        // a start page is prepared in the background for the next new tab
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)
+    bool savePasswords = true;   // offer to save passwords and fill them in (browser/Passwords.cpp)
     bool adBlock = true;         // block ads and trackers (Settings > Privacy, browser/AdBlock.cpp)
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;

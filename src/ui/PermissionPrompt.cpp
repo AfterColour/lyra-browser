@@ -1,5 +1,7 @@
 // Lyra — окошко запроса разрешения под адресной строкой («Сайт запрашивает: показывать уведомления»).
 #include "ui/PermissionPrompt.h"
+#include "app/Log.h"
+#include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
@@ -12,7 +14,8 @@
 
 static HWND s_popup = nullptr;
 static unsigned long long s_seq = 0;          // the question shown
-static std::wstring s_site, s_what;
+static int s_source = 0;                      // 0 a site permission, 1 a password
+static std::wstring s_title, s_what, s_no, s_yes;
 static const wchar_t* s_icon = L"";
 static int s_hover = 0, s_down = 0;           // 1 block, 2 allow, 3 close
 static bool s_tracking = false;
@@ -73,8 +76,7 @@ static void Paint(HDC hdc) {
         SolidBrush text(T.text), text2(T.text2);
 
         const float x = S(kPad);
-        std::wstring title = s_site + Tr(L" wants to", L" запрашивает");
-        g.DrawString(title.c_str(), -1, s_fTitle.get(), RectF(x, S(kTitleY), S(kW - kPad - 44), S(22)), &sf, &text);
+        g.DrawString(s_title.c_str(), -1, s_fTitle.get(), RectF(x, S(kTitleY), S(kW - kPad - 44), S(22)), &sf, &text);
 
         DrawGlyph(g, s_icon, RectF(x, S(kRowY), S(20), S(24)), T.text2, s_fIcon.get());
         g.DrawString(s_what.c_str(), -1, s_fText.get(), RectF(x + S(30), S(kRowY), S(kW - kPad * 2 - 30), S(24)), &sf, &text);
@@ -95,21 +97,23 @@ static void Paint(HDC hdc) {
             AddRound(p, r, S(7));
             Pen pen(T.fieldBorder, 1.f);
             g.DrawPath(&pen, &p);
-            g.DrawString(Tr(L"Block", L"Блокировать"), -1, s_fText.get(), r, &cf, &text);
+            g.DrawString(s_no.c_str(), -1, s_fText.get(), r, &cf, &text);
         }
         {
             const RectF r = AllowRect();
             FillRound(g, s_hover == 2 ? Lighter(T.accent, 18) : T.accent, r, S(7));
             SolidBrush white(Color(255, 255, 255));
-            g.DrawString(Tr(L"Allow", L"Разрешить"), -1, s_fBold.get(), r, &cf, &white);
+            g.DrawString(s_yes.c_str(), -1, s_fBold.get(), r, &cf, &white);
         }
     });
 }
 
 static void Answer(int answer) {
     const unsigned long long seq = s_seq;
+    const int source = s_source;
     PermissionPromptClose();
-    PermissionsAnswer(seq, answer);          // shows the next question, if any
+    if (source == 1) PasswordsAnswer(seq, answer);    // shows the next question, if any
+    else PermissionsAnswer(seq, answer);
 }
 
 static LRESULT CALLBACK PopupProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -189,7 +193,15 @@ void PermissionPromptClose() {
     DestroyWindow(h);
 }
 
-static void Open(const PermissionAsk& ask) {
+// What the bubble says, from either kind of question.
+struct PromptView {
+    unsigned long long seq = 0;
+    int source = 0;
+    std::wstring title, what, no, yes;
+    const wchar_t* icon = L"";
+};
+
+static void Open(const PromptView& v) {
     static bool registered = false;
     HINSTANCE hi = GetModuleHandleW(nullptr);
     if (!registered) {
@@ -204,19 +216,17 @@ static void Open(const PermissionAsk& ask) {
         registered = true;
     }
     MakeFonts();
-    s_seq = ask.seq;
-    s_site = ask.site;
-    if (ask.kind == "geolocation") {
-        s_icon = L"";
-        s_what = Tr(L"Know your location", L"Доступ к вашему местоположению");
-    } else {
-        s_icon = L"";
-        s_what = Tr(L"Show notifications", L"Показ уведомлений");
-    }
+    s_seq = v.seq;
+    s_source = v.source;
+    s_title = v.title;
+    s_what = v.what;
+    s_no = v.no;
+    s_yes = v.yes;
+    s_icon = v.icon;
     s_pos = PopupPosition();
     s_popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"LyraPermissionPrompt", L"", WS_POPUP,
                               s_pos.x, s_pos.y, (int)S(kW), (int)S(kH), g_hWnd, nullptr, hi, nullptr);
-    if (!s_popup) { s_seq = 0; return; }
+    if (!s_popup) { Log("prompt: window not created (%lu)", GetLastError()); s_seq = 0; return; }
     const DWORD round = 2;                               // DWMWCP_ROUND (Windows 11)
     DwmSetWindowAttribute(s_popup, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
     const BOOL dark = g_dark;
@@ -227,12 +237,44 @@ static void Open(const PermissionAsk& ask) {
 void PermissionPromptUpdate() {
     if (!g_hWnd) return;
     Tab* t = ActiveTab();
-    const PermissionAsk* ask = (t && !g_closing && !IsIconic(g_hWnd)) ? PermissionsPendingForTab(t->id) : nullptr;
-    if (!ask) { PermissionPromptClose(); return; }
-    if (ask->seq != s_seq) {
+    PromptView v;
+    if (t && !g_closing && !IsIconic(g_hWnd)) {
+        if (const PermissionAsk* ask = PermissionsPendingForTab(t->id)) {
+            v.seq = ask->seq;
+            v.source = 0;
+            v.title = ask->site + Tr(L" wants to", L" запрашивает");
+            if (ask->kind == "geolocation") {
+                v.icon = L"\uE81D";
+                v.what = Tr(L"Know your location", L"Доступ к вашему местоположению");
+            } else {
+                v.icon = L"\uEA8F";
+                v.what = Tr(L"Show notifications", L"Показ уведомлений");
+            }
+            v.no = Tr(L"Block", L"Блокировать");
+            v.yes = Tr(L"Allow", L"Разрешить");
+        } else if (const PasswordAsk* pw = PasswordsPendingForTab(t->id)) {
+            v.seq = pw->seq;
+            v.source = 1;
+            v.title = (pw->update ? Tr(L"Update password for ", L"Обновить пароль для ")
+                                  : Tr(L"Save password for ", L"Сохранить пароль для ")) + pw->site + L"?";
+            v.icon = L"\uE8D7";
+            v.what = pw->username.empty() ? std::wstring(Tr(L"No username", L"Без имени пользователя")) : pw->username;
+            v.no = pw->update ? Tr(L"Not now", L"Не сейчас") : Tr(L"Never", L"Никогда");
+            v.yes = pw->update ? Tr(L"Update", L"Обновить") : Tr(L"Save", L"Сохранить");
+        }
+    }
+    if (!v.seq) {
         PermissionPromptClose();
-        Open(*ask);
         return;
+    }
+    if (v.seq != s_seq || v.source != s_source) {
+        PermissionPromptClose();
+        Open(v);
+        return;
+    }
+    if (v.what != s_what) {                              // the same sign-in typed again
+        s_what = v.what;
+        InvalidateRect(s_popup, nullptr, FALSE);
     }
     const POINT p = PopupPosition();                     // follows the window and the address field
     if (p.x != s_pos.x || p.y != s_pos.y) {

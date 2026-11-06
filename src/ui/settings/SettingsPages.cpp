@@ -1,6 +1,7 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
 #include "browser/AdBlock.h"
+#include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "browser/Downloads.h"
 #include "browser/History.h"
@@ -42,6 +43,42 @@ static void ResetAllSettings() {
     if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
 }
 
+static void CopyText(const std::wstring& s) {
+    if (!OpenClipboard(g_setHwnd)) return;
+    EmptyClipboard();
+    const size_t bytes = (s.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        memcpy(GlobalLock(h), s.c_str(), bytes);
+        GlobalUnlock(h);
+        if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h);
+    }
+    CloseClipboard();
+}
+
+// Saved passwords page: copy the name or the password, or delete the sign-in.
+static void PasswordActions(const std::string& origin, const std::wstring& username) {
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, 1, Tr(L"Copy username", L"Копировать имя пользователя"));
+    AppendMenuW(m, MF_STRING, 2, Tr(L"Copy password", L"Копировать пароль"));
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 3, Tr(L"Delete", L"Удалить"));
+    POINT pt;
+    GetCursorPos(&pt);
+    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_setHwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == 1) CopyText(username);
+    else if (cmd == 2) {
+        for (const SavedPassword& e : PasswordsList())
+            if (e.origin == origin && e.username == username) { CopyText(e.password); break; }
+    } else if (cmd == 3) {
+        std::wstring q = Tr(L"Delete the saved password for ", L"Удалить сохранённый пароль для ") + PasswordsSiteName(origin) + L"?";
+        if (MessageBoxW(g_setHwnd, q.c_str(), Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            PasswordsDelete(origin, username);
+            SettingsLanguageChanged();                   // rebuilds the list
+        }
+    }
+}
+
 void BuildPages() {
     g_pages.clear();
     const std::function<void()> save    = []() { SaveSettings(); };
@@ -51,6 +88,7 @@ void BuildPages() {
     const std::function<void()> repaint = []() { InvalidateChrome(); SaveSettings(); };
     // Index of the "Animations" detail page; it is added after the sidebar pages.
     static int s_animationsPage = -1;
+    static int s_passwordsPage = -1;     // "Saved passwords", from Privacy
 
     {   // General
         SPage p; p.name = Tr(L"General", L"Основные"); p.icon = L"\uE713"; p.tint = kTintGray;
@@ -235,6 +273,7 @@ void BuildPages() {
             &g_prefs.devExtras, web));
         g_pages.push_back(std::move(p));
     }
+    const int privacyPage = (int)g_pages.size();
     {   // Privacy
         SPage p; p.name = Tr(L"Privacy", L"Конфиденциальность"); p.icon = L"\uE72E"; p.tint = kTintGreen;
         p.rows.push_back(RHeader(Tr(L"Website data", L"Данные сайтов")));
@@ -254,6 +293,17 @@ void BuildPages() {
             status = AdBlockStatusText();
             p.rows.push_back(RButton(Tr(L"Filter lists", L"Списки фильтров"), status.c_str(),
                 Tr(L"Update", L"Обновить"), []() { AdBlockUpdateNow(); }));
+        }
+        p.rows.push_back(RHeader(Tr(L"Passwords", L"Пароли")));
+        p.rows.push_back(RToggle(Tr(L"Offer to save passwords", L"Предлагать сохранять пароли"),
+            Tr(L"Lyra remembers sign-ins and fills them in. They are encrypted with your Windows account.",
+               L"Lyra запоминает входы на сайты и подставляет их. Пароли зашифрованы вашей учётной записью Windows."),
+            &g_prefs.savePasswords, save));
+        {
+            static std::wstring saved;                   // the row label must outlive the page build
+            saved = Tr(L"Saved: ", L"Сохранено: ") + std::to_wstring(PasswordsList().size());
+            p.rows.push_back(RButton(Tr(L"Saved passwords", L"Сохранённые пароли"), saved.c_str(),
+                Tr(L"Open", L"Открыть"), []() { SettingsOpenPage(s_passwordsPage); }));
         }
         p.rows.push_back(RHeader(Tr(L"Site permissions", L"Разрешения сайтов")));
         {
@@ -393,6 +443,34 @@ void BuildPages() {
             [save](int v) { g_prefs.tabResizeDelay = v; save(); },
             [](int v) { return v == 0 ? std::wstring(Tr(L"Off", L"Выкл.")) : std::to_wstring(v) + Tr(L" ms", L" мс"); }));
         s_animationsPage = (int)g_pages.size();
+        g_pages.push_back(std::move(p));
+    }
+    {   // Saved passwords, from Privacy > Passwords
+        SPage p; p.name = Tr(L"Saved passwords", L"Сохранённые пароли"); p.icon = L"\uE8D7"; p.tint = kTintGreen;
+        p.parent = privacyPage;
+        const std::vector<SavedPassword> list = PasswordsList();
+        p.rows.push_back(RHeader(Tr(L"Sites", L"Сайты")));
+        if (list.empty())
+            p.rows.push_back(RInfo(Tr(L"No saved passwords yet", L"Сохранённых паролей пока нет"), L""));
+        for (const SavedPassword& e : list) {
+            const std::wstring site = PasswordsSiteName(e.origin);
+            const std::wstring user = e.username.empty() ? std::wstring(Tr(L"(no username)", L"(без имени)")) : e.username;
+            const std::string origin = e.origin;
+            const std::wstring username = e.username;
+            p.rows.push_back(RButton(site.c_str(), user.c_str(), Tr(L"Actions\x2026", L"Действия\x2026"),
+                [origin, username]() { PasswordActions(origin, username); }));
+        }
+        const std::vector<std::string> never = PasswordsNeverList();
+        if (!never.empty()) {
+            p.rows.push_back(RHeader(Tr(L"Never saved for", L"Не сохранять для")));
+            for (const std::string& o : never) {
+                const std::wstring site = PasswordsSiteName(o);
+                const std::string origin = o;
+                p.rows.push_back(RButton(site.c_str(), L"", Tr(L"Remove", L"Убрать"),
+                    [origin]() { PasswordsRemoveNever(origin); SettingsLanguageChanged(); }));
+            }
+        }
+        s_passwordsPage = (int)g_pages.size();
         g_pages.push_back(std::move(p));
     }
 }

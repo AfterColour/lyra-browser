@@ -18,6 +18,7 @@
 #include <tlhelp32.h>
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
+#include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "browser/Bookmarks.h"
 #include "browser/Session.h"
@@ -134,6 +135,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     PermissionsInit();                                 // site permissions: notifications, location
     AdBlockInit();                                     // compiled filter lists; updates them in the background
     MediaControlsInit();                               // media keys, Windows' media flyout
+    PasswordsInit();                                   // saved passwords: offer to save, fill in
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and
     //  does nothing on the Windows port, which plays media through Media Foundation.)
 
@@ -163,6 +165,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     Log("message loop ended; releasing WebKit preferences/context");
     MediaControlsShutdown();
+    PasswordsShutdown();
     AdBlockShutdown();
     PermissionsShutdown();
     if (g_preferences) { WKRelease(g_preferences); g_preferences = nullptr; }
