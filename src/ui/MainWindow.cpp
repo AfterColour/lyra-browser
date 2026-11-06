@@ -1,6 +1,7 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
+#include "browser/MediaControls.h"
 #include "browser/Permissions.h"
 #include "ui/PermissionPrompt.h"
 #include "browser/Session.h"
@@ -354,6 +355,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
+            case Hit::TabAudio: MediaToggleMute(up.index); break;
             default: break;
             }
         }
@@ -398,6 +400,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (g_closing || g_tabOp) return 0;      // never poll tabs while one is being created/destroyed
         FindBarTabChanged();                     // the find panel follows the active tab
         PermissionPromptUpdate();                // so does the permission bubble
+        MediaControlsTick();                     // Windows' media flyout follows the playing tab
         SessionTick();                           // saves the open tabs when they changed
         bool dirty = false;
         ++g_tick;
@@ -457,6 +460,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_ADBLOCK:
         AdBlockListsReady(lParam);
+        return 0;
+    case WM_APP_MEDIA:
+        MediaControlsButton(wParam);
         return 0;
     case WM_APP_TRAY:
         PermissionsTrayMessage(wParam, lParam);

@@ -425,13 +425,36 @@ static bool StarShown() {
 
 static bool CloseVisible(int i) {
     if (i < 0 || i >= (int)g_L.tabs.size()) return false;
-    const bool overTab = (g_hover.kind == Hit::TabBody || g_hover.kind == Hit::TabClose) && g_hover.index == i;
+    const bool overTab = (g_hover.kind == Hit::TabBody || g_hover.kind == Hit::TabClose ||
+                          g_hover.kind == Hit::TabAudio) && g_hover.index == i;
     if (IsCompactActive(i))      // Safari: the active tab shows its close button while hovered
         return !IsEditing() && (g_hover.kind == Hit::Pill || g_hover.kind == Hit::Reload || g_hover.kind == Hit::Star ||
-                                (g_hover.kind == Hit::TabClose && g_hover.index == i));
+                                ((g_hover.kind == Hit::TabClose || g_hover.kind == Hit::TabAudio) && g_hover.index == i));
     if (g_L.tabs[i].Width < S(60)) return false;
     if (g_L.mode == kLayoutCompact) return overTab || g_prefs.closeAlways;
     return i == g_active || overTab || g_prefs.closeAlways;
+}
+
+// The speaker on a tab that plays sound (crossed out when muted); a click mutes / unmutes.
+static bool AudioShown(int i) {
+    if (i < 0 || i >= (int)g_tabs.size() || i >= (int)g_L.tabs.size()) return false;
+    const Tab& t = *g_tabs[i];
+    if (!t.audible && !t.muted) return false;
+    if (IsCompactActive(i)) return !IsEditing();
+    return g_L.tabs[i].Width >= S(60);
+}
+
+static RectF AudioRect(int i) {
+    const float c = S(22);
+    if (IsCompactActive(i)) {                        // inside the address field, left of the star
+        const RectF& pill = g_L.pill;
+        const float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+        return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
+    }
+    const RectF& r = g_L.tabs[i];
+    const float c2 = std::min(c, r.Height - S(6));
+    const float right = CloseVisible(i) ? CloseRect(i).X - S(1) : r.GetRight() - S(5);
+    return RectF(right - c2, r.Y + (r.Height - c2) / 2, c2, c2);
 }
 
 Hit HitTest(int px, int py) {
@@ -453,6 +476,8 @@ Hit HitTest(int px, int py) {
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
+    for (int i = n - 1; i >= 0; --i)
+        if (AudioShown(i) && AudioRect(i).Contains(x, y)) return MakeHit(Hit::TabAudio, i);
     for (int i = n - 1; i >= 0; --i)
         if (CloseVisible(i) && CloseRect(i).Contains(x, y)) return MakeHit(Hit::TabClose, i);
     if (inTop && L.pill.Contains(x, y)) return MakeHit(Hit::Pill);
@@ -657,7 +682,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const RectF& r = L.tabs[i];
         const Tab& tab = *g_tabs[i];
         const bool act = (i == g_active);
-        const float h = std::max(HoverAmount(MakeHit(Hit::TabBody, i)), HoverAmount(MakeHit(Hit::TabClose, i)));
+        const float h = std::max({ HoverAmount(MakeHit(Hit::TabBody, i)), HoverAmount(MakeHit(Hit::TabClose, i)),
+                                   HoverAmount(MakeHit(Hit::TabAudio, i)) });
         const float rad = S(6);
         if (act) {
             FillRound(g, vertical ? T.tabActive : T.field, r, rad);
@@ -677,7 +703,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const bool showClose = CloseVisible(i);
         if (!badgeOnly) {
             const float tx = bx + bs + S(7);
-            const float tr = showClose ? CloseRect(i).X - S(4) : r.GetRight() - S(8);
+            float tr = showClose ? CloseRect(i).X - S(4) : r.GetRight() - S(8);
+            if (AudioShown(i)) tr = AudioRect(i).X - S(2);
             if (tr - tx > S(10)) {
                 SolidBrush tb(T.text);
                 g.DrawString(tab.title.c_str(), -1, (act && !vertical) ? g_fTabBold.get() : g_fTab.get(),
@@ -688,6 +715,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
             RectF c = CloseRect(i);
             hoverFill(c, MakeHit(Hit::TabClose, i), dwn(Hit::TabClose, i), S(4));
             DrawGlyph(g, L"\uE711", c, T.text2, g_fCaption.get());
+        }
+        if (AudioShown(i)) {
+            RectF a = AudioRect(i);
+            hoverFill(a, MakeHit(Hit::TabAudio, i), dwn(Hit::TabAudio, i), S(4));
+            DrawGlyph(g, tab.muted ? L"\uE74F" : L"\uE767", a, T.text2, g_fIconSm.get());
         }
     }
 
@@ -797,7 +829,9 @@ static void DrawChrome(Graphics& g, int w, int h) {
 
             const float textL = pill.X + S(28);
             const bool star = StarShown();
-            const float textR = star ? L.star.X - S(2) : L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
+            float textR = star ? L.star.X - S(2) : L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
+            const bool audioHere = IsCompactActive(g_active) && AudioShown(g_active);
+            if (audioHere) textR = AudioRect(g_active).X - S(2);
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -825,6 +859,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 const bool marked = IsBookmarkedCached(cur->url);
                 hoverFill(L.star, MakeHit(Hit::Star, -1), dwn(Hit::Star, -1) || BookmarkPopupVisible(), S(6));
                 DrawGlyph(g, marked ? L"\uE735" : L"\uE734", L.star, marked ? T.accent : T.icon, g_fIconSm.get());
+            }
+            if (audioHere) {
+                RectF a = AudioRect(g_active);
+                hoverFill(a, MakeHit(Hit::TabAudio, g_active), dwn(Hit::TabAudio, g_active), S(6));
+                DrawGlyph(g, g_tabs[g_active]->muted ? L"\uE74F" : L"\uE767", a, T.icon, g_fIconSm.get());
             }
         }
     }

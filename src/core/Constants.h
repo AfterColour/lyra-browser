@@ -29,6 +29,7 @@ constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminat
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
 constexpr UINT WM_APP_PRINT        = WM_APP + 8;   // window.print(); wParam tab id
+constexpr UINT WM_APP_MEDIA        = WM_APP + 11;  // a media key / Windows media flyout button; wParam see SystemMedia.h
 constexpr UINT WM_APP_TRAY         = WM_APP + 9;   // the notifications tray icon (Permissions.cpp)
 constexpr UINT WM_APP_GEO          = WM_APP + 10;  // a location fix arrived; lParam see Permissions.cpp
 constexpr UINT WM_APP_ADBLOCK      = WM_APP + 7;   // a filter list was converted; lParam see AdBlock.cpp
