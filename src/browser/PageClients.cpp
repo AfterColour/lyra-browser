@@ -1,6 +1,9 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
+#include "browser/AdBlock.h"
 #include "browser/History.h"
+#include "core/Settings.h"
+#include <WebKit/WKWebsitePolicies.h>
 #include "core/Url.h"
 #include "core/Localization.h"
 #include "app/Log.h"
@@ -174,6 +177,21 @@ static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKF
         if (c && g_hWnd && !g_closing)
             PostMessageW(g_hWnd, WM_APP_LYRA_URL, (WPARAM)c->id, (LPARAM)new std::wstring(url));
         return;
+    }
+    // Sites the user turned ad blocking off for: the page loads without the content blockers.
+    if (g_prefs.adBlock && !AdBlockAllowedOn(url)) {
+        bool mainFrame = false;
+        if (WKFrameInfoRef fi = WKNavigationActionCopyTargetFrameInfo(action)) {
+            mainFrame = WKFrameInfoGetIsMainFrame(fi);
+            WKRelease(fi);
+        }
+        if (mainFrame) {
+            WKWebsitePoliciesRef policies = WKWebsitePoliciesCreate();
+            WKWebsitePoliciesSetContentBlockersEnabled(policies, false);
+            WKFramePolicyListenerUseWithPolicies(listener, policies);
+            WKRelease(policies);
+            return;
+        }
     }
     WKFramePolicyListenerUse(listener);
 }

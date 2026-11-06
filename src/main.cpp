@@ -16,6 +16,7 @@
 // ============================================================================
 #include "common/Platform.h"
 #include <tlhelp32.h>
+#include "browser/AdBlock.h"
 #include "browser/Bookmarks.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
@@ -127,6 +128,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_preferences = WKPreferencesCreate();
     ApplyWebPrefs();                                   // JS, images, storage, fonts... from settings
     WKPreferencesSetSuppressesIncrementalRendering(g_preferences, false);
+    AdBlockInit();                                     // compiled filter lists; updates them in the background
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and
     //  does nothing on the Windows port, which plays media through Media Foundation.)
 
@@ -151,6 +153,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     }
 
     Log("message loop ended; releasing WebKit preferences/context");
+    AdBlockShutdown();
     if (g_preferences) { WKRelease(g_preferences); g_preferences = nullptr; }
     if (g_dataStore)   { WKRelease(g_dataStore);   g_dataStore = nullptr; }
     if (g_context)     { WKRelease(g_context);     g_context = nullptr; }

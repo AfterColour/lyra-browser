@@ -1,5 +1,6 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
+#include "browser/AdBlock.h"
 #include "browser/Downloads.h"
 #include "browser/History.h"
 #include "core/Url.h"
@@ -238,6 +239,17 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Web databases", L"Веб-базы данных"),
             Tr(L"Used by some web apps that work offline.", L"Нужны некоторым веб-приложениям для работы офлайн."),
             &g_prefs.databases, web));
+        p.rows.push_back(RHeader(Tr(L"Ads and trackers", L"Реклама и трекеры")));
+        p.rows.push_back(RToggle(Tr(L"Block ads and trackers", L"Блокировать рекламу и трекеры"),
+            Tr(L"EasyList, EasyPrivacy and RU AdList, updated every few days. Turn it off for one site in the “More” menu.",
+               L"EasyList, EasyPrivacy и RU AdList, обновляются раз в несколько дней. Для отдельного сайта — в меню «Ещё»."),
+            &g_prefs.adBlock, [save]() { AdBlockSetEnabled(g_prefs.adBlock); save(); }));
+        {
+            static std::wstring status;                  // the row label must outlive the page build
+            status = AdBlockStatusText();
+            p.rows.push_back(RButton(Tr(L"Filter lists", L"Списки фильтров"), status.c_str(),
+                Tr(L"Update", L"Обновить"), []() { AdBlockUpdateNow(); }));
+        }
         p.rows.push_back(RHeader(Tr(L"History", L"История")));
         p.rows.push_back(RToggle(Tr(L"Remember history", L"Сохранять историю"),
             Tr(L"Visited pages, for the history page, suggestions and frequently visited sites.",

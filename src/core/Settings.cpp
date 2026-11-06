@@ -77,6 +77,7 @@ void LoadSettings() {
     g_prefs.loadIndicator = std::max(0, std::min(1, geti(L"LoadIndicator", 0)));
     g_prefs.warmTabs = std::max(0, std::min(4, geti(L"ReadyTabs", 2)));
     g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
+    g_prefs.adBlock  = geti(L"AdBlock", 1) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
     g_prefs.localStorage= geti(L"LocalStorage", 1) != 0;
@@ -115,6 +116,6 @@ void SaveSettings() {
     puti(L"WebAudio", g_prefs.webAudio);
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
-    puti(L"PrepareNewTab", g_prefs.spareTab);
+    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"AdBlock", g_prefs.adBlock);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
 }

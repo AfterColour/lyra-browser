@@ -28,11 +28,12 @@ constexpr UINT WM_APP_CLOSE_TAB    = WM_APP + 1;   // window.close() from a page
 constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminationReason
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
+constexpr UINT WM_APP_ADBLOCK      = WM_APP + 7;   // a filter list was converted; lParam see AdBlock.cpp
 constexpr UINT WM_APP_TAB_PAINTED  = WM_APP + 6;   // a switched-to tab has drawn; wParam tab id (TabTransition)
 constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyra://...; wParam tab id, lParam new std::wstring*
 
 enum Cmd {
     CMD_NEWTAB = 301, CMD_CLOSETAB, CMD_COPYURL,
     CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMRESET, CMD_SETHOME, CMD_SETTINGS,
-    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS
+    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS, CMD_ADBLOCK_SITE
 };

@@ -35,6 +35,7 @@ struct Prefs {
     int  loadIndicator = 0;      // page loading in the address field: 0 glowing line, 1 fill (Safari)
     int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
     bool spareTab = true;        // a start page is prepared in the background for the next new tab
+    bool adBlock = true;         // block ads and trackers (Settings > Privacy, browser/AdBlock.cpp)
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;
     int  defaultFont = 16, minFont = 0;

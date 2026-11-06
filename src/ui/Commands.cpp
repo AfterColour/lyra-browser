@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "browser/AdBlock.h"
 #include "browser/StartPage.h"
 #include "core/Url.h"
 #include "core/Localization.h"
@@ -79,6 +80,12 @@ void RunCommand(int cmd) {
     case CMD_BOOKMARKS: OpenBookmarks(); break;
     case CMD_DOWNLOADS: OpenDownloads(); break;
     case CMD_BOOKMARK_PAGE: BookmarkCurrentPage(); break;
+    case CMD_ADBLOCK_SITE:
+        if (Tab* t = ActiveTab()) {
+            AdBlockSetAllowedOn(t->url, !AdBlockAllowedOn(t->url));
+            WKPageReload(t->page);
+        }
+        break;
     }
 }
 
@@ -96,6 +103,12 @@ void ShowMoreMenu() {
         AppendMenuW(m, MF_STRING | ((t && CanBookmark(t->url)) ? 0 : MF_GRAYED), CMD_BOOKMARK_PAGE,
                     (t && IsBookmarkedCached(t->url)) ? Tr(L"Edit Bookmark\tCtrl+D", L"Изменить закладку\tCtrl+D")
                                                       : Tr(L"Bookmark This Page\tCtrl+D", L"Добавить в закладки\tCtrl+D"));
+    }
+    if (g_prefs.adBlock) {
+        const Tab* t = ActiveTab();
+        bool web = t && (t->url.compare(0, 7, L"http://") == 0 || t->url.compare(0, 8, L"https://") == 0);
+        AppendMenuW(m, MF_STRING | (web ? 0 : MF_GRAYED) | (web && AdBlockAllowedOn(t->url) ? MF_CHECKED : 0), CMD_ADBLOCK_SITE,
+                    Tr(L"Block Ads on This Site", L"\u0411\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0435\u043a\u043b\u0430\u043c\u0443 \u043d\u0430 \u044d\u0442\u043e\u043c \u0441\u0430\u0439\u0442\u0435"));
     }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));

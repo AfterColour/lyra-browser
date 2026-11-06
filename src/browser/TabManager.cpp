@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/AdBlock.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
 #include "core/Localization.h"
@@ -224,6 +225,8 @@ static WKPageConfigurationRef CreatePageConfiguration() {
     WKPageConfigurationSetContext(conf, g_context);
     WKPageConfigurationSetPreferences(conf, g_preferences);
     if (g_dataStore) WKPageConfigurationSetWebsiteDataStore(conf, g_dataStore);
+    if (WKUserContentControllerRef content = AdBlockUserContentController())
+        WKPageConfigurationSetUserContentController(conf, content);
     return conf;
 }
 
