@@ -11,6 +11,9 @@
 void AdBlockInit();                          // after g_context: loads compiled lists, updates in the background
 void AdBlockShutdown();
 WKUserContentControllerRef AdBlockUserContentController();   // for new page configurations
+// Every script Lyra injects into pages goes through here (document start). The list is rebuilt
+// when blocking is switched or a site allowed, since YouTube's ads are handled by a script too.
+void AdBlockAddUserScript(const char* source, bool mainFrameOnly);
 void AdBlockSetEnabled(bool enabled);        // Settings > Privacy
 void AdBlockUpdateNow();                     // download and compile the lists again
 void AdBlockListsReady(LPARAM);              // WM_APP_ADBLOCK (main thread)

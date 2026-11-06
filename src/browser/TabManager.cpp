@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/PictureInPicture.h"
 #include "browser/AdBlock.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
@@ -438,6 +439,7 @@ static void DetachTab(Tab& t) {
 //      (WebView::closeInternal -> WebPageProxy::close), exactly like MiniBrowser,
 //   3. WKRelease(view) - drop the reference WKViewCreate returned (create rule).
 static void DestroyTab(Tab& t) {
+    PipDetach(t);                        // the view must be back in the main window first
     const unsigned long long id = t.id;
     WKViewRef view = t.view;
     WKPageRef page = t.page;

@@ -1,0 +1,722 @@
+// Lyra — «картинка в картинке»: видео в маленьком окне поверх всех окон.
+#include "browser/PictureInPicture.h"
+#include "app/Log.h"
+#include "browser/AdBlock.h"
+#include "browser/Tab.h"
+#include "browser/TabManager.h"
+#include "core/Constants.h"
+#include "core/Localization.h"
+#include "core/StringUtils.h"
+#include "ui/Draw.h"
+#include "ui/MainWindow.h"
+#include "ui/Theme.h"
+
+#include <WebKit/WKFrameInfoRef.h>
+#include <WebKit/WKPageFullScreenClient.h>      // WKCompletionListenerComplete
+#include <WebKit/WKScriptMessageRef.h>
+#include <WebKit/WKUserContentControllerRef.h>
+#include <WebKit/WKUserScriptRef.h>
+#include <WebKit/WKView.h>
+
+namespace {
+
+// Main frame, document start. __lyraPip.enter() marks the video and switches the page to "only
+// the video" (returns "W x H"), leave() undoes it. A small button over videos and the standard
+// requestPictureInPicture() ask Lyra through the lyraPip message handler.
+const char kScript[] = R"JS((function () {
+  if (window.__lyraPip) return;
+  var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lyraPip;
+  if (!h) return;
+  var current = null, pending = null, style = null, toggleFn = null;
+  var CSS =
+    'html[data-lyra-pip-mode], html[data-lyra-pip-mode] body { overflow: hidden !important; background: #000 !important; }' +
+    'html[data-lyra-pip-mode] body * { visibility: hidden !important; }' +
+    'html[data-lyra-pip-mode] [data-lyra-pip-anc] { transform: none !important; filter: none !important; contain: none !important;' +
+    '  perspective: none !important; will-change: auto !important; translate: none !important; scale: none !important;' +
+    '  rotate: none !important; backdrop-filter: none !important; zoom: 1 !important; content-visibility: visible !important;' +
+    '  position: static !important; margin: 0 !important; padding: 0 !important; border: 0 !important; }' +
+    'html[data-lyra-pip-mode] video[data-lyra-pip] { visibility: visible !important; position: absolute !important; left: 0 !important;' +
+    '  top: 0 !important; right: auto !important; bottom: auto !important; width: 100vw !important; height: 100vh !important;' +
+    '  max-width: none !important; max-height: none !important; margin: 0 !important; transform: none !important;' +
+    '  object-fit: contain !important; background: #000 !important; z-index: 2147483647 !important; }';
+  function videos() { return Array.prototype.slice.call(document.querySelectorAll('video')); }
+  function area(v) { var r = v.getBoundingClientRect(); return r.width * r.height; }
+  function best() {
+    var list = videos(), pick = null;
+    list.forEach(function (v) { if (!v.paused && !v.ended && (!pick || area(v) > area(pick))) pick = v; });
+    if (!pick) list.forEach(function (v) { if (v.currentSrc && (!pick || area(v) > area(pick))) pick = v; });
+    return pick;
+  }
+  function enter() {
+    var v = pending || best();
+    pending = null;
+    if (!v) return '';
+    leave();
+    current = v;
+    v.setAttribute('data-lyra-pip', '');
+    for (var a = v.parentElement; a; a = a.parentElement) a.setAttribute('data-lyra-pip-anc', '');
+    style = document.createElement('style');
+    style.textContent = CSS;
+    document.documentElement.appendChild(style);
+    document.documentElement.setAttribute('data-lyra-pip-mode', '');
+    toggleFn = function (e) { e.preventDefault(); e.stopPropagation(); var c = current || v; if (c.paused) c.play(); else c.pause(); };
+    v.addEventListener('click', toggleFn, true);
+    hideButton();
+    offX = offY = 0;
+    keepTimer = setInterval(keep, 250);
+    setTimeout(align, 0);
+    try { v.dispatchEvent(new Event('enterpictureinpicture')); } catch (e) {}
+    return (v.videoWidth || 16) + 'x' + (v.videoHeight || 9);
+  }
+  // Sites re-render while playing (YouTube swaps the video for ads): keep the marks on the
+  // playing video and its ancestors, and the page scrolled to the top.
+  var keepTimer = 0;
+  function mark(v) {
+    v.setAttribute('data-lyra-pip', '');
+    for (var a = v.parentElement; a; a = a.parentElement) if (!a.hasAttribute('data-lyra-pip-anc')) a.setAttribute('data-lyra-pip-anc', '');
+  }
+  // Some pages put the video under an element that becomes the reference for "fixed" (YouTube's
+  // player sits below its 56 px top bar): measure where the video landed and move it to 0,0.
+  var offX = 0, offY = 0;
+  function align() {
+    if (!current) return;
+    var r = current.getBoundingClientRect();
+    if (Math.abs(r.top) < 0.5 && Math.abs(r.left) < 0.5) return;
+    offX -= r.left; offY -= r.top;
+    current.style.setProperty('left', offX + 'px', 'important');
+    current.style.setProperty('top', offY + 'px', 'important');
+  }
+  function unalign(v) { v.style.removeProperty('left'); v.style.removeProperty('top'); offX = offY = 0; }
+  window.addEventListener('resize', function () { setTimeout(align, 0); }, true);
+  function keep() {
+    if (!current) return;
+    if (!current.isConnected || (current.paused && best() && best() !== current && !best().paused)) {
+      var b = best();
+      if (b && b !== current) {
+        current.removeAttribute('data-lyra-pip');
+        current.removeEventListener('click', toggleFn, true);
+        unalign(current);
+        current = b;
+        current.addEventListener('click', toggleFn, true);
+      }
+    }
+    mark(current);
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    align();
+  }
+  function leave() {
+    if (!current) return;
+    clearInterval(keepTimer);
+    var v = current;
+    current = null;
+    v.removeAttribute('data-lyra-pip');
+    v.removeEventListener('click', toggleFn, true);
+    unalign(v);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-lyra-pip-anc]'), function (e) { e.removeAttribute('data-lyra-pip-anc'); });
+    document.documentElement.removeAttribute('data-lyra-pip-mode');
+    if (style) style.remove();
+    style = null;
+    try { v.dispatchEvent(new Event('leavepictureinpicture')); } catch (e) {}
+  }
+  Object.defineProperty(window, '__lyraPip', { value: {
+    enter: enter, leave: leave,
+    pause: function () { if (current) current.pause(); },
+    title: function () { return document.title || location.hostname; },
+    // "paused|time|duration|muted|viewport|video rect" for the window's controls
+    state: function () {
+      var v = current;
+      if (!v) return '';
+      var r = v.getBoundingClientRect();
+      return [v.paused ? 1 : 0, v.currentTime || 0, isFinite(v.duration) ? v.duration : 0, v.muted ? 1 : 0,
+              innerWidth + 'x' + innerHeight, Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height)].join('|');
+    },
+    cmd: function (c, arg) {
+      var v = current;
+      if (!v) return;
+      if (c === 'toggle') { if (v.paused) v.play(); else v.pause(); }
+      else if (c === 'seek') v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.1, v.currentTime + arg));
+      else if (c === 'seekTo') v.currentTime = arg;
+      else if (c === 'mute') v.muted = !v.muted;
+    }
+  }});
+
+  // Sites' own picture-in-picture buttons (the standard API).
+  if (!('pictureInPictureEnabled' in document) && window.HTMLVideoElement) {
+    Object.defineProperty(document, 'pictureInPictureEnabled', { get: function () { return true; }, configurable: true });
+    Object.defineProperty(document, 'pictureInPictureElement', { get: function () { return current; }, configurable: true });
+    document.exitPictureInPicture = function () { return h.postMessage(['exit']); };
+    HTMLVideoElement.prototype.requestPictureInPicture = function () {
+      pending = this;
+      var v = this;
+      return h.postMessage(['request']).then(function () { return { width: v.videoWidth, height: v.videoHeight }; });
+    };
+  }
+
+  // The button over a video (as in Firefox), while the pointer is on it.
+  var button = null, over = null, hideTimer = 0;
+  function makeButton() {
+    var host = document.createElement('div');
+    host.style.cssText = 'position:fixed;z-index:2147483646;top:0;left:0;display:none';
+    var root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = '<style>b{all:initial;display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:14px;' +
+      'background:rgba(20,20,24,.82);color:#fff;font:600 12px "Segoe UI",system-ui,sans-serif;cursor:pointer;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35)}b:hover{background:rgba(70,70,80,.92)}svg{display:block}</style>' +
+      '<b title="Picture in picture"><svg width="16" height="14" viewBox="0 0 16 14" fill="none" stroke="#fff" stroke-width="1.4">' +
+      '<rect x="1" y="1" width="14" height="12" rx="2"/><rect x="8" y="7" width="5" height="4" rx="1" fill="#fff"/></svg></b>';
+    root.querySelector('b').addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (!over) return;
+      pending = over;
+      hideButton();
+      h.postMessage(['request']).catch(function () {});
+    }, true);
+    (document.body || document.documentElement).appendChild(host);
+    return host;
+  }
+  function hideButton() { if (button) button.style.display = 'none'; over = null; }
+  var raf = 0, lastX = 0, lastY = 0;
+  document.addEventListener('mousemove', function (e) {
+    lastX = e.clientX; lastY = e.clientY;
+    if (raf || current) return;
+    raf = requestAnimationFrame(function () {
+      raf = 0;
+      var found = null;
+      videos().forEach(function (v) {
+        var r = v.getBoundingClientRect();
+        if (r.width >= 240 && r.height >= 135 && lastX >= r.left && lastX <= r.right && lastY >= r.top && lastY <= r.bottom &&
+            (v.currentSrc || v.srcObject) && !v.disablePictureInPicture) found = v;
+      });
+      if (!found) { if (over) hideButton(); return; }
+      if (!button || !button.isConnected) button = makeButton();
+      var r = found.getBoundingClientRect();
+      over = found;
+      button.style.left = Math.round(r.right - 52) + 'px';
+      button.style.top = Math.round(r.top + r.height / 2 - 14) + 'px';
+      button.style.display = 'block';
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(hideButton, 2500);
+    });
+  }, true);
+})();)JS";
+
+HWND s_window = nullptr;                  // the picture-in-picture window (holds the tab's view)
+HWND s_overlay = nullptr;                 // the controls over it (layered, shown while the pointer is on it)
+unsigned long long s_tabId = 0;
+float s_aspect = 16.f / 9.f;              // video width / height
+std::wstring s_title;
+std::unique_ptr<Font> s_fGlyph, s_fBig, s_fText;
+
+// What the page reported last (VideoState) and the controls' state.
+struct VideoState { bool paused = true, muted = false; double time = 0, duration = 0; };
+VideoState s_state;
+int s_hover = 0, s_down = 0;
+bool s_overlayShown = false, s_polling = false;
+DWORD s_lastInside = 0, s_lastPoll = 0;
+constexpr UINT_PTR kTimer = 1;
+
+enum Button { kNone, kBack10, kPlay, kFwd10, kMute, kToTab, kClose, kProgress, kDrag };
+
+Tab* PipTab() {
+    for (auto& t : g_tabs) if (t->id == s_tabId && t->state == TabState::Live) return t.get();
+    return nullptr;
+}
+
+RECT WindowRc() { RECT rc; GetWindowRect(s_window, &rc); return rc; }
+
+// Overlay layout, in its own pixels (it covers the window exactly).
+struct OverlayLayout { RectF back10, play, fwd10, mute, toTab, close, progress; float w, h; };
+OverlayLayout Layout() {
+    const RECT rc = WindowRc();
+    OverlayLayout L;
+    L.w = (float)(rc.right - rc.left);
+    L.h = (float)(rc.bottom - rc.top);
+    const float big = S(52), sm = S(40), top = S(36);
+    const float cy = L.h / 2;
+    L.play = RectF(L.w / 2 - big / 2, cy - big / 2, big, big);
+    L.back10 = RectF(L.play.X - S(18) - sm, cy - sm / 2, sm, sm);
+    L.fwd10 = RectF(L.play.GetRight() + S(18), cy - sm / 2, sm, sm);
+    L.close = RectF(L.w - S(8) - top, S(8), top, top);
+    L.toTab = RectF(L.close.X - S(4) - top, S(8), top, top);
+    L.mute = RectF(L.w - S(8) - top, L.h - S(8) - top, top, top);
+    L.progress = RectF(S(14), L.h - S(8) - top / 2 - S(10), L.mute.X - S(28), S(20));   // hit area; the bar is thin
+    return L;
+}
+
+int HitAt(float x, float y) {
+    const OverlayLayout L = Layout();
+    if (L.play.Contains(x, y)) return kPlay;
+    if (L.back10.Contains(x, y)) return kBack10;
+    if (L.fwd10.Contains(x, y)) return kFwd10;
+    if (L.close.Contains(x, y)) return kClose;
+    if (L.toTab.Contains(x, y)) return kToTab;
+    if (L.mute.Contains(x, y)) return kMute;
+    if (L.progress.Contains(x, y) && s_state.duration > 0) return kProgress;
+    return kDrag;
+}
+
+std::wstring Clock(double s) {
+    if (!(s >= 0)) s = 0;
+    const int t = (int)s, h = t / 3600, m = t / 60 % 60, sec = t % 60;
+    wchar_t buf[32];
+    if (h) swprintf(buf, 32, L"%d:%02d:%02d", h, m, sec); else swprintf(buf, 32, L"%d:%02d", m, sec);
+    return buf;
+}
+
+// Draws the controls into a premultiplied 32-bit bitmap and hands it to the layered window.
+// Fully transparent pixels let clicks through to the video (a click there plays / pauses).
+void RenderOverlay() {
+    if (!s_overlay) return;
+    const OverlayLayout L = Layout();
+    const int w = (int)L.w, h = (int)L.h;
+    if (w <= 0 || h <= 0) return;
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    void* bits = nullptr;
+    HDC screen = GetDC(nullptr);
+    HBITMAP dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib) { ReleaseDC(nullptr, screen); return; }
+    {
+        Bitmap canvas(w, h, w * 4, PixelFormat32bppPARGB, (BYTE*)bits);
+        Graphics g(&canvas);
+        g.SetSmoothingMode(SmoothingModeHighQuality);
+        g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+        g.Clear(Color(0, 0, 0, 0));
+        // Shades at the top and bottom keep the buttons readable on bright video; a barely visible
+        // frame lets the edges be grabbed for resizing.
+        const float shade = std::min(S(64), L.h / 3);
+        LinearGradientBrush topShade(PointF(0, -1), PointF(0, shade), Color(150, 0, 0, 0), Color(0, 0, 0, 0));
+        g.FillRectangle(&topShade, 0.f, 0.f, L.w, shade);
+        LinearGradientBrush bottomShade(PointF(0, L.h - shade - 1), PointF(0, L.h), Color(0, 0, 0, 0), Color(170, 0, 0, 0));
+        g.FillRectangle(&bottomShade, 0.f, L.h - shade, L.w, shade);
+        SolidBrush edge(Color(2, 0, 0, 0));
+        const float e = S(6);
+        g.FillRectangle(&edge, 0.f, shade, e, L.h - 2 * shade);
+        g.FillRectangle(&edge, L.w - e, shade, e, L.h - 2 * shade);
+
+        const Color white(255, 255, 255, 255);
+        auto circle = [&](const RectF& r, int id, BYTE alpha) {
+            SolidBrush b(Color(s_hover == id ? (BYTE)std::min(255, alpha + 60) : alpha, 20, 20, 24));
+            g.FillEllipse(&b, r);
+        };
+        circle(L.play, kPlay, 150);
+        DrawGlyph(g, s_state.paused ? L"" : L"", L.play, white, s_fBig.get());
+        for (int id : { (int)kBack10, (int)kFwd10 }) {
+            const RectF& r = id == kBack10 ? L.back10 : L.fwd10;
+            circle(r, id, 120);
+            DrawGlyph(g, id == kBack10 ? L"" : L"", RectF(r.X, r.Y + S(2), r.Width, r.Height * 0.55f), white, s_fGlyph.get());
+            StringFormat cf;
+            cf.SetAlignment(StringAlignmentCenter);
+            cf.SetLineAlignment(StringAlignmentCenter);
+            SolidBrush tb(white);
+            g.DrawString(L"10", -1, s_fText.get(), RectF(r.X, r.Y + r.Height * 0.45f, r.Width, r.Height * 0.45f), &cf, &tb);
+        }
+        circle(L.toTab, kToTab, 110);
+        DrawGlyph(g, L"", L.toTab, white, s_fGlyph.get());
+        if (s_hover == kClose) { SolidBrush red(Color(230, 196, 43, 28)); g.FillEllipse(&red, L.close); }
+        else circle(L.close, kClose, 110);
+        DrawGlyph(g, L"", L.close, white, s_fGlyph.get());
+        circle(L.mute, kMute, 110);
+        DrawGlyph(g, s_state.muted ? L"" : L"", L.mute, white, s_fGlyph.get());
+
+        if (s_state.duration > 0) {
+            const RectF& p = L.progress;
+            const float barH = s_hover == kProgress ? S(5) : S(3), y = p.Y + p.Height / 2 - barH / 2;
+            const float frac = (float)std::min(1.0, std::max(0.0, s_state.time / s_state.duration));
+            const RectF track(p.X, y + S(14), p.Width, barH);
+            FillRound(g, Color(90, 255, 255, 255), track, barH / 2);
+            FillRound(g, white, RectF(track.X, track.Y, std::max(barH, track.Width * frac), barH), barH / 2);
+            SolidBrush tb(Color(235, 255, 255, 255));
+            StringFormat sf;
+            sf.SetLineAlignment(StringAlignmentCenter);
+            const std::wstring t = Clock(s_state.time) + L" / " + Clock(s_state.duration);
+            g.DrawString(t.c_str(), -1, s_fText.get(), RectF(p.X, p.Y - S(6), p.Width, S(18)), &sf, &tb);
+        }
+    }
+    HDC mem = CreateCompatibleDC(screen);
+    HGDIOBJ old = SelectObject(mem, dib);
+    const RECT rc = WindowRc();
+    POINT dst = { rc.left, rc.top }, src = { 0, 0 };
+    SIZE size = { w, h };
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    UpdateLayeredWindow(s_overlay, screen, &dst, &size, mem, &src, 0, &bf, ULW_ALPHA);
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    DeleteObject(dib);
+    ReleaseDC(nullptr, screen);
+}
+
+void RunJs(WKPageRef page, const std::string& js) {
+    if (!page) return;
+    WKStringRef s = WKStringCreateWithUTF8CString(js.c_str());
+    WKPageEvaluateJavaScriptInMainFrame(page, s, nullptr, nullptr);
+    WKRelease(s);
+}
+
+void Command(const char* cmd, double arg = 0) {
+    Tab* t = PipTab();
+    if (!t) return;
+    char js[160];
+    snprintf(js, sizeof(js), "window.__lyraPip && __lyraPip.cmd('%s', %.3f)", cmd, arg);
+    RunJs(t->page, js);
+    s_lastPoll = 0;                                      // show the change at once
+}
+
+void OnState(WKTypeRef result, WKErrorRef, void*) {
+    s_polling = false;
+    std::wstring s;
+    if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = WKStr((WKStringRef)result);
+    if (s.empty()) return;
+    VideoState v;
+    int paused = 1, muted = 0;
+    if (swscanf_s(s.c_str(), L"%d|%lf|%lf|%d", &paused, &v.time, &v.duration, &muted) >= 3) {
+        v.paused = paused != 0;
+        v.muted = muted != 0;
+        s_state = v;
+        if (s_overlayShown) RenderOverlay();
+    }
+}
+
+void Poll() {
+    Tab* t = PipTab();
+    if (!t || s_polling) return;
+    s_polling = true;
+    s_lastPoll = GetTickCount();
+    WKStringRef js = WKStringCreateWithUTF8CString("window.__lyraPip ? __lyraPip.state() : ''");
+    WKPageEvaluateJavaScriptInMainFrame(t->page, js, nullptr, OnState);
+    WKRelease(js);
+}
+
+void ShowOverlay(bool show) {
+    if (!s_overlay || show == s_overlayShown) return;
+    s_overlayShown = show;
+    if (show) {
+        RenderOverlay();
+        ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
+        SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    } else {
+        ShowWindow(s_overlay, SW_HIDE);
+        s_hover = 0;
+    }
+}
+
+void PlaceView() {
+    Tab* t = PipTab();
+    if (t && t->pipHwnd) {
+        RECT rc;
+        GetClientRect(s_window, &rc);
+        MoveWindow(t->pipHwnd, 0, 0, std::max(1L, rc.right), std::max(1L, rc.bottom), TRUE);
+    }
+    if (s_overlayShown) RenderOverlay();
+}
+
+// The window keeps the video's shape (its whole client is the video).
+void KeepAspect(WPARAM edge, RECT* r) {
+    const int minW = (int)S(200);
+    if (r->right - r->left < minW) {
+        if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT) r->left = r->right - minW;
+        else r->right = r->left + minW;
+    }
+    if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) {
+        r->right = r->left + std::max(minW, (int)((r->bottom - r->top) * s_aspect));
+    } else {
+        const int hgt = (int)((r->right - r->left) / s_aspect);
+        if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT) r->top = r->bottom - hgt;
+        else r->bottom = r->top + hgt;
+    }
+}
+
+LRESULT CALLBACK OverlayProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_SETCURSOR: {
+        POINT p;
+        GetCursorPos(&p);
+        const RECT rc = WindowRc();
+        const int x = p.x - rc.left, y = p.y - rc.top, e = (int)S(6), w = rc.right - rc.left, hh = rc.bottom - rc.top;
+        const bool l = x < e, r = x >= w - e, t = y < e, b = y >= hh - e;
+        LPCWSTR cur = IDC_ARROW;
+        if ((l && t) || (r && b)) cur = IDC_SIZENWSE;
+        else if ((r && t) || (l && b)) cur = IDC_SIZENESW;
+        else if (l || r) cur = IDC_SIZEWE;
+        else if (t || b) cur = IDC_SIZENS;
+        else if (HitAt((float)x, (float)y) != kDrag) cur = IDC_HAND;
+        SetCursor(LoadCursor(nullptr, cur));
+        return TRUE;
+    }
+    case WM_MOUSEMOVE: {
+        const int hit = HitAt((float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam));
+        if (hit != s_hover) { s_hover = hit; RenderOverlay(); }
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        const int x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);
+        const RECT rc = WindowRc();
+        const int e = (int)S(6), w = rc.right - rc.left, hh = rc.bottom - rc.top;
+        const bool l = x < e, r = x >= w - e, t = y < e, b = y >= hh - e;
+        int size = 0;
+        if (l && t) size = WMSZ_TOPLEFT; else if (r && t) size = WMSZ_TOPRIGHT;
+        else if (l && b) size = WMSZ_BOTTOMLEFT; else if (r && b) size = WMSZ_BOTTOMRIGHT;
+        else if (l) size = WMSZ_LEFT; else if (r) size = WMSZ_RIGHT; else if (t) size = WMSZ_TOP; else if (b) size = WMSZ_BOTTOM;
+        if (size) {                                      // resize the window by the overlay's edge
+            ReleaseCapture();
+            SendMessageW(s_window, WM_SYSCOMMAND, SC_SIZE | size, 0);
+            return 0;
+        }
+        s_down = HitAt((float)x, (float)y);
+        if (s_down == kDrag) {                           // move the window by any empty part
+            s_down = 0;
+            ReleaseCapture();
+            SendMessageW(s_window, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+            return 0;
+        }
+        if (s_down == kProgress) {
+            const OverlayLayout L = Layout();
+            const double frac = std::min(1.0, std::max(0.0, (double)(x - L.progress.X) / L.progress.Width));
+            Command("seekTo", frac * s_state.duration);
+            s_down = 0;
+            return 0;
+        }
+        SetCapture(h);
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        const int hit = HitAt((float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam));
+        const int down = s_down;
+        s_down = 0;
+        if (GetCapture() == h) ReleaseCapture();
+        if (hit != down) return 0;
+        switch (hit) {
+        case kPlay:   Command("toggle"); break;
+        case kBack10: Command("seek", -10); break;
+        case kFwd10:  Command("seek", 10); break;
+        case kMute:   Command("mute"); break;
+        case kToTab:  PipExit(false, true); break;
+        case kClose:  PipExit(true, false); break;
+        }
+        return 0;
+    }
+    case WM_LBUTTONDBLCLK:
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_NCCALCSIZE:
+        if (wParam) return 0;                            // no frame at all
+        break;
+    case WM_NCHITTEST:
+        return HTCLIENT;
+    case WM_SIZING:
+        KeepAspect(wParam, (RECT*)lParam);
+        return TRUE;
+    case WM_SIZE:
+    case WM_MOVE:
+        PlaceView();
+        return 0;
+    case WM_ERASEBKGND: {
+        RECT rc;
+        GetClientRect(h, &rc);
+        FillRect((HDC)wParam, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        return 1;
+    }
+    case WM_TIMER: {
+        if (wParam != kTimer) break;
+        POINT p;
+        GetCursorPos(&p);
+        const RECT rc = WindowRc();
+        const bool inside = PtInRect(&rc, p) != 0;
+        const DWORD now = GetTickCount();
+        if (inside) s_lastInside = now;
+        const bool busy = GetCapture() == s_overlay || (GetKeyState(VK_LBUTTON) & 0x8000);
+        ShowOverlay(inside || busy || now - s_lastInside < 400);
+        if (s_overlayShown && now - s_lastPoll > 500) Poll();
+        return 0;
+    }
+    case WM_CLOSE:
+        PipExit(true, false);
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wParam, lParam);
+}
+
+bool CreatePipWindow(const std::wstring& title) {
+    static bool registered = false;
+    HINSTANCE hi = GetModuleHandleW(nullptr);
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = WndProc;
+        wc.hInstance = hi;
+        wc.lpszClassName = L"LyraPictureInPicture";
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hIcon = (HICON)SendMessageW(g_hWnd, WM_GETICON, ICON_BIG, 0);
+        if (!RegisterClassExW(&wc)) return false;
+        WNDCLASSEXW oc = {};
+        oc.cbSize = sizeof(oc);
+        oc.lpfnWndProc = OverlayProc;
+        oc.hInstance = hi;
+        oc.lpszClassName = L"LyraPictureInPictureControls";
+        oc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        if (!RegisterClassExW(&oc)) return false;
+        registered = true;
+    }
+    auto icons = [](float px) {
+        auto f = std::make_unique<Font>(L"Segoe Fluent Icons", px, FontStyleRegular, UnitPixel);
+        if (!f->IsAvailable()) f = std::make_unique<Font>(L"Segoe MDL2 Assets", px, FontStyleRegular, UnitPixel);
+        return f;
+    };
+    s_fGlyph = icons(S(14));
+    s_fBig = icons(S(20));
+    s_fText = std::make_unique<Font>(L"Segoe UI", S(11), FontStyleBold, UnitPixel);
+    s_title = title;
+    s_state = VideoState();
+
+    // Bottom right of the screen Lyra is on; the whole window is the video.
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST), &mi);
+    const int w = (int)S(480), hgt = (int)(w / s_aspect);
+    const int x = mi.rcWork.right - w - (int)S(24), y = mi.rcWork.bottom - hgt - (int)S(24);
+    s_window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LyraPictureInPicture", title.c_str(),
+                               WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN, x, y, w, hgt, nullptr, nullptr, hi, nullptr);
+    if (!s_window) return false;
+    const DWORD round = 2;                               // DWMWCP_ROUND (Windows 11)
+    DwmSetWindowAttribute(s_window, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(s_window, kDwmDarkMode, &dark, sizeof(dark));
+    s_overlay = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                                L"LyraPictureInPictureControls", L"", WS_POPUP, x, y, w, hgt, s_window, nullptr, hi, nullptr);
+    SetTimer(s_window, kTimer, 60, nullptr);
+    return true;
+}
+
+// Gives the view back to the main window (hidden; SelectTab shows it).
+void ReturnView(Tab& t) {
+    if (!t.pipHwnd) return;
+    ShowWindow(t.pipHwnd, SW_HIDE);
+    WKViewSetParentWindow(t.view, g_hWnd);
+    t.hwnd = t.pipHwnd;
+    t.pipHwnd = nullptr;
+}
+
+void DestroyPipWindow() {
+    if (s_overlay) { HWND o = s_overlay; s_overlay = nullptr; DestroyWindow(o); }
+    if (s_window) { HWND h = s_window; s_window = nullptr; KillTimer(h, kTimer); DestroyWindow(h); }
+    s_tabId = 0;
+    s_hover = s_down = 0;
+    s_overlayShown = s_polling = false;
+}
+
+void OnEntered(WKTypeRef result, WKErrorRef, void* ctx) {
+    const unsigned long long tabId = (unsigned long long)(uintptr_t)ctx;
+    std::wstring size;
+    if (result && WKGetTypeID(result) == WKStringGetTypeID()) size = WKStr((WKStringRef)result);
+    Tab* t = nullptr;
+    for (auto& tp : g_tabs) if (tp->id == tabId && tp->state == TabState::Live) t = tp.get();
+    if (!t || !t->hwnd || !t->view) return;
+    if (size.empty()) { Log("pip: no video on tab#%llu", tabId); MessageBeep(MB_ICONWARNING); return; }
+    int vw = 16, vh = 9;
+    swscanf_s(size.c_str(), L"%dx%d", &vw, &vh);
+    s_aspect = (vw > 0 && vh > 0) ? std::min(3.f, std::max(0.5f, (float)vw / (float)vh)) : 16.f / 9.f;
+    if (!CreatePipWindow(t->title)) { RunJs(t->page, "window.__lyraPip && __lyraPip.leave()"); return; }
+    s_tabId = t->id;
+    t->pipHwnd = t->hwnd;
+    t->hwnd = nullptr;                    // the main window leaves this view alone meanwhile
+    WKViewSetParentWindow(t->view, s_window);
+    ShowWindow(t->pipHwnd, SW_SHOW);
+    PlaceView();
+    ShowWindow(s_window, SW_SHOWNOACTIVATE);
+    Log("pip: tab#%llu in picture-in-picture (%dx%d)", t->id, vw, vh);
+    RefreshLayout();
+    InvalidateRect(g_hWnd, nullptr, FALSE);
+}
+
+void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void*) {
+    std::wstring what;
+    WKTypeRef body = WKScriptMessageGetBody(message);
+    if (body && WKGetTypeID(body) == WKArrayGetTypeID() && WKArrayGetSize((WKArrayRef)body) > 0) {
+        WKTypeRef item = WKArrayGetItemAtIndex((WKArrayRef)body, 0);
+        if (item && WKGetTypeID(item) == WKStringGetTypeID()) what = WKStr((WKStringRef)item);
+    }
+    WKPageRef page = nullptr;
+    if (WKFrameInfoRef frame = WKScriptMessageGetFrameInfo(message)) page = WKFrameInfoGetPage(frame);
+    for (auto& t : g_tabs)
+        if (t->page == page && t->state == TabState::Live) {
+            // Not inside WebKit's callback: windows are created and views moved on the main loop.
+            PostMessageW(g_hWnd, WM_APP_PIP, (WPARAM)t->id, what == L"request" ? 1 : 0);
+            break;
+        }
+    WKStringRef r = WKStringCreateWithUTF8CString("");
+    WKCompletionListenerComplete(reply, r);
+    WKRelease(r);
+}
+
+} // namespace
+
+void PipInit() {
+    WKUserContentControllerRef controller = AdBlockUserContentController();
+    if (!controller) return;
+    WKStringRef name = WKStringCreateWithUTF8CString("lyraPip");
+    WKUserContentControllerAddScriptMessageHandler(controller, name, OnMessage, nullptr);
+    WKRelease(name);
+    AdBlockAddUserScript(kScript, true);
+}
+
+bool PipActive() { return s_window != nullptr; }
+
+void PipStart(Tab& t) {
+    if (!t.page || !t.hwnd) return;
+    if (s_window) PipExit(false, false);                 // one at a time
+    WKStringRef js = WKStringCreateWithUTF8CString("window.__lyraPip ? window.__lyraPip.enter() : ''");
+    WKPageEvaluateJavaScriptInMainFrame(t.page, js, (void*)(uintptr_t)t.id, OnEntered);
+    WKRelease(js);
+}
+
+void PipToggleActive() {
+    if (s_window) { PipExit(false, true); return; }
+    if (Tab* t = ActiveTab()) PipStart(*t);
+}
+
+void PipExit(bool pause, bool showTab) {
+    Tab* t = PipTab();
+    Log("pip: back%s", pause ? " (paused)" : "");
+    if (t) {
+        if (pause) RunJs(t->page, "window.__lyraPip && (__lyraPip.pause(), __lyraPip.leave())");
+        else RunJs(t->page, "window.__lyraPip && __lyraPip.leave()");
+        ReturnView(*t);
+    }
+    DestroyPipWindow();
+    if (!t) return;
+    int index = -1;
+    for (int i = 0; i < (int)g_tabs.size(); ++i) if (g_tabs[i].get() == t) index = i;
+    if (showTab && index >= 0) {
+        if (IsIconic(g_hWnd)) ShowWindow(g_hWnd, SW_RESTORE);
+        SetForegroundWindow(g_hWnd);
+        SelectTab(index);
+    } else if (index == g_active) {
+        SelectTab(index);                                // shows the view again
+    }
+    RefreshLayout();
+    InvalidateRect(g_hWnd, nullptr, FALSE);
+}
+
+void PipDetach(Tab& t) {
+    if (!t.pipHwnd) return;
+    ReturnView(t);
+    DestroyPipWindow();
+}
+
+void PipMessage(WPARAM tabId, LPARAM what) {
+    Log("pip: %s for tab#%llu", what == 1 ? "request" : "exit", (unsigned long long)tabId);
+    if (what == 1) {
+        for (auto& t : g_tabs) if (t->id == (unsigned long long)tabId && t->state == TabState::Live) { PipStart(*t); return; }
+    } else if (s_window && s_tabId == (unsigned long long)tabId) {
+        PipExit(false, true);
+    }
+}

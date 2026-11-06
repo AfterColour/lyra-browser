@@ -141,11 +141,7 @@ void MediaControlsInit() {
     WKUserContentControllerRef controller = AdBlockUserContentController();
     if (!controller) { Log("media: no user content controller"); s_ok = false; return; }
     Log("media: Windows media controls ready");
-    WKStringRef source = WKStringCreateWithUTF8CString(kScript);
-    WKUserScriptRef script = WKUserScriptCreateWithSource(source, kWKInjectAtDocumentStart, true);
-    WKUserContentControllerAddUserScript(controller, script);
-    WKRelease(script);
-    WKRelease(source);
+    AdBlockAddUserScript(kScript, true);
 }
 
 void MediaControlsShutdown() {

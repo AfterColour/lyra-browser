@@ -19,6 +19,7 @@
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
 #include "browser/Passwords.h"
+#include "browser/PictureInPicture.h"
 #include "browser/Permissions.h"
 #include "browser/Bookmarks.h"
 #include "browser/Session.h"
@@ -136,6 +137,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     AdBlockInit();                                     // compiled filter lists; updates them in the background
     MediaControlsInit();                               // media keys, Windows' media flyout
     PasswordsInit();                                   // saved passwords: offer to save, fill in
+    PipInit();                                         // picture-in-picture
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and
     //  does nothing on the Windows port, which plays media through Media Foundation.)
 

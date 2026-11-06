@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "browser/PictureInPicture.h"
 #include "ui/settings/SettingsPages.h"
 #include "browser/AdBlock.h"
 #include "ui/FindBar.h"
@@ -69,6 +70,7 @@ void RunCommand(int cmd) {
                   : g_prefs.newTabMode == 2 ? g_homePage : std::wstring(kStartAlias));
         break;
     case CMD_NEWPRIVATE: CreatePrivateTab(); break;
+    case CMD_PIP:       PipToggleActive(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -123,6 +125,7 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
     AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (PipActive() ? MF_CHECKED : 0), CMD_PIP, Tr(L"Picture in Picture", L"Картинка в картинке"));
     AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));
     AppendMenuW(m, MF_STRING | (PrintInProgress() ? MF_GRAYED : 0), CMD_PRINT,
                 Tr(L"Print\x2026\tCtrl+P", L"Печать\x2026\tCtrl+P"));

@@ -13,6 +13,7 @@ struct Tab {
     WKViewRef    view = nullptr;
     WKPageRef    page = nullptr;
     HWND         hwnd = nullptr;
+    HWND         pipHwnd = nullptr; // the view while it is in the picture-in-picture window (hwnd is null then)
     std::wstring title = L"New Tab";
     std::wstring url;
     bool  loading = false;

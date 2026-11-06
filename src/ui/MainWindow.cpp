@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
+#include "browser/PictureInPicture.h"
 #include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "ui/PermissionPrompt.h"
@@ -333,6 +334,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_LBUTTONDOWN: {
+        // The active tab is in picture-in-picture: a click on its empty page brings it back.
+        if (Tab* t = ActiveTab())
+            if (t->pipHwnd && GET_Y_LPARAM(lParam) >= (int)g_L.chromeH && GET_X_LPARAM(lParam) >= (int)g_L.sideW) {
+                PipExit(false, true);
+                return 0;
+            }
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         g_down = h;
         if (h.kind == Hit::Pill) { g_down = Hit(); ShowUrlEdit(); return 0; }
@@ -462,6 +469,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_ADBLOCK:
         AdBlockListsReady(lParam);
+        return 0;
+    case WM_APP_PIP:
+        PipMessage(wParam, lParam);
         return 0;
     case WM_APP_MEDIA:
         MediaControlsButton(wParam);

@@ -439,11 +439,7 @@ void PasswordsInit() {
     WKStringRef name = WKStringCreateWithUTF8CString("lyraPasswords");
     WKUserContentControllerAddScriptMessageHandler(controller, name, OnMessage, nullptr);
     WKRelease(name);
-    WKStringRef source = WKStringCreateWithUTF8CString(kScript);
-    WKUserScriptRef script = WKUserScriptCreateWithSource(source, kWKInjectAtDocumentStart, false);
-    WKUserContentControllerAddUserScript(controller, script);
-    WKRelease(script);
-    WKRelease(source);
+    AdBlockAddUserScript(kScript, false);
 }
 
 void PasswordsShutdown() {

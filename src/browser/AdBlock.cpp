@@ -22,6 +22,7 @@
 #include "ui/MainWindow.h"
 
 #include <WebKit/WKUserContentControllerRef.h>
+#include <WebKit/WKUserScriptRef.h>
 #include <WebKit/WKUserContentExtensionStoreRef.h>
 
 #include <deque>
@@ -603,9 +604,94 @@ void AdBlockShutdown() {
 
 WKUserContentControllerRef AdBlockUserContentController() { return s_controller; }
 
+// ---- user scripts ------------------------------------------------------------------------
+// YouTube serves its ads from the same servers as the videos, so filter rules cannot remove
+// them; this script takes them out of the player's data, and skips any that still starts.
+static const char kYouTubeAds[] = R"JS((function () {
+  var host = location.hostname;
+  if (!/(^|\.)youtube(-nocookie)?\.com$/.test(host)) return;
+  var allowed = %ALLOWED%;
+  for (var i = 0; i < allowed.length; i++) if (host === allowed[i] || host.endsWith('.' + allowed[i])) return;
+  if (window.__lyraYtAds) return;
+  window.__lyraYtAds = 1;
+  // The player is told there are no ads (what uBlock's json-prune does).
+  var KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+  function prune(o) {
+    try {
+      if (!o || typeof o !== 'object') return o;
+      for (var k = 0; k < KEYS.length; k++) if (KEYS[k] in o) delete o[KEYS[k]];
+      if (o.playerResponse && typeof o.playerResponse === 'object') prune(o.playerResponse);
+      if (Array.isArray(o)) for (var j = 0; j < o.length; j++) if (o[j] && o[j].playerResponse) prune(o[j].playerResponse);
+    } catch (e) {}
+    return o;
+  }
+  var parse = JSON.parse;
+  JSON.parse = function () { return prune(parse.apply(this, arguments)); };
+  var json = Response.prototype.json;
+  Response.prototype.json = function () { return json.apply(this, arguments).then(prune); };
+  var initial;
+  try {
+    Object.defineProperty(window, 'ytInitialPlayerResponse', { configurable: true,
+      get: function () { return initial; }, set: function (v) { initial = prune(v); } });
+  } catch (e) {}
+  // An ad that still starts is muted, run to its end and skipped.
+  var wasMuted = null;
+  setInterval(function () {
+    var p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+    var v = p && p.querySelector('video');
+    if (!v) return;
+    if (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')) {
+      if (wasMuted === null) wasMuted = v.muted;
+      v.muted = true;
+      if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) v.currentTime = v.duration - 0.1;
+      var b = p.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-slot button');
+      if (b) b.click();
+    } else if (wasMuted !== null) {
+      v.muted = wasMuted;
+      wasMuted = null;
+    }
+  }, 300);
+})();)JS";
+
+static std::vector<std::pair<std::string, bool>> s_userScripts;
+
+static void AddScript(const std::string& source, bool mainFrameOnly) {
+    WKStringRef s = WKStringCreateWithUTF8CString(source.c_str());
+    WKUserScriptRef script = WKUserScriptCreateWithSource(s, kWKInjectAtDocumentStart, mainFrameOnly);
+    WKUserContentControllerAddUserScript(s_controller, script);
+    WKRelease(script);
+    WKRelease(s);
+}
+
+// Pages loaded from now on get the new set.
+static void ApplyUserScripts() {
+    if (!s_controller) return;
+    WKUserContentControllerRemoveAllUserScripts(s_controller);
+    for (auto& [source, mainOnly] : s_userScripts) AddScript(source, mainOnly);
+    if (!g_prefs.adBlock) return;
+    std::string allowed = "[";
+    for (auto& h : s_allowed) {
+        if (allowed.size() > 1) allowed += ",";
+        allowed += "\"";
+        for (char c : ToUtf8(h)) if (c != '"' && c != '\\') allowed += c;
+        allowed += "\"";
+    }
+    allowed += "]";
+    std::string yt = kYouTubeAds;
+    const size_t at = yt.find("%ALLOWED%");
+    if (at != std::string::npos) yt.replace(at, 9, allowed);
+    AddScript(yt, false);
+}
+
+void AdBlockAddUserScript(const char* source, bool mainFrameOnly) {
+    s_userScripts.emplace_back(source, mainFrameOnly);
+    ApplyUserScripts();
+}
+
 void AdBlockSetEnabled(bool enabled) {
     g_prefs.adBlock = enabled;
     RefreshController();
+    ApplyUserScripts();
     if (enabled) ScheduleUpdates(false);
 }
 
@@ -648,6 +734,7 @@ void AdBlockSetAllowedOn(const std::wstring& url, bool blocking) {
     } else
         s_allowed.insert(host);
     SaveAllowed();
+    ApplyUserScripts();
 }
 
 std::wstring AdBlockStatusText() {

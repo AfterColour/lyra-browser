@@ -621,6 +621,15 @@ static void DrawChrome(Graphics& g, int w, int h) {
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
+        if (cur && cur->pipHwnd && !g_fullScreenView) {      // its view is in the picture-in-picture window
+            StringFormat cf(StringFormat::GenericTypographic());
+            cf.SetAlignment(StringAlignmentCenter);
+            cf.SetLineAlignment(StringAlignmentCenter);
+            SolidBrush tb(T.text2);
+            g.DrawString(Tr(L"This tab is playing in picture-in-picture.\nClick here to bring it back.",
+                            L"Эта вкладка играет в режиме «картинка в картинке».\nНажмите здесь, чтобы вернуть её."),
+                         -1, g_fText.get(), RectF(L.sideW, L.chromeH, fw - L.sideW, fh - L.chromeH), &cf, &tb);
+        }
     }
 
     // Window buttons (with Mica DWM draws the system ones)
