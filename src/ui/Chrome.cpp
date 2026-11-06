@@ -7,6 +7,7 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "browser/Reader.h"
 #include "ui/WindowFrame.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
@@ -463,6 +464,22 @@ static RectF KeyRect() {
     return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
 }
 
+// The book in the address field: the page is an article (reader view), or it is the reader view.
+static bool ReaderShown() {
+    if (IsEditing() || g_L.star.Width <= 0) return false;
+    const Tab* t = ActiveTab();
+    return t && (t->readerable || ReaderIsReaderUrl(t->url));
+}
+
+static RectF ReaderRect() {
+    const float c = S(22);
+    const RectF& pill = g_L.pill;
+    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
+    if (KeyShown()) right = KeyRect().X - S(2);
+    return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
+}
+
 static RectF AudioRect(int i) {
     const float c = S(22);
     if (IsCompactActive(i)) {                        // inside the address field, left of the star
@@ -494,6 +511,7 @@ Hit HitTest(int px, int py) {
         if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
         if (KeyShown() && KeyRect().Contains(x, y)) return MakeHit(Hit::Key);
+        if (ReaderShown() && ReaderRect().Contains(x, y)) return MakeHit(Hit::Reader);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     for (int i = n - 1; i >= 0; --i)
@@ -782,6 +800,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         if (L.reloadInPill) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reload, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Star, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Key, -1)));
+        pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reader, -1)));
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
@@ -863,12 +882,13 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 else DrawGlyph(g, L"\uE721", gr, T.text2, g_fIconSm.get());
             }
 
-            std::wstring label = cur ? (g_prefs.showFullUrl ? DisplayUrl(cur->url) : HostOf(cur->url)) : L"";
+            const std::wstring shownUrl = cur ? ReaderShownUrl(cur->url) : std::wstring();
+            std::wstring label = cur ? (g_prefs.showFullUrl ? DisplayUrl(shownUrl) : HostOf(shownUrl)) : L"";
             const bool placeholder = label.empty();
             if (placeholder) label = (cur && cur->privateTab)
                 ? Tr(L"Private tab \x2014 search or enter address", L"Приватная вкладка \x2014 поиск или адрес")
                 : Tr(L"Search or enter address", L"Поиск или адрес сайта");
-            const bool secure = cur && cur->url.compare(0, 8, L"https://") == 0;
+            const bool secure = cur && shownUrl.compare(0, 8, L"https://") == 0;
 
             const float textL = pill.X + S(28);
             const bool star = StarShown();
@@ -877,6 +897,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             if (audioHere) textR = AudioRect(g_active).X - S(2);
             const bool keyHere = KeyShown();
             if (keyHere) textR = std::min(textR, KeyRect().X - S(2));
+            const bool readerHere = ReaderShown();
+            if (readerHere) textR = std::min(textR, ReaderRect().X - S(2));
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -914,6 +936,12 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 const RectF k = KeyRect();
                 hoverFill(k, MakeHit(Hit::Key, -1), dwn(Hit::Key, -1), S(6));
                 DrawGlyph(g, L"\uE8D7", k, T.icon, g_fIconSm.get());
+            }
+            if (readerHere) {
+                const RectF rr = ReaderRect();
+                const bool on = ReaderIsReaderUrl(cur->url);
+                hoverFill(rr, MakeHit(Hit::Reader, -1), dwn(Hit::Reader, -1), S(6));
+                DrawGlyph(g, L"\uE736", rr, on ? T.accent : T.icon, g_fIconSm.get());
             }
         }
     }

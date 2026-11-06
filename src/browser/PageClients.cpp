@@ -1,5 +1,6 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
+#include "browser/Reader.h"
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
 #include "browser/Permissions.h"
@@ -86,6 +87,7 @@ static void OnDidStart(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
 static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didCommit");
     if (!t) return;
+    t->readerable = false;               // the new page is checked when it finishes
     SyncTab(*t);
     Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
     InvalidateChrome();
@@ -103,6 +105,7 @@ static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     // changed may still have been the previous page's).
     if (WKStringRef ts = WKPageCopyTitle(t->page)) { HistorySetTitle(t->url, WKStr(ts)); WKRelease(ts); }
     TransitionLoaded(t->id);             // a new tab with a Lyra page: its cover can go
+    ReaderPageLoaded(*t);                // an article? (the book in the address field)
     InvalidateChrome();
 }
 

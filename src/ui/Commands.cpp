@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "browser/Reader.h"
 #include "browser/PictureInPicture.h"
 #include "ui/settings/SettingsPages.h"
 #include "browser/AdBlock.h"
@@ -71,6 +72,7 @@ void RunCommand(int cmd) {
         break;
     case CMD_NEWPRIVATE: CreatePrivateTab(); break;
     case CMD_PIP:       PipToggleActive(); break;
+    case CMD_READER:    ReaderToggle(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -125,6 +127,12 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
     AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    {
+        Tab* rt = ActiveTab();
+        const bool inReader = rt && ReaderIsReaderUrl(rt->url);
+        AppendMenuW(m, MF_STRING | (inReader ? MF_CHECKED : 0) | ((rt && (rt->readerable || inReader)) ? 0 : MF_GRAYED), CMD_READER,
+                    Tr(L"Reader View\tF9", L"Режим чтения\tF9"));
+    }
     AppendMenuW(m, MF_STRING | (PipActive() ? MF_CHECKED : 0), CMD_PIP, Tr(L"Picture in Picture", L"Картинка в картинке"));
     AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));
     AppendMenuW(m, MF_STRING | (PrintInProgress() ? MF_GRAYED : 0), CMD_PRINT,
@@ -157,6 +165,7 @@ bool HandleShortcut(const MSG& m) {
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     const WPARAM k = m.wParam;
 
+    if (!ctrl && !alt && !shift && k == VK_F9) { RunCommand(CMD_READER); return true; }
     if (ctrl && shift && !alt) {
         if (k == 'T') { ReopenClosedTab(); return true; }
         if (k == 'I') { ShowWebInspector(); return true; }

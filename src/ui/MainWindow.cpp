@@ -1,5 +1,6 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "browser/Reader.h"
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
 #include "browser/PictureInPicture.h"
@@ -365,6 +366,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
             case Hit::TabAudio: MediaToggleMute(up.index); break;
             case Hit::Key:      PasswordsSiteMenu(); break;
+            case Hit::Reader:   ReaderToggle(); break;
             default: break;
             }
         }

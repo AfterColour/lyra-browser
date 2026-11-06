@@ -36,7 +36,7 @@ struct Layout {
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }

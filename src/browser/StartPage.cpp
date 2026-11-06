@@ -1,5 +1,6 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
+#include "browser/Reader.h"
 #include "browser/Bookmarks.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
@@ -383,6 +384,10 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     while (!command.empty() && command.back() == L'/') command.pop_back();
     CharLowerBuffW(&command[0], (DWORD)command.size());
 
+    if (command.rfind(L"lyra://reader-", 0) == 0) {    // the reader page's close button and Aa panel
+        ReaderLyraUrl(tabId, command, query);
+        return;
+    }
     if (command == L"lyra://settings") {
         ShowSettingsWindow();
         return;

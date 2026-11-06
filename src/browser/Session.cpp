@@ -10,6 +10,7 @@
 //   state <base64>     WebKit's session state (back/forward list); optional
 //   end
 #include "browser/Session.h"
+#include "browser/Reader.h"
 #include "app/Log.h"
 #include "browser/StartPage.h"
 #include "browser/Tab.h"
@@ -72,6 +73,7 @@ std::string OneLine(const std::wstring& s) {
 
 // Lyra's own pages are generated files whose addresses change; they are saved as their alias.
 std::wstring SavedUrl(const std::wstring& url) {
+    if (ReaderIsReaderUrl(url)) return ReaderShownUrl(url);   // the article itself
     if (IsStartPageUrl(url)) return kStartAlias;
     if (IsHistoryPageUrl(url)) return kHistoryAlias;
     if (IsBookmarksPageUrl(url)) return kBookmarksAlias;

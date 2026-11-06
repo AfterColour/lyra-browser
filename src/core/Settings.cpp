@@ -79,6 +79,10 @@ void LoadSettings() {
     g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
     g_prefs.adBlock  = geti(L"AdBlock", 1) != 0;
     g_prefs.savePasswords = geti(L"SavePasswords", 1) != 0;
+    g_prefs.readerSize = std::min(30, std::max(14, geti(L"ReaderSize", 19)));
+    g_prefs.readerFont = geti(L"ReaderFont", 1) ? 1 : 0;
+    g_prefs.readerTheme = std::min(3, std::max(0, geti(L"ReaderTheme", 0)));
+    g_prefs.readerWidth = std::min(2, std::max(0, geti(L"ReaderWidth", 1)));
     g_prefs.restoreSession = geti(L"RestoreSession", 1) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
@@ -118,6 +122,8 @@ void SaveSettings() {
     puti(L"WebAudio", g_prefs.webAudio);
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
-    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords); puti(L"RestoreSession", g_prefs.restoreSession);
+    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords);
+    puti(L"ReaderSize", g_prefs.readerSize); puti(L"ReaderFont", g_prefs.readerFont);
+    puti(L"ReaderTheme", g_prefs.readerTheme); puti(L"ReaderWidth", g_prefs.readerWidth); puti(L"RestoreSession", g_prefs.restoreSession);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
 }
