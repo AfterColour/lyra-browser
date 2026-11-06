@@ -1,6 +1,7 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
+#include "browser/Session.h"
 #include "ui/FindBar.h"
 #include "ui/Print.h"
 #include "browser/Favicons.h"
@@ -394,6 +395,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (wParam != TIMER_UI) break;
         if (g_closing || g_tabOp) return 0;      // never poll tabs while one is being created/destroyed
         FindBarTabChanged();                     // the find panel follows the active tab
+        SessionTick();                           // saves the open tabs when they changed
         bool dirty = false;
         ++g_tick;
         Tab* act = ActiveTab();
@@ -493,6 +495,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         DownloadsPopupClose();
         BookmarkPopupClose();
         FindBarClose();
+        SessionSave(true);               // the tabs, for the next start
         CloseAllTabs();
         HistorySave();
         DownloadsSave();

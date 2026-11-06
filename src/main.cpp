@@ -18,6 +18,7 @@
 #include <tlhelp32.h>
 #include "browser/AdBlock.h"
 #include "browser/Bookmarks.h"
+#include "browser/Session.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
@@ -137,12 +138,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     // First start: the welcome screen (language, theme, tab layout...) instead of the home page.
     std::wstring startUrl = g_prefs.onboarded ? g_homePage : StartPageUrl(true);
+    bool fromCommandLine = false;
     if (lpCmdLine && *lpCmdLine) {
         std::wstring arg = TrimWs(lpCmdLine);
         if (arg.size() >= 2 && arg.front() == L'"' && arg.back() == L'"') arg = arg.substr(1, arg.size() - 2);
-        if (!arg.empty()) startUrl = arg;
+        if (!arg.empty()) { startUrl = arg; fromCommandLine = true; }
     }
-    CreateTab(startUrl);
+    // The tabs of the last session (always after a crash; after a normal exit if Settings say so).
+    const bool restored = g_prefs.onboarded && !fromCommandLine && SessionRestore();
+    if (!restored) CreateTab(startUrl);
+    else if (fromCommandLine) CreateTab(startUrl);
     ScheduleSpareTab(3000);              // the next new tab, once the first page is up
 
     MSG msg;

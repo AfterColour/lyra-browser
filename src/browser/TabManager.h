@@ -24,7 +24,9 @@ void SelectTab(int i);
 Tab* ResolveTab(const void* clientInfo, const char* what);
 Tab* FindTab(unsigned long long id, int* index = nullptr);
 void NavigateActive(const std::wstring& input);
-Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage);
+// `select` = false: the tab is added hidden, the active tab stays (session restore).
+Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, bool select = true);
+WKPageConfigurationRef CreatePageConfigurationForTab();   // the settings every tab gets (caller releases)
 void CreateTab(const std::wstring& input);
 void ReopenClosedTab();
 void CloseTab(int i);

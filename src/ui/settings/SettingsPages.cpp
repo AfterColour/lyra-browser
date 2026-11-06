@@ -54,6 +54,10 @@ void BuildPages() {
     {   // General
         SPage p; p.name = Tr(L"General", L"Основные"); p.icon = L"\uE713"; p.tint = kTintGray;
         p.rows.push_back(RHeader(Tr(L"Startup", L"Запуск")));
+        p.rows.push_back(RToggle(Tr(L"Restore tabs", L"Восстанавливать вкладки"),
+            Tr(L"Opens the tabs of the last session. After a crash they always come back.",
+               L"Открывает вкладки прошлого сеанса. После сбоя они возвращаются всегда."),
+            &g_prefs.restoreSession, []() { SaveSettings(); }));
         p.rows.push_back(RText(Tr(L"Home page", L"Домашняя страница"),
             Tr(L"Opened when the browser starts. lyra://start is the start page.",
                L"Открывается при запуске. lyra://start — стартовая страница."),

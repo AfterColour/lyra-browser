@@ -22,6 +22,11 @@ struct Tab {
     float progress = 0.f;   // animated 0..1
     float fade     = 0.f;   // progress bar opacity 0..1
     bool  openedByPage = false;     // created by window.open / target=_blank
+    // Restored from the last session and not shown yet: nothing is loaded until it is selected
+    // (Session.cpp). url / title hold the saved ones meanwhile.
+    bool  lazyPending = false;
+    std::wstring lazyUrl;
+    std::string  lazyState;         // WebKit session state (back/forward list), may be empty
 };
 
 // Callback context handed to WebKit as `clientInfo`.

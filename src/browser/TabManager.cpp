@@ -6,6 +6,7 @@
 #include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/PageClients.h"
+#include "browser/Session.h"
 #include "browser/Tab.h"
 #include "browser/WebContext.h"
 #include "core/Constants.h"
@@ -68,7 +69,7 @@ static void UpdateWindowTitle() {
 
 // Pulls URL / title / history state from WebKit. Returns true if anything changed.
 bool SyncTab(Tab& t) {
-    if (!t.page) return false;
+    if (!t.page || t.lazyPending) return false;   // a restored tab not loaded yet keeps its saved address
     bool changed = false, titleChanged = false;
 
     std::wstring url;
@@ -176,6 +177,7 @@ void SelectTab(int i) {
         SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         ShowWindow(h, SW_SHOW);
     }
+    SessionLoadLazyTab(*g_tabs[i]);
     if (IsEditing()) ShowWindow(g_urlEdit, SW_HIDE);
     UpdateWindowTitle();
     InvalidateChrome();
@@ -231,7 +233,9 @@ static WKPageConfigurationRef CreatePageConfiguration() {
 }
 
 // Creates a view from `conf` (not consumed) and makes it the active tab.
-Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage) {
+WKPageConfigurationRef CreatePageConfigurationForTab() { return CreatePageConfiguration(); }
+
+Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, bool select) {
     if (g_closing) return nullptr;
     if (g_tabOp) { Log("CreateTab re-entered during a tab operation -> ignored"); return nullptr; }
     if ((int)g_tabs.size() >= metrics::kMaxTabs) {
@@ -283,7 +287,8 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage) 
     Log("tab#%llu CREATED view=%p page=%p hwnd=%p popup=%d (tabs=%d)", raw->id, (void*)raw->view,
         (void*)raw->page, (void*)raw->hwnd, (int)openedByPage, (int)g_tabs.size());
     RefreshLayout(true);                 // the new tab grows in
-    SelectTab((int)g_tabs.size() - 1);
+    if (select) SelectTab((int)g_tabs.size() - 1);
+    else ShowWindow(raw->hwnd, SW_HIDE);
     return raw;
 }
 
