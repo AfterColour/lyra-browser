@@ -1,6 +1,8 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
+#include "ui/FindBar.h"
+#include "ui/Print.h"
 #include "browser/Favicons.h"
 #include "browser/History.h"
 #include "ui/Suggestions.h"
@@ -173,12 +175,14 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         DownloadsPopupClose();
         TransitionCancel();
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
+        FindBarReposition();
         return 0;
     case WM_MOVE:
         SuggestHide();
         BookmarkPopupClose();
         DownloadsPopupClose();
         TransitionCancel();
+        FindBarReposition();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -389,6 +393,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (wParam != TIMER_UI) break;
         if (g_closing || g_tabOp) return 0;      // never poll tabs while one is being created/destroyed
+        FindBarTabChanged();                     // the find panel follows the active tab
         bool dirty = false;
         ++g_tick;
         Tab* act = ActiveTab();
@@ -442,6 +447,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_TAB_PAINTED:
         TransitionPainted((unsigned long long)wParam);
         return 0;
+    case WM_APP_PRINT:
+        if (Tab* t = ActiveTab()) if (t->id == (unsigned long long)wParam && !g_closing) PrintActivePage();
+        return 0;
     case WM_APP_ADBLOCK:
         AdBlockListsReady(lParam);
         return 0;
@@ -484,6 +492,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         SuggestHide();
         DownloadsPopupClose();
         BookmarkPopupClose();
+        FindBarClose();
         CloseAllTabs();
         HistorySave();
         DownloadsSave();

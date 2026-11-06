@@ -1,6 +1,7 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
 #include "browser/AdBlock.h"
+#include "ui/FindBar.h"
 #include "browser/History.h"
 #include "core/Settings.h"
 #include <WebKit/WKWebsitePolicies.h>
@@ -91,6 +92,7 @@ static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didFinish");
     if (!t) return;
     Log("tab#%llu didFinish +%lums", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL);
+    FindBarPageLoaded(t->id);
     t->loading = false;
     t->progress = std::max(t->progress, 0.9f);
     SyncTab(*t);
@@ -330,6 +332,21 @@ static void OnRunOpenPanel(WKPageRef, WKFrameRef, WKOpenPanelParametersRef param
     WKRelease(urls);
 }
 
+// --- find on page / window.print() ------------------------------------------------
+static void OnDidFindString(WKPageRef, WKStringRef, unsigned matchCount, const void* ci) {
+    if (Tab* t = ResolveTab(ci, "didFindString")) FindBarDidFind(t->id, matchCount);
+}
+
+static void OnDidFailToFindString(WKPageRef, WKStringRef, const void* ci) {
+    if (Tab* t = ResolveTab(ci, "didFailToFindString")) FindBarDidFail(t->id);
+}
+
+// The page asked to be printed: the print dialog opens once WebKit's call has returned.
+static void OnPrintFrame(WKPageRef, WKFrameRef, const void* ci) {
+    Tab* t = ResolveTab(ci, "printFrame");
+    if (t && g_hWnd && !g_closing) PostMessageW(g_hWnd, WM_APP_PRINT, (WPARAM)t->id, 0);
+}
+
 void SetPageClients(WKPageRef page, TabCtx* ctx) {
     WKPageNavigationClientV3 nc = {};
     nc.base.version = 3;
@@ -356,7 +373,15 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
     ui.runJavaScriptConfirm = OnJsConfirm;
     ui.runJavaScriptPrompt  = OnJsPrompt;
     ui.runOpenPanel         = OnRunOpenPanel;
+    ui.printFrame           = OnPrintFrame;
     WKPageSetPageUIClient(page, &ui.base);
+
+    WKPageFindClientV0 fc = {};
+    fc.base.version = 0;
+    fc.base.clientInfo = ctx;
+    fc.didFindString = OnDidFindString;
+    fc.didFailToFindString = OnDidFailToFindString;
+    WKPageSetPageFindClient(page, &fc.base);
 
     WKPageStateClientV0 sc = {};
     sc.base.version = 0;
@@ -378,4 +403,7 @@ void ClearPageClients(WKPageRef page) {
     WKPageStateClientV0 sc = {};
     sc.base.version = 0;
     WKPageSetPageStateClient(page, &sc.base);
+    WKPageFindClientV0 fc = {};
+    fc.base.version = 0;
+    WKPageSetPageFindClient(page, &fc.base);
 }

@@ -1,6 +1,8 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
 #include "browser/AdBlock.h"
+#include "ui/FindBar.h"
+#include "ui/Print.h"
 #include "browser/StartPage.h"
 #include "core/Url.h"
 #include "core/Localization.h"
@@ -80,6 +82,8 @@ void RunCommand(int cmd) {
     case CMD_BOOKMARKS: OpenBookmarks(); break;
     case CMD_DOWNLOADS: OpenDownloads(); break;
     case CMD_BOOKMARK_PAGE: BookmarkCurrentPage(); break;
+    case CMD_FIND:      FindBarShow(); break;
+    case CMD_PRINT:     PrintActivePage(); break;
     case CMD_ADBLOCK_SITE:
         if (Tab* t = ActiveTab()) {
             AdBlockSetAllowedOn(t->url, !AdBlockAllowedOn(t->url));
@@ -113,6 +117,10 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, CMD_COPYURL,   Tr(L"Copy Address", L"Копировать адрес"));
     AppendMenuW(m, MF_STRING, CMD_SETHOME,   Tr(L"Set Current Page as Home Page", L"Сделать эту страницу домашней"));
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));
+    AppendMenuW(m, MF_STRING | (PrintInProgress() ? MF_GRAYED : 0), CMD_PRINT,
+                Tr(L"Print\x2026\tCtrl+P", L"Печать\x2026\tCtrl+P"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, CMD_ZOOMIN,    Tr(L"Zoom In\tCtrl++", L"Увеличить\tCtrl++"));
     AppendMenuW(m, MF_STRING, CMD_ZOOMOUT,   Tr(L"Zoom Out\tCtrl+-", L"Уменьшить\tCtrl+-"));
@@ -154,6 +162,9 @@ bool HandleShortcut(const MSG& m) {
         case 'H': RunCommand(CMD_HISTORY); return true;
         case 'D': RunCommand(CMD_BOOKMARK_PAGE); return true;
         case 'J': RunCommand(CMD_DOWNLOADS); return true;
+        case 'F': RunCommand(CMD_FIND); return true;
+        case 'G': FindBarNext(shift); return true;
+        case 'P': RunCommand(CMD_PRINT); return true;
         case VK_OEM_COMMA: RunCommand(CMD_SETTINGS); return true;
         case 'R': ReloadActive(false); return true;
         case VK_OEM_PLUS: case VK_ADD:         RunCommand(CMD_ZOOMIN); return true;
@@ -176,6 +187,7 @@ bool HandleShortcut(const MSG& m) {
         if (k == VK_RIGHT) { GoForward(); return true; }
     }
     if (k == VK_F5) { ReloadActive(false); return true; }
+    if (k == VK_F3 && !ctrl && !alt) { FindBarNext(shift); return true; }
     if (k == VK_F12) { ShowWebInspector(); return true; }
     return false;
 }
