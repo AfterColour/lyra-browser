@@ -265,7 +265,10 @@ void BuildPages() {
                     if (MessageBoxW(g_setHwnd, Tr(L"Forget every site's answer? Sites will ask again.",
                                                   L"Забыть ответы для всех сайтов? Сайты спросят снова."),
                                     Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES)
+                    {
                         PermissionsReset();
+                        SettingsLanguageChanged();   // rebuilds the pages: the count above
+                    }
                 }));
         }
         p.rows.push_back(RHeader(Tr(L"History", L"История")));

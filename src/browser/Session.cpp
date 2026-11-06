@@ -188,6 +188,9 @@ bool SessionRestore() {
         else if (const char* v = value("title")) cur.title = FromUtf8(v);
         else if (const char* v = value("state")) cur.state = v;
     }
+    // Closed before any tab starts WebKit's processes: they inherit open CRT files, and an
+    // inherited handle kept session.txt locked, so later saves could not replace it.
+    f.close();
     if (tabs.empty()) return false;
     if (clean && !g_prefs.restoreSession) return false;
     // A single empty start page is not worth restoring.

@@ -9,8 +9,8 @@
 #include "core/Localization.h"
 #include "core/Settings.h"
 #include "core/StringUtils.h"
-#include "ui/Dialogs.h"
 #include "ui/MainWindow.h"
+#include "ui/PermissionPrompt.h"
 
 #include <WebKit/WKContext.h>
 #include <WebKit/WKGeolocationManager.h>
@@ -68,25 +68,62 @@ int Lookup(const char* kind, const std::string& origin) {
     return it == s_answers.end() ? -1 : it->second ? 1 : 0;
 }
 
-bool Ask(const std::string& origin, const wchar_t* question) {
-    std::wstring site = ToWide(origin);
-    std::wstring text = site + L"\n\n" + question + L"\n\n" +
-        Tr(L"Lyra remembers the answer for this site (Settings > Privacy resets it).",
-           L"Lyra запомнит ответ для этого сайта (сбросить — Настройки > Конфиденциальность).");
-    ModalScope modal;
-    return MessageBoxW(g_hWnd, text.c_str(), kAppName, MB_YESNO | MB_ICONQUESTION) == IDYES;
+// ---------------------------------------------------------------------------------------------
+//  Questions waiting for an answer (one bubble per tab, see PermissionPrompt.cpp).
+// ---------------------------------------------------------------------------------------------
+struct Pending { PermissionAsk ask; WKTypeRef request = nullptr; };
+std::vector<Pending> s_pending;
+unsigned long long s_nextSeq = 1;
+
+void Resolve(const Pending& p, bool allowed) {
+    if (p.ask.kind == "geolocation") {
+        if (allowed) WKGeolocationPermissionRequestAllow((WKGeolocationPermissionRequestRef)p.request);
+        else WKGeolocationPermissionRequestDeny((WKGeolocationPermissionRequestRef)p.request);
+    } else {
+        if (allowed) WKNotificationPermissionRequestAllow((WKNotificationPermissionRequestRef)p.request);
+        else WKNotificationPermissionRequestDeny((WKNotificationPermissionRequestRef)p.request);
+    }
+    WKRelease(p.request);
 }
 
-bool Decide(const char* kind, WKSecurityOriginRef originRef, const wchar_t* question) {
-    const std::string origin = OriginKey(originRef);
-    if (origin.empty() || origin == "null") return false;
-    int known = Lookup(kind, origin);
-    if (known >= 0) return known == 1;
-    const bool allowed = Ask(origin, question);
-    s_answers[std::string(kind) + " " + origin] = allowed;
-    Save();
-    Log("permission %s %s: %s", kind, origin.c_str(), allowed ? "allow" : "deny");
-    return allowed;
+std::wstring SiteName(const std::string& origin) {
+    std::string s = origin;
+    const size_t scheme = s.find("://");
+    if (scheme != std::string::npos) s = s.substr(scheme + 3);
+    if (s.rfind("www.", 0) == 0) s = s.substr(4);
+    return ToWide(s);
+}
+
+Tab* TabOfPage(WKPageRef page) {
+    for (auto& t : g_tabs) if (t->page == page) return t.get();
+    return nullptr;
+}
+
+// Answers at once when the site was answered before, otherwise queues the question.
+void Decide(const char* kind, WKPageRef page, WKSecurityOriginRef originRef, WKTypeRef request) {
+    Pending p;
+    p.ask.kind = kind;
+    p.ask.origin = OriginKey(originRef);
+    p.request = WKRetain(request);
+    Tab* t = TabOfPage(page);
+    const int known = p.ask.origin.empty() || p.ask.origin == "null" || !t ? 0 : Lookup(kind, p.ask.origin);
+    if (known >= 0) { Resolve(p, known == 1); return; }
+    p.ask.tabId = t->id;
+    p.ask.site = SiteName(p.ask.origin);
+    p.ask.seq = s_nextSeq++;
+    s_pending.push_back(std::move(p));
+    PermissionPromptUpdate();
+}
+
+// Questions of closed tabs are declined.
+void Prune() {
+    for (size_t i = 0; i < s_pending.size();) {
+        bool live = false;
+        for (auto& t : g_tabs) if (t->id == s_pending[i].ask.tabId && t->state == TabState::Live) { live = true; break; }
+        if (live) { ++i; continue; }
+        Resolve(s_pending[i], false);
+        s_pending.erase(s_pending.begin() + i);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,22 +277,53 @@ void PermissionsInit() {
 }
 
 void PermissionsShutdown() {
+    PermissionPromptClose();
+    for (auto& p : s_pending) Resolve(p, false);
+    s_pending.clear();
     ++s_geoGeneration;
     TrayRemove();
 }
 
-void PermissionsDecideNotifications(WKPageRef, WKSecurityOriginRef origin, WKNotificationPermissionRequestRef request) {
-    const bool allowed = Decide("notifications", origin,
-        Tr(L"This site wants to show notifications. Allow?", L"Сайт хочет показывать уведомления. Разрешить?"));
-    if (allowed) WKNotificationPermissionRequestAllow(request);
-    else WKNotificationPermissionRequestDeny(request);
+void PermissionsDecideNotifications(WKPageRef page, WKSecurityOriginRef origin, WKNotificationPermissionRequestRef request) {
+    Decide("notifications", page, origin, request);
 }
 
-void PermissionsDecideGeolocation(WKPageRef, WKSecurityOriginRef origin, WKGeolocationPermissionRequestRef request) {
-    const bool allowed = Decide("geolocation", origin,
-        Tr(L"This site wants to know your location. Allow?", L"Сайт хочет узнать ваше местоположение. Разрешить?"));
-    if (allowed) WKGeolocationPermissionRequestAllow(request);
-    else WKGeolocationPermissionRequestDeny(request);
+void PermissionsDecideGeolocation(WKPageRef page, WKSecurityOriginRef origin, WKGeolocationPermissionRequestRef request) {
+    Decide("geolocation", page, origin, request);
+}
+
+const PermissionAsk* PermissionsPendingForTab(unsigned long long tabId) {
+    Prune();
+    for (auto& p : s_pending) if (p.ask.tabId == tabId) return &p.ask;
+    return nullptr;
+}
+
+void PermissionsAnswer(unsigned long long seq, int answer) {
+    auto it = std::find_if(s_pending.begin(), s_pending.end(), [seq](const Pending& p) { return p.ask.seq == seq; });
+    if (it == s_pending.end()) return;
+    const PermissionAsk ask = it->ask;
+    if (answer >= 0) {
+        s_answers[ask.kind + " " + ask.origin] = answer == 1;
+        Save();
+        if (ask.kind == "notifications") {
+            WKStringRef s = WKStringCreateWithUTF8CString(ask.origin.c_str());
+            WKSecurityOriginRef origin = WKSecurityOriginCreateFromString(s);
+            if (WKNotificationManagerRef m = WKContextGetNotificationManager(g_context))
+                WKNotificationManagerProviderDidUpdateNotificationPolicy(m, origin, answer == 1);
+            WKRelease(origin);
+            WKRelease(s);
+        }
+    }
+    Log("permission %s %s: %s", ask.kind.c_str(), ask.origin.c_str(), answer == 1 ? "allow" : answer == 0 ? "block" : "not now");
+    // The same question asked again by the page (or by its other frames) gets the same answer.
+    for (size_t i = 0; i < s_pending.size();) {
+        const PermissionAsk& a = s_pending[i].ask;
+        if (a.tabId == ask.tabId && a.kind == ask.kind && a.origin == ask.origin) {
+            Resolve(s_pending[i], answer == 1);
+            s_pending.erase(s_pending.begin() + i);
+        } else ++i;
+    }
+    PermissionPromptUpdate();
 }
 
 void PermissionsTrayMessage(WPARAM, LPARAM lParam) {

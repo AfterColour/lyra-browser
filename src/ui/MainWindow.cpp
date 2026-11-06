@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "browser/AdBlock.h"
 #include "browser/Permissions.h"
+#include "ui/PermissionPrompt.h"
 #include "browser/Session.h"
 #include "ui/FindBar.h"
 #include "ui/Print.h"
@@ -396,6 +397,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (wParam != TIMER_UI) break;
         if (g_closing || g_tabOp) return 0;      // never poll tabs while one is being created/destroyed
         FindBarTabChanged();                     // the find panel follows the active tab
+        PermissionPromptUpdate();                // so does the permission bubble
         SessionTick();                           // saves the open tabs when they changed
         bool dirty = false;
         ++g_tick;
