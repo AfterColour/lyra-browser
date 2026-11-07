@@ -12,6 +12,7 @@
 #include "ui/Theme.h"
 
 #include <WebKit/WKFrameInfoRef.h>
+#include <WebKit/WKMutableDictionary.h>
 #include <WebKit/WKPageFullScreenClient.h>      // WKCompletionListenerComplete
 #include <WebKit/WKScriptMessageRef.h>
 #include <WebKit/WKUserContentControllerRef.h>
@@ -27,7 +28,7 @@ const char kScript[] = R"JS((function () {
   if (window.__lyraPip) return;
   var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lyraPip;
   if (!h) return;
-  var current = null, pending = null, style = null, toggleFn = null;
+  var current = null, pending = null, style = null, toggleFn = null, savedX = 0, savedY = 0;
   var CSS =
     'html[data-lyra-pip-mode], html[data-lyra-pip-mode] body { overflow: hidden !important; background: #000 !important; }' +
     'html[data-lyra-pip-mode] body * { visibility: hidden !important; }' +
@@ -52,6 +53,8 @@ const char kScript[] = R"JS((function () {
     pending = null;
     if (!v) return '';
     leave();
+    savedX = window.scrollX; savedY = window.scrollY;
+    var was = v.getBoundingClientRect();
     current = v;
     v.setAttribute('data-lyra-pip', '');
     for (var a = v.parentElement; a; a = a.parentElement) a.setAttribute('data-lyra-pip-anc', '');
@@ -66,7 +69,7 @@ const char kScript[] = R"JS((function () {
     keepTimer = setInterval(keep, 250);
     setTimeout(align, 0);
     try { v.dispatchEvent(new Event('enterpictureinpicture')); } catch (e) {}
-    return (v.videoWidth || 16) + 'x' + (v.videoHeight || 9);
+    return (v.videoWidth || 16) + 'x' + (v.videoHeight || 9) + '|' + [was.left, was.top, was.width, was.height, innerWidth, innerHeight].join(',');
   }
   // Sites re-render while playing (YouTube swaps the video for ads): keep the marks on the
   // playing video and its ancestors, and the page scrolled to the top.
@@ -116,10 +119,29 @@ const char kScript[] = R"JS((function () {
     document.documentElement.removeAttribute('data-lyra-pip-mode');
     if (style) style.remove();
     style = null;
+    window.scrollTo(savedX, savedY);
     try { v.dispatchEvent(new Event('leavepictureinpicture')); } catch (e) {}
   }
+  // Leaves, then (once the page has laid out again in its own size) tells where the video is:
+  // "left,top,width,height,viewport width,viewport height" in CSS pixels.
+  function leaveMeasured() {
+    var v = current;
+    leave();
+    if (!v) return Promise.resolve('');
+    return new Promise(function (resolve) {
+      var done = false;
+      function measure() {
+        if (done) return;
+        done = true;
+        var r = v.getBoundingClientRect();
+        resolve([r.left, r.top, r.width, r.height, innerWidth, innerHeight].map(function (n) { return Math.round(n * 10) / 10; }).join(','));
+      }
+      requestAnimationFrame(function () { requestAnimationFrame(measure); });
+      setTimeout(measure, 300);
+    });
+  }
   Object.defineProperty(window, '__lyraPip', { value: {
-    enter: enter, leave: leave,
+    enter: enter, leave: leave, leaveMeasured: leaveMeasured,
     pause: function () { if (current) current.pause(); },
     title: function () { return document.title || location.hostname; },
     // "paused|time|duration|muted|viewport|video rect" for the window's controls
@@ -596,6 +618,200 @@ bool CreatePipWindow(const std::wstring& title) {
     return true;
 }
 
+// "Back to tab": a picture of the window flies to where the video is in the tab and fades there,
+// over the page laying out again underneath (a layered, click-through, topmost window).
+HWND s_fly = nullptr;
+HBITMAP s_flyBitmap = nullptr;
+SIZE s_flySize = {};
+RECT s_flyFrom = {}, s_flyTo = {}, s_flyNow = {};
+RECT s_flyClip = {};                   // the tab's view: the picture lands inside it (0: no clip yet)
+DWORD s_flyCreated = 0, s_flyStart = 0;
+bool s_flyHasTarget = false;
+DWORD s_flyReadyAt = 0;                // the page has laid out again (0: not yet)
+DWORD s_flyFadeStart = 0;
+float s_enterRect[6] = {};             // where the video was when it left the tab (CSS px + viewport)
+constexpr DWORD kFlyHoldMaxMs = 1200;  // longest wait over the landed video for the page
+constexpr DWORD kFlyFadeMs = 160;
+constexpr UINT_PTR kFlyTimer = 2;
+constexpr DWORD kFlyMs = 300;          // the flight
+constexpr DWORD kFlyWaitMs = 500;      // longest wait for the page to say where the video is
+
+void DestroyFly() {
+    if (s_fly) { HWND f = s_fly; s_fly = nullptr; KillTimer(f, kFlyTimer); DestroyWindow(f); }
+    if (s_flyBitmap) { DeleteObject(s_flyBitmap); s_flyBitmap = nullptr; }
+    s_flyHasTarget = false;
+    s_flyReadyAt = s_flyFadeStart = 0;
+}
+
+void RenderFly(const RECT& r, BYTE alpha, const RECT& clip) {
+    const int w = std::max(1L, r.right - r.left), hgt = std::max(1L, r.bottom - r.top);
+    RECT shown = { r.left, r.top, r.left + w, r.top + hgt };
+    if (!IsRectEmpty(&clip) && !IntersectRect(&shown, &shown, &clip)) shown = { r.left, r.top, r.left + 1, r.top + 1 };
+    HDC screen = GetDC(nullptr);
+    HDC src = CreateCompatibleDC(screen);
+    HDC dst = CreateCompatibleDC(screen);
+    HBITMAP frame = CreateCompatibleBitmap(screen, w, hgt);
+    HGDIOBJ oldSrc = SelectObject(src, s_flyBitmap);
+    HGDIOBJ oldDst = SelectObject(dst, frame);
+    SetStretchBltMode(dst, HALFTONE);
+    SetBrushOrgEx(dst, 0, 0, nullptr);
+    StretchBlt(dst, 0, 0, w, hgt, src, 0, 0, s_flySize.cx, s_flySize.cy, SRCCOPY);
+    POINT pos = { shown.left, shown.top };
+    SIZE size = { shown.right - shown.left, shown.bottom - shown.top };
+    POINT from = { shown.left - r.left, shown.top - r.top };
+    BLENDFUNCTION blend = { AC_SRC_OVER, 0, alpha, 0 };
+    UpdateLayeredWindow(s_fly, screen, &pos, &size, dst, &from, 0, &blend, ULW_ALPHA);
+    SelectObject(src, oldSrc);
+    SelectObject(dst, oldDst);
+    DeleteObject(frame);
+    DeleteDC(src);
+    DeleteDC(dst);
+    ReleaseDC(nullptr, screen);
+    s_flyNow = r;
+}
+
+void SetFlyTarget(const RECT& to) {
+    s_flyFrom = s_flyNow;
+    s_flyTo = to;
+    s_flyStart = GetTickCount();
+    s_flyHasTarget = true;
+}
+
+// Nowhere to land (the video is off screen, or the page did not answer): shrink a little and fade.
+void SetFlyFallbackTarget() {
+    const RECT& r = s_flyNow;
+    const int w = r.right - r.left, hgt = r.bottom - r.top;
+    RECT to = { r.left + w / 8, r.top + hgt / 8, r.right - w / 8, r.bottom - hgt / 8 };
+    SetFlyTarget(to);
+}
+
+void FlyStep() {
+    if (!s_fly) return;
+    const DWORD now = GetTickCount();
+    if (!s_flyHasTarget) {
+        if (now - s_flyCreated > kFlyWaitMs) SetFlyFallbackTarget();
+        else return;
+    }
+    const float t = std::min(1.f, (float)(now - s_flyStart) / kFlyMs);
+    const float e = 1.f - (1.f - t) * (1.f - t) * (1.f - t);          // ease out
+    auto lerp = [e](LONG a, LONG b) { return (LONG)std::lround(a + (b - a) * e); };
+    const RECT r = { lerp(s_flyFrom.left, s_flyTo.left), lerp(s_flyFrom.top, s_flyTo.top),
+                     lerp(s_flyFrom.right, s_flyTo.right), lerp(s_flyFrom.bottom, s_flyTo.bottom) };
+    // Landed: stay over the video until the page shows it again (it lays out at its own size
+    // first), then fade into it.
+    if (!s_flyFadeStart && t >= 1.f && ((s_flyReadyAt && now >= s_flyReadyAt) || now - s_flyCreated > kFlyHoldMaxMs))
+        s_flyFadeStart = now;
+    const float fade = s_flyFadeStart ? 1.f - std::min(1.f, (float)(now - s_flyFadeStart) / kFlyFadeMs) : 1.f;
+    // The clip closes in on the tab's view as the picture lands (it starts outside the window).
+    RECT clip = {};
+    if (!IsRectEmpty(&s_flyClip)) {
+        const RECT screen = { GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+                              GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                              GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+        clip = { lerp(screen.left, s_flyClip.left), lerp(screen.top, s_flyClip.top), lerp(screen.right, s_flyClip.right), lerp(screen.bottom, s_flyClip.bottom) };
+    }
+    RenderFly(r, (BYTE)std::lround(255 * fade), clip);
+    if (s_flyFadeStart && fade <= 0.f) DestroyFly();
+}
+
+LRESULT CALLBACK FlyProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_TIMER:
+        if (wParam == kFlyTimer) { FlyStep(); return 0; }
+        break;
+    }
+    return DefWindowProcW(h, msg, wParam, lParam);
+}
+
+// A picture of the picture-in-picture window, shown where it is.
+bool StartFly() {
+    DestroyFly();
+    if (!s_window) return false;
+    static bool registered = false;
+    HINSTANCE hi = GetModuleHandleW(nullptr);
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = FlyProc;
+        wc.hInstance = hi;
+        wc.lpszClassName = L"LyraPictureInPictureFly";
+        if (!RegisterClassExW(&wc)) return false;
+        registered = true;
+    }
+    RECT rc = WindowRc();
+    s_flySize = { rc.right - rc.left, rc.bottom - rc.top };
+    if (s_flySize.cx <= 0 || s_flySize.cy <= 0) return false;
+    HDC screen = GetDC(nullptr);
+    HDC mem = CreateCompatibleDC(screen);
+    s_flyBitmap = CreateCompatibleBitmap(screen, s_flySize.cx, s_flySize.cy);
+    HGDIOBJ old = SelectObject(mem, s_flyBitmap);
+    // What is on screen there (the video is drawn by the GPU: PrintWindow sees black), without the
+    // controls over it.
+    if (s_overlay && IsWindowVisible(s_overlay)) {
+        ShowWindow(s_overlay, SW_HIDE);
+        s_overlayShown = false;
+        DwmFlush();
+    }
+    BitBlt(mem, 0, 0, s_flySize.cx, s_flySize.cy, screen, rc.left, rc.top, SRCCOPY);
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    s_fly = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                            L"LyraPictureInPictureFly", L"", WS_POPUP, rc.left, rc.top, s_flySize.cx, s_flySize.cy,
+                            nullptr, nullptr, hi, nullptr);
+    if (!s_fly) { DestroyFly(); return false; }
+    const DWORD round = 2;                               // DWMWCP_ROUND, like the window it pictures
+    DwmSetWindowAttribute(s_fly, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
+    s_flyClip = {};
+    RenderFly(rc, 255, {});
+    ShowWindow(s_fly, SW_SHOWNOACTIVATE);
+    s_flyCreated = GetTickCount();
+    s_flyHasTarget = false;
+    SetTimer(s_fly, kFlyTimer, 7, nullptr);
+    return true;
+}
+
+// The page's answer to __lyraPip.leaveMeasured(): where the video is in the tab.
+// Where the video is (CSS rect and viewport, as the page reports) on the screen, in the tab's view.
+bool VideoScreenRect(Tab& t, const float* v, RECT& out) {
+    RECT view;
+    if (!t.hwnd || !IsWindowVisible(t.hwnd) || !GetWindowRect(t.hwnd, &view)) return false;
+    if (v[2] < 1 || v[3] < 1 || v[4] < 1 || v[5] < 1) return false;
+    const float sx = (view.right - view.left) / v[4], sy = (view.bottom - view.top) / v[5];
+    out = { view.left + (LONG)std::lround(v[0] * sx), view.top + (LONG)std::lround(v[1] * sy),
+            view.left + (LONG)std::lround((v[0] + v[2]) * sx), view.top + (LONG)std::lround((v[1] + v[3]) * sy) };
+    RECT visible;
+    if (!IntersectRect(&visible, &out, &view)) return false;
+    s_flyClip = view;
+    return true;
+}
+
+void OnLeaveMeasured(WKTypeRef result, WKErrorRef, void* ctx) {
+    if (!s_fly) return;
+    s_flyReadyAt = GetTickCount() + 120;                 // a frame or two to paint it
+    const unsigned long long tabId = (unsigned long long)(uintptr_t)ctx;
+    std::wstring s;
+    if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = WKStr((WKStringRef)result);
+    Tab* t = nullptr;
+    for (auto& tp : g_tabs) if (tp->id == tabId && tp->state == TabState::Live) t = tp.get();
+    float v[6] = {};
+    RECT to;
+    if (s_flyHasTarget && !IsRectEmpty(&s_flyClip)) return;
+    if (!t || s.empty() || swscanf_s(s.c_str(), L"%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6
+        || !VideoScreenRect(*t, v, to)) {
+        if (!s_flyHasTarget) SetFlyFallbackTarget();
+        return;
+    }
+    // Already flying to where the video was when it left (the page is scrolled back there): keep
+    // that. The answer only says the page is ready; it may come while the page still lays out.
+    if (s_flyHasTarget) return;
+    SetFlyTarget(to);
+}
+
 // Gives the view back to the main window (hidden; SelectTab shows it).
 void ReturnView(Tab& t) {
     if (!t.pipHwnd) return;
@@ -623,6 +839,9 @@ void OnEntered(WKTypeRef result, WKErrorRef, void* ctx) {
     if (size.empty()) { Log("pip: no video on tab#%llu", tabId); MessageBeep(MB_ICONWARNING); return; }
     int vw = 16, vh = 9;
     swscanf_s(size.c_str(), L"%dx%d", &vw, &vh);
+    for (float& f : s_enterRect) f = 0;
+    if (size_t bar = size.find(L'|'); bar != std::wstring::npos)
+        swscanf_s(size.c_str() + bar + 1, L"%f,%f,%f,%f,%f,%f", &s_enterRect[0], &s_enterRect[1], &s_enterRect[2], &s_enterRect[3], &s_enterRect[4], &s_enterRect[5]);
     s_aspect = (vw > 0 && vh > 0) ? std::min(3.f, std::max(0.5f, (float)vw / (float)vh)) : 16.f / 9.f;
     if (!CreatePipWindow(t->title)) { RunJs(t->page, "window.__lyraPip && __lyraPip.leave()"); return; }
     s_tabId = t->id;
@@ -672,6 +891,7 @@ bool PipActive() { return s_window != nullptr; }
 
 void PipStart(Tab& t) {
     if (!t.page || !t.hwnd) return;
+    DestroyFly();
     if (s_window) PipExit(false, false);                 // one at a time
     WKStringRef js = WKStringCreateWithUTF8CString("window.__lyraPip ? window.__lyraPip.enter() : ''");
     WKPageEvaluateJavaScriptInMainFrame(t.page, js, (void*)(uintptr_t)t.id, OnEntered);
@@ -686,9 +906,12 @@ void PipToggleActive() {
 void PipExit(bool pause, bool showTab) {
     Tab* t = PipTab();
     Log("pip: back%s", pause ? " (paused)" : "");
+    // "Back to tab" with the main window on screen: animate (the page is told to leave below,
+    // once the tab is shown in its own size).
+    const bool fly = t && showTab && !pause && !IsIconic(g_hWnd) && StartFly();
     if (t) {
         if (pause) RunJs(t->page, "window.__lyraPip && (__lyraPip.pause(), __lyraPip.leave())");
-        else RunJs(t->page, "window.__lyraPip && __lyraPip.leave()");
+        else if (!fly) RunJs(t->page, "window.__lyraPip && __lyraPip.leave()");
         ReturnView(*t);
     }
     DestroyPipWindow();
@@ -704,10 +927,20 @@ void PipExit(bool pause, bool showTab) {
     }
     RefreshLayout();
     InvalidateRect(g_hWnd, nullptr, FALSE);
+    if (fly) {
+        RECT to;
+        if (VideoScreenRect(*t, s_enterRect, to)) SetFlyTarget(to);
+        WKStringRef js = WKStringCreateWithUTF8CString("return window.__lyraPip ? await window.__lyraPip.leaveMeasured() : ''");
+        WKMutableDictionaryRef args = WKMutableDictionaryCreate();
+        WKPageCallAsyncJavaScript(t->page, js, (WKDictionaryRef)args, nullptr, (void*)(uintptr_t)t->id, OnLeaveMeasured);
+        WKRelease(args);
+        WKRelease(js);
+    }
 }
 
 void PipDetach(Tab& t) {
     if (!t.pipHwnd) return;
+    DestroyFly();
     ReturnView(t);
     DestroyPipWindow();
 }
