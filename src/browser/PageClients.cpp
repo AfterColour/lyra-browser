@@ -1,5 +1,6 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/PageClients.h"
+#include "browser/DevProbe.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/AdBlock.h"
@@ -109,6 +110,7 @@ static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     TransitionLoaded(t->id);             // a new tab with a Lyra page: its cover can go
     ReaderPageLoaded(*t);                // an article? (the book in the address field)
     TranslatePageLoaded(*t);             // another language? (or keep translating)
+    DevProbePageLoaded(*t);              // LYRA_PROBE measurements (developer)
     InvalidateChrome();
 }
 
