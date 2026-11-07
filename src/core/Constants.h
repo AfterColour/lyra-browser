@@ -29,6 +29,7 @@ constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminat
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
 constexpr UINT WM_APP_PRINT        = WM_APP + 8;   // window.print(); wParam tab id
+constexpr UINT WM_APP_TRANSLATE    = WM_APP + 13;  // a translation batch came back; lParam see Translate.cpp
 constexpr UINT WM_APP_PIP          = WM_APP + 12;  // a page asked for picture-in-picture; wParam tab id, lParam 1 enter / 0 exit
 constexpr UINT WM_APP_MEDIA        = WM_APP + 11;  // a media key / Windows media flyout button; wParam see SystemMedia.h
 constexpr UINT WM_APP_TRAY         = WM_APP + 9;   // the notifications tray icon (Permissions.cpp)
@@ -40,5 +41,5 @@ constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyr
 enum Cmd {
     CMD_NEWTAB = 301, CMD_CLOSETAB, CMD_COPYURL,
     CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMRESET, CMD_SETHOME, CMD_SETTINGS,
-    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS, CMD_ADBLOCK_SITE, CMD_FIND, CMD_PRINT, CMD_PASSWORDS, CMD_NEWPRIVATE, CMD_PIP, CMD_READER
+    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS, CMD_ADBLOCK_SITE, CMD_FIND, CMD_PRINT, CMD_PASSWORDS, CMD_NEWPRIVATE, CMD_PIP, CMD_READER, CMD_TRANSLATE
 };

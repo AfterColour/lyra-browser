@@ -79,6 +79,8 @@ void LoadSettings() {
     g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
     g_prefs.adBlock  = geti(L"AdBlock", 1) != 0;
     g_prefs.savePasswords = geti(L"SavePasswords", 1) != 0;
+    g_prefs.translateService = geti(L"TranslateService", 0) ? 1 : 0;
+    g_prefs.translateTarget = std::max(0, geti(L"TranslateTarget", 0));
     g_prefs.readerSize = std::min(30, std::max(14, geti(L"ReaderSize", 19)));
     g_prefs.readerFont = geti(L"ReaderFont", 1) ? 1 : 0;
     g_prefs.readerTheme = std::min(3, std::max(0, geti(L"ReaderTheme", 0)));
@@ -123,6 +125,7 @@ void SaveSettings() {
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
     puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords);
+    puti(L"TranslateService", g_prefs.translateService); puti(L"TranslateTarget", g_prefs.translateTarget);
     puti(L"ReaderSize", g_prefs.readerSize); puti(L"ReaderFont", g_prefs.readerFont);
     puti(L"ReaderTheme", g_prefs.readerTheme); puti(L"ReaderWidth", g_prefs.readerWidth); puti(L"RestoreSession", g_prefs.restoreSession);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);

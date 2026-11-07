@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/PictureInPicture.h"
 #include "ui/settings/SettingsPages.h"
@@ -73,6 +74,7 @@ void RunCommand(int cmd) {
     case CMD_NEWPRIVATE: CreatePrivateTab(); break;
     case CMD_PIP:       PipToggleActive(); break;
     case CMD_READER:    ReaderToggle(); break;
+    case CMD_TRANSLATE: TranslateToggle(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -132,6 +134,13 @@ void ShowMoreMenu() {
         const bool inReader = rt && ReaderIsReaderUrl(rt->url);
         AppendMenuW(m, MF_STRING | (inReader ? MF_CHECKED : 0) | ((rt && (rt->readerable || inReader)) ? 0 : MF_GRAYED), CMD_READER,
                     Tr(L"Reader View\tF9", L"Режим чтения\tF9"));
+    }
+    {
+        Tab* tt = ActiveTab();
+        const bool web = tt && (tt->url.compare(0, 7, L"http://") == 0 || tt->url.compare(0, 8, L"https://") == 0);
+        const std::wstring label = (tt && tt->translated) ? std::wstring(Tr(L"Show Original", L"Показать оригинал"))
+            : std::wstring(Tr(L"Translate to ", L"Перевести: ")) + TranslateTargetName();
+        AppendMenuW(m, MF_STRING | (web ? 0 : MF_GRAYED), CMD_TRANSLATE, label.c_str());
     }
     AppendMenuW(m, MF_STRING | (PipActive() ? MF_CHECKED : 0), CMD_PIP, Tr(L"Picture in Picture", L"Картинка в картинке"));
     AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));

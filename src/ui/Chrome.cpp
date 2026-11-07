@@ -7,6 +7,7 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "ui/WindowFrame.h"
 #include "browser/Downloads.h"
@@ -480,6 +481,23 @@ static RectF ReaderRect() {
     return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
 }
 
+// The translate icon: the page is in another language, or it is shown translated.
+static bool TranslateShown() {
+    if (IsEditing() || g_L.star.Width <= 0) return false;
+    const Tab* t = ActiveTab();
+    return t && (t->translatable || t->translated);
+}
+
+static RectF TranslateRect() {
+    const float c = S(22);
+    const RectF& pill = g_L.pill;
+    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
+    if (KeyShown()) right = KeyRect().X - S(2);
+    if (ReaderShown()) right = ReaderRect().X - S(2);
+    return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
+}
+
 static RectF AudioRect(int i) {
     const float c = S(22);
     if (IsCompactActive(i)) {                        // inside the address field, left of the star
@@ -512,6 +530,7 @@ Hit HitTest(int px, int py) {
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
         if (KeyShown() && KeyRect().Contains(x, y)) return MakeHit(Hit::Key);
         if (ReaderShown() && ReaderRect().Contains(x, y)) return MakeHit(Hit::Reader);
+        if (TranslateShown() && TranslateRect().Contains(x, y)) return MakeHit(Hit::Translate);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     for (int i = n - 1; i >= 0; --i)
@@ -801,6 +820,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Star, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Key, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reader, -1)));
+        pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Translate, -1)));
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
@@ -899,6 +919,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             if (keyHere) textR = std::min(textR, KeyRect().X - S(2));
             const bool readerHere = ReaderShown();
             if (readerHere) textR = std::min(textR, ReaderRect().X - S(2));
+            const bool translateHere = TranslateShown();
+            if (translateHere) textR = std::min(textR, TranslateRect().X - S(2));
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -942,6 +964,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 const bool on = ReaderIsReaderUrl(cur->url);
                 hoverFill(rr, MakeHit(Hit::Reader, -1), dwn(Hit::Reader, -1), S(6));
                 DrawGlyph(g, L"\uE736", rr, on ? T.accent : T.icon, g_fIconSm.get());
+            }
+            if (translateHere) {
+                const RectF tr = TranslateRect();
+                hoverFill(tr, MakeHit(Hit::Translate, -1), dwn(Hit::Translate, -1), S(6));
+                DrawGlyph(g, L"\uE8C1", tr, cur->translated ? T.accent : T.icon, g_fIconSm.get());
             }
         }
     }

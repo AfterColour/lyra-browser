@@ -1,5 +1,6 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
@@ -367,6 +368,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::TabAudio: MediaToggleMute(up.index); break;
             case Hit::Key:      PasswordsSiteMenu(); break;
             case Hit::Reader:   ReaderToggle(); break;
+            case Hit::Translate: TranslateToggle(); break;
             default: break;
             }
         }
@@ -412,6 +414,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         FindBarTabChanged();                     // the find panel follows the active tab
         PermissionPromptUpdate();                // so does the permission bubble
         MediaControlsTick();                     // Windows' media flyout follows the playing tab
+        TranslateTick();                         // text that appeared on translated pages
         SessionTick();                           // saves the open tabs when they changed
         bool dirty = false;
         ++g_tick;
@@ -471,6 +474,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_ADBLOCK:
         AdBlockListsReady(lParam);
+        return 0;
+    case WM_APP_TRANSLATE:
+        TranslateResult(lParam);
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);

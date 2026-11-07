@@ -22,6 +22,11 @@ struct Tab {
     bool  canFwd  = false;
     float progress = 0.f;   // animated 0..1
     float fade     = 0.f;   // progress bar opacity 0..1
+    // Translation (browser/Translate.cpp): offered, shown translated, keep translating new pages
+    bool  translatable = false, translated = false, autoTranslate = false;
+    bool  translateCollecting = false, translateErrorShown = false;
+    unsigned translateGen = 0;      // results of an older page or state are dropped
+    int   translatePending = 0;     // batches at the service
     bool  readerable = false;       // the page looks like an article (reader view, browser/Reader.cpp)
     bool  privateTab = false;       // private (incognito): own memory-only cookies/storage, no history, not in the session
     bool  audible = false;          // the page plays sound (speaker on the tab)

@@ -1,5 +1,6 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
+#include "browser/Translate.h"
 #include "browser/AdBlock.h"
 #include "browser/Passwords.h"
 #include "browser/Permissions.h"
@@ -150,6 +151,29 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Show full address", L"Показывать полный адрес"),
             Tr(L"Otherwise the address field shows only the site name.", L"Иначе в адресной строке видно только имя сайта."),
             &g_prefs.showFullUrl, repaint));
+        p.rows.push_back(RHeader(Tr(L"Translation", L"Перевод")));
+        {
+            std::vector<std::wstring> langs;
+            for (const auto& l : TranslateLanguages()) langs.push_back(l.name);
+            langs[0] = Tr(L"Lyra's language", L"Язык Lyra");
+            p.rows.push_back(RChoice(Tr(L"Translate into", L"Переводить на"),
+                Tr(L"Pages in other languages show a translate icon in the address field.",
+                   L"На страницах на других языках в адресной строке появляется значок перевода."),
+                langs,
+                []() { return g_prefs.translateTarget; },
+                [save](int i) { g_prefs.translateTarget = i; save(); }));
+        }
+        p.rows.push_back(RChoice(Tr(L"Service", L"Сервис"),
+            Tr(L"Google needs nothing; DeepL needs your own API key (DeepL API Free: 500,000 characters a month).",
+               L"Google работает сразу; DeepL — со своим ключом API (DeepL API Free: 500 000 символов в месяц)."),
+            { Tr(L"Google (no key)", L"Google (без ключа)"), Tr(L"DeepL (API key)", L"DeepL (ключ API)") },
+            []() { return g_prefs.translateService; },
+            [save](int i) { g_prefs.translateService = i; save(); }));
+        p.rows.push_back(RText(Tr(L"DeepL API key", L"Ключ DeepL API"),
+            Tr(L"Kept encrypted for your Windows account. Free keys end with :fx.",
+               L"Хранится зашифрованным для вашей учётной записи Windows. Бесплатные ключи заканчиваются на :fx."),
+            []() { return TranslateGetDeepLKey(); },
+            [](const std::wstring& s) { TranslateSetDeepLKey(s); }));
 
         p.rows.push_back(RHeader(Tr(L"Page zoom", L"Масштаб страниц")));
         p.rows.push_back(RSlider(Tr(L"Default zoom", L"Масштаб по умолчанию"),

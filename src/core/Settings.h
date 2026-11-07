@@ -38,6 +38,8 @@ struct Prefs {
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)
     // Reader view: text size (px), 0 sans / 1 serif, 0 auto / 1 light / 2 sepia / 3 dark, 0 narrow / 1 normal / 2 wide
     int  readerSize = 19, readerFont = 1, readerTheme = 0, readerWidth = 1;
+    int  translateService = 0;   // 0 Google (no key), 1 DeepL (own API key)
+    int  translateTarget = 0;    // index into TranslateLanguages(); 0 = Lyra's language
     bool savePasswords = true;   // offer to save passwords and fill them in (browser/Passwords.cpp)
     bool adBlock = true;         // block ads and trackers (Settings > Privacy, browser/AdBlock.cpp)
     bool js = true, images = true, localStorage = true, databases = true;
