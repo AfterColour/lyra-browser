@@ -180,6 +180,7 @@ bool HandleShortcut(const MSG& m) {
         if (k == 'I') { ShowWebInspector(); return true; }
         if (k == 'O') { RunCommand(CMD_BOOKMARKS); return true; }
         if (k == 'N') { RunCommand(CMD_NEWPRIVATE); return true; }
+        if (k == VK_DELETE) { OpenClearDataSettings(); return true; }
     }
     if (ctrl && !alt) {
         switch (k) {

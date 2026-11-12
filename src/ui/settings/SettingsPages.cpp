@@ -2,6 +2,7 @@
 #include "ui/settings/SettingsPages.h"
 #include "browser/Translate.h"
 #include "browser/AdBlock.h"
+#include "browser/ClearData.h"
 #include "browser/Passwords.h"
 #include "browser/Permissions.h"
 #include "browser/Downloads.h"
@@ -45,6 +46,42 @@ static void ResetAllSettings() {
 }
 
 static int s_passwordsPageIndex = -1;
+static int s_clearDataPageIndex = -1;
+
+// Clear browsing data: the choice stays for the session; the row under the button says how it went.
+static ClearDataChoice s_clearChoice;
+static std::wstring s_clearStatus;
+static bool s_clearing = false;
+
+static void ClearChosenData() {
+    const ClearDataChoice& c = s_clearChoice;
+    if (s_clearing) return;
+    if (!c.history && !c.cookies && !c.cache && !c.downloads && !c.permissions && !c.passwords) {
+        MessageBoxW(g_setHwnd, Tr(L"Choose what to clear first.", L"Сначала выберите, что удалить."),
+                    Tr(L"Lyra Settings", L"Настройки Lyra"), MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const std::wstring range = ClearDataRanges()[c.range];
+    std::wstring q = Tr(L"Clear the chosen data (", L"Удалить выбранные данные (") + range + L")?";
+    if (c.cookies) q += Tr(L"\n\nYou will be signed out of most sites.", L"\n\nВы выйдете из большинства сайтов.");
+    if (c.passwords) q += Tr(L"\n\nSaved passwords cannot be restored.", L"\n\nСохранённые пароли не вернуть.");
+    if (MessageBoxW(g_setHwnd, q.c_str(), Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    s_clearing = true;
+    s_clearStatus = Tr(L"Clearing\x2026", L"Удаление\x2026");
+    SettingsLanguageChanged();                           // shows the status
+    ClearBrowsingData(c, [range]() {
+        s_clearing = false;
+        s_clearStatus = Tr(L"Done: data cleared (", L"Готово: данные удалены (") + range + L").";
+        SettingsLanguageChanged();
+    });
+}
+
+void OpenClearDataSettings() {
+    ShowSettingsWindow();
+    if (s_clearDataPageIndex < 0) return;
+    SettingsOpenPage(s_clearDataPageIndex);
+}
 
 static void CopyText(const std::wstring& s) {
     if (!OpenClipboard(g_setHwnd)) return;
@@ -361,16 +398,11 @@ void BuildPages() {
             &g_prefs.recordHistory, save));
         p.rows.push_back(RButton(Tr(L"History", L"История"), Tr(L"Ctrl+H", L"Ctrl+H"), Tr(L"Open", L"Открыть"),
             []() { OpenHistory(); }));
-        p.rows.push_back(RButton(Tr(L"Clear history", L"Очистить историю"),
-            Tr(L"Removes every visited page from Lyra.", L"Удаляет из Lyra все посещённые страницы."),
-            Tr(L"Clear\x2026", L"Очистить\x2026"),
-            []() {
-                if (MessageBoxW(g_setHwnd, Tr(L"Clear all history?", L"Удалить всю историю?"),
-                                Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                    HistoryClearSince(0);
-                    RefreshStartPages();
-                }
-            }));
+        p.rows.push_back(RHeader(Tr(L"Clear browsing data", L"Очистка данных")));
+        p.rows.push_back(RButton(Tr(L"Clear browsing data", L"Очистить данные браузера"),
+            Tr(L"History, cookies and site data, cache\x2026 for a chosen period. Ctrl+Shift+Del",
+               L"История, cookie и данные сайтов, кэш\x2026 за выбранный период. Ctrl+Shift+Del"),
+            Tr(L"Choose\x2026", L"Выбрать\x2026"), []() { SettingsOpenPage(s_clearDataPageIndex); }));
         p.rows.push_back(RHeader(Tr(L"Note", L"Примечание")));
         p.rows.push_back(RInfo(Tr(L"Changes apply to", L"Изменения действуют для"),
                                Tr(L"pages loaded afterwards", L"страниц, открытых после них")));
@@ -414,6 +446,7 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Bookmarks", L"Закладки"), L"Ctrl+Shift+O", true));
         p.rows.push_back(RInfo(Tr(L"Bookmark this page", L"Добавить в закладки"), L"Ctrl+D", true));
         p.rows.push_back(RInfo(Tr(L"Downloads", L"Загрузки"), L"Ctrl+J", true));
+        p.rows.push_back(RInfo(Tr(L"Clear browsing data", L"Очистить данные браузера"), L"Ctrl+Shift+Del", true));
         p.rows.push_back(RHeader(Tr(L"Navigation", L"Навигация")));
         p.rows.push_back(RInfo(Tr(L"Address bar", L"Адресная строка"), L"Ctrl+L", true));
         p.rows.push_back(RInfo(Tr(L"Reload", L"Обновить"), L"Ctrl+R  /  F5", true));
@@ -505,6 +538,41 @@ void BuildPages() {
         }
         s_passwordsPage = (int)g_pages.size();
         s_passwordsPageIndex = s_passwordsPage;
+        g_pages.push_back(std::move(p));
+    }
+    {   // Clear browsing data, from Privacy
+        SPage p; p.name = Tr(L"Clear browsing data", L"Очистка данных"); p.icon = L"\uE74D"; p.tint = kTintGreen;
+        p.parent = privacyPage;
+        const std::function<void()> none = []() {};
+        p.rows.push_back(RHeader(Tr(L"Period", L"Период")));
+        p.rows.push_back(RChoice(Tr(L"Time range", L"Временной диапазон"),
+            Tr(L"Data stored or changed in this period.", L"Данные, сохранённые или изменённые за это время."),
+            ClearDataRanges(), []() { return s_clearChoice.range; }, [](int v) { s_clearChoice.range = v; }));
+        p.rows.push_back(RHeader(Tr(L"What to clear", L"Что удалить")));
+        p.rows.push_back(RToggle(Tr(L"Browsing history", L"История посещений"),
+            Tr(L"Visited pages, address bar suggestions and recently closed tabs.",
+               L"Посещённые страницы, подсказки адресной строки и недавно закрытые вкладки."),
+            &s_clearChoice.history, none));
+        p.rows.push_back(RToggle(Tr(L"Cookies and site data", L"Cookie и данные сайтов"),
+            Tr(L"Signs you out of most sites.", L"Вы выйдете из большинства сайтов."),
+            &s_clearChoice.cookies, none));
+        p.rows.push_back(RToggle(Tr(L"Cached images and files", L"Изображения и файлы в кэше"),
+            Tr(L"Frees space; sites load a little slower the first time.",
+               L"Освобождает место; сайты в первый раз загрузятся чуть дольше."),
+            &s_clearChoice.cache, none));
+        p.rows.push_back(RToggle(Tr(L"Downloads list", L"Список загрузок"),
+            Tr(L"The downloaded files stay on disk.", L"Сами файлы остаются на диске."),
+            &s_clearChoice.downloads, none));
+        p.rows.push_back(RToggle(Tr(L"Site permissions", L"Разрешения сайтов"),
+            Tr(L"Notifications and location: sites will ask again.", L"Уведомления и местоположение: сайты спросят снова."),
+            &s_clearChoice.permissions, none));
+        p.rows.push_back(RToggle(Tr(L"Saved passwords", L"Сохранённые пароли"),
+            Tr(L"Used in this period. They cannot be restored.", L"Использованные за этот период. Вернуть их нельзя."),
+            &s_clearChoice.passwords, none));
+        p.rows.push_back(RHeader(L""));
+        p.rows.push_back(RButton(Tr(L"Clear the chosen data", L"Удалить выбранные данные"), s_clearStatus.c_str(),
+            Tr(L"Clear", L"Удалить"), []() { ClearChosenData(); }));
+        s_clearDataPageIndex = (int)g_pages.size();
         g_pages.push_back(std::move(p));
     }
 }
