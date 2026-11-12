@@ -39,13 +39,62 @@ const char kScript[] = R"JS((function () {
     if (!pick) list.forEach(function (v) { if (v.currentSrc && (!pick || area(v) > area(pick))) pick = v; });
     return pick;
   }
-  function enter() {
+  // A placeholder over the video in the page while it plays in the window (the engine stops drawing
+  // it there), with a button back. Inserted right after the video, so the site's own controls,
+  // which sit above the video, stay above it too.
+  var holder = null, holderTexts = ['', ''], holderObserver = null;
+  function makeHolder() {
+    var host = document.createElement('div');
+    host.setAttribute('data-lyra-pip-holder', '');
+    var root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = '<style>:host{all:initial}' +
+      '.p{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;' +
+      'background:radial-gradient(ellipse at center,#25252b 0%,#0c0c0f 75%);color:#e9e9ee;font:500 14px "Segoe UI",system-ui,sans-serif;' +
+      'text-align:center;user-select:none;cursor:default;padding:12px;box-sizing:border-box;overflow:hidden}' +
+      'svg{opacity:.8;flex:none}.small span{display:none}.small svg{width:40px;height:32px}' +
+      'b{all:unset;padding:7px 14px;border-radius:16px;background:rgba(255,255,255,.12);font:600 12px "Segoe UI",system-ui,sans-serif;cursor:pointer}' +
+      'b:hover{background:rgba(255,255,255,.22)}</style>' +
+      '<div class="p"><svg width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="currentColor" stroke-width="2.5">' +
+      '<rect x="2" y="2" width="52" height="40" rx="5"/><rect x="27" y="21" width="21" height="15" rx="3" fill="currentColor" stroke="none"/></svg>' +
+      '<span></span><b></b></div>';
+    root.querySelector('span').textContent = holderTexts[0];
+    root.querySelector('b').textContent = holderTexts[1];
+    root.querySelector('b').addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      h.postMessage(['exit']).catch(function () {});
+    }, true);
+    // The page's player must not take clicks on it for its own (play / pause, full screen).
+    ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(function (type) {
+      host.addEventListener(type, function (e) { e.stopPropagation(); }, false);
+    });
+    host.__lyraPanel = root.querySelector('.p');
+    return host;
+  }
+  function placeHolder() {
+    if (!current || !current.parentNode) return;
+    if (!holder) holder = makeHolder();
+    if (holder.previousSibling !== current) current.parentNode.insertBefore(holder, current.nextSibling);
+    var st = 'position:absolute;display:block;margin:0;pointer-events:auto;left:' + current.offsetLeft + 'px;top:' + current.offsetTop +
+      'px;width:' + current.offsetWidth + 'px;height:' + current.offsetHeight + 'px';
+    if (holder.style.cssText !== st) holder.style.cssText = st;
+    holder.__lyraPanel.className = 'p' + (current.offsetHeight < 150 || current.offsetWidth < 260 ? ' small' : '');
+    if (!holderObserver && window.ResizeObserver) holderObserver = new ResizeObserver(placeHolder);
+    if (holderObserver) { holderObserver.disconnect(); holderObserver.observe(current); }
+  }
+  function removeHolder() {
+    if (holderObserver) holderObserver.disconnect();
+    if (holder && holder.parentNode) holder.parentNode.removeChild(holder);
+  }
+  function enter(text, button) {
     var v = pending || best();
     pending = null;
     if (!v) return '';
     leave();
     current = v;
     v.setAttribute('data-lyra-pip', '');
+    if (text) holderTexts = [text, button || ''];
+    holder = null;
+    placeHolder();
     hideButton();
     keepTimer = setInterval(keep, 250);
     try { v.dispatchEvent(new Event('enterpictureinpicture')); } catch (e) {}
@@ -61,6 +110,7 @@ const char kScript[] = R"JS((function () {
       current = b;
     }
     if (!current.hasAttribute('data-lyra-pip')) current.setAttribute('data-lyra-pip', '');
+    placeHolder();
   }
   function leave() {
     if (!current) return;
@@ -68,6 +118,7 @@ const char kScript[] = R"JS((function () {
     var v = current;
     current = null;
     v.removeAttribute('data-lyra-pip');
+    removeHolder();
     try { v.dispatchEvent(new Event('leavepictureinpicture')); } catch (e) {}
   }
   // "Back to tab": leaves, brings the video into view if it was scrolled away, and tells where it is:
@@ -147,7 +198,7 @@ const char kScript[] = R"JS((function () {
   var raf = 0, lastX = 0, lastY = 0;
   document.addEventListener('mousemove', function (e) {
     lastX = e.clientX; lastY = e.clientY;
-    if (raf || current) return;
+    if (raf || current) return;                     // (in picture-in-picture: no button)
     raf = requestAnimationFrame(function () {
       raf = 0;
       var found = null;
@@ -916,7 +967,10 @@ void PipStart(Tab& t) {
     if (!t.page || !t.hwnd) return;
     DestroyFly();
     if (s_window) PipExit(false, false);                 // one at a time
-    WKStringRef js = WKStringCreateWithUTF8CString("window.__lyraPip ? window.__lyraPip.enter() : ''");
+    const std::wstring call = L"window.__lyraPip ? window.__lyraPip.enter(" +
+        JsString(Tr(L"Playing in picture-in-picture", L"Воспроизводится в окне «картинка в картинке»")) + L", " +
+        JsString(Tr(L"Back to tab", L"Вернуть во вкладку")) + L") : ''";
+    WKStringRef js = WKStringCreateWithUTF8CString(ToUtf8(call).c_str());
     WKPageEvaluateJavaScriptInMainFrame(t.page, js, (void*)(uintptr_t)t.id, OnEntered);
     WKRelease(js);
 }
