@@ -39,6 +39,16 @@ const char kScript[] = R"JS((function () {
     if (!pick) list.forEach(function (v) { if (v.currentSrc && (!pick || area(v) > area(pick))) pick = v; });
     return pick;
   }
+  // Built with DOM calls, not innerHTML: pages with Trusted Types (YouTube, sometimes) refuse
+  // innerHTML, and enter() failed halfway (the video marked, no window).
+  var SVG = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs, kids) {
+    var svg = tag === 'svg' || tag === 'rect';
+    var e = svg ? document.createElementNS(SVG, tag) : document.createElement(tag);
+    for (var k in attrs || {}) { if (k === 'text') e.textContent = attrs[k]; else e.setAttribute(k, attrs[k]); }
+    (kids || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
   // A placeholder over the video in the page while it plays in the window (the engine stops drawing
   // it there), with a button back. Inserted right after the video, so the site's own controls,
   // which sit above the video, stay above it too.
@@ -47,19 +57,22 @@ const char kScript[] = R"JS((function () {
     var host = document.createElement('div');
     host.setAttribute('data-lyra-pip-holder', '');
     var root = host.attachShadow({ mode: 'closed' });
-    root.innerHTML = '<style>:host{all:initial}' +
+    var css = ':host{all:initial}' +
       '.p{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;' +
       'background:radial-gradient(ellipse at center,#25252b 0%,#0c0c0f 75%);color:#e9e9ee;font:500 14px "Segoe UI",system-ui,sans-serif;' +
       'text-align:center;user-select:none;cursor:default;padding:12px;box-sizing:border-box;overflow:hidden}' +
       'svg{opacity:.8;flex:none}.small span{display:none}.small svg{width:40px;height:32px}' +
       'b{all:unset;padding:7px 14px;border-radius:16px;background:rgba(255,255,255,.12);font:600 12px "Segoe UI",system-ui,sans-serif;cursor:pointer}' +
-      'b:hover{background:rgba(255,255,255,.22)}</style>' +
-      '<div class="p"><svg width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="currentColor" stroke-width="2.5">' +
-      '<rect x="2" y="2" width="52" height="40" rx="5"/><rect x="27" y="21" width="21" height="15" rx="3" fill="currentColor" stroke="none"/></svg>' +
-      '<span></span><b></b></div>';
-    root.querySelector('span').textContent = holderTexts[0];
-    root.querySelector('b').textContent = holderTexts[1];
-    root.querySelector('b').addEventListener('click', function (e) {
+      'b:hover{background:rgba(255,255,255,.22)}';
+    var back = el('b', { text: holderTexts[1] });
+    var panel = el('div', { 'class': 'p' }, [
+      el('svg', { width: '56', height: '44', viewBox: '0 0 56 44', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.5' }, [
+        el('rect', { x: '2', y: '2', width: '52', height: '40', rx: '5' }),
+        el('rect', { x: '27', y: '21', width: '21', height: '15', rx: '3', fill: 'currentColor', stroke: 'none' })]),
+      el('span', { text: holderTexts[0] }), back]);
+    root.appendChild(el('style', { text: css }));
+    root.appendChild(panel);
+    back.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
       h.postMessage(['exit']).catch(function () {});
     }, true);
@@ -67,7 +80,7 @@ const char kScript[] = R"JS((function () {
     ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(function (type) {
       host.addEventListener(type, function (e) { e.stopPropagation(); }, false);
     });
-    host.__lyraPanel = root.querySelector('.p');
+    host.__lyraPanel = panel;
     return host;
   }
   function placeHolder() {
@@ -94,7 +107,7 @@ const char kScript[] = R"JS((function () {
     v.setAttribute('data-lyra-pip', '');
     if (text) holderTexts = [text, button || ''];
     holder = null;
-    placeHolder();
+    try { placeHolder(); } catch (e) {}           // the window comes even without the placeholder
     hideButton();
     keepTimer = setInterval(keep, 250);
     try { v.dispatchEvent(new Event('enterpictureinpicture')); } catch (e) {}
@@ -179,12 +192,16 @@ const char kScript[] = R"JS((function () {
     var host = document.createElement('div');
     host.style.cssText = 'position:fixed;z-index:2147483646;top:0;left:0;display:none';
     var root = host.attachShadow({ mode: 'closed' });
-    root.innerHTML = '<style>b{all:initial;display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:14px;' +
+    var css = 'b{all:initial;display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:14px;' +
       'background:rgba(20,20,24,.82);color:#fff;font:600 12px "Segoe UI",system-ui,sans-serif;cursor:pointer;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,.35)}b:hover{background:rgba(70,70,80,.92)}svg{display:block}</style>' +
-      '<b title="Picture in picture"><svg width="16" height="14" viewBox="0 0 16 14" fill="none" stroke="#fff" stroke-width="1.4">' +
-      '<rect x="1" y="1" width="14" height="12" rx="2"/><rect x="8" y="7" width="5" height="4" rx="1" fill="#fff"/></svg></b>';
-    root.querySelector('b').addEventListener('click', function (e) {
+      'box-shadow:0 2px 8px rgba(0,0,0,.35)}b:hover{background:rgba(70,70,80,.92)}svg{display:block}';
+    var b = el('b', { title: 'Picture in picture' }, [
+      el('svg', { width: '16', height: '14', viewBox: '0 0 16 14', fill: 'none', stroke: '#fff', 'stroke-width': '1.4' }, [
+        el('rect', { x: '1', y: '1', width: '14', height: '12', rx: '2' }),
+        el('rect', { x: '8', y: '7', width: '5', height: '4', rx: '1', fill: '#fff' })])]);
+    root.appendChild(el('style', { text: css }));
+    root.appendChild(b);
+    b.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
       if (!over) return;
       pending = over;
@@ -223,6 +240,12 @@ const char kScript[] = R"JS((function () {
 HWND s_window = nullptr;                  // the picture-in-picture window (the engine draws the video into it)
 HWND s_overlay = nullptr;                 // the controls over it (layered, shown while the pointer is on it)
 unsigned long long s_tabId = 0;
+// A start waits for the page's answer (enter()). A fast double click asks twice before the window
+// exists: the second ask must not make a second window (the first one stayed, black), and an exit
+// before the answer cancels the start. Each start has its own number; a stale answer changes nothing.
+unsigned s_startSeq = 0;                  // the start in flight (0: none)
+unsigned long long s_startTab = 0;
+struct StartContext { unsigned long long tabId; unsigned seq; };
 float s_aspect = 16.f / 9.f;              // video width / height
 std::wstring s_title;
 std::unique_ptr<Font> s_fGlyph, s_fBig, s_fText;
@@ -913,13 +936,26 @@ void DestroyPipWindow() {
 }
 
 void OnEntered(WKTypeRef result, WKErrorRef, void* ctx) {
-    const unsigned long long tabId = (unsigned long long)(uintptr_t)ctx;
+    std::unique_ptr<StartContext> start((StartContext*)ctx);
+    const unsigned long long tabId = start->tabId;
     std::wstring size;
     if (result && WKGetTypeID(result) == WKStringGetTypeID()) size = WKStr((WKStringRef)result);
     Tab* t = nullptr;
     for (auto& tp : g_tabs) if (tp->id == tabId && tp->state == TabState::Live) t = tp.get();
+    if (start->seq != s_startSeq) {
+        // Cancelled (exit before the answer) or replaced by a start on another tab. The page marked
+        // its video: unmark it, unless that tab is in picture-in-picture now or starts again (its
+        // enter() comes later and marks the video anew; a leave() now would run after it).
+        Log("pip: stale start #%u for tab#%llu", start->seq, tabId);
+        const bool inUse = (s_window && s_tabId == tabId) || (s_startSeq && s_startTab == tabId);
+        if (t && !size.empty() && !inUse) RunJs(t->page, "window.__lyraPip && __lyraPip.leave()");
+        return;
+    }
+    s_startSeq = 0;
     if (!t || !t->hwnd || !t->view) return;
+    if (size.rfind(L"ERR ", 0) == 0) { Log("pip: enter() failed: %s", ToUtf8(size).c_str()); size.clear(); }
     if (size.empty()) { Log("pip: no video on tab#%llu", tabId); MessageBeep(MB_ICONWARNING); return; }
+    if (s_window) DestroyPipWindow();     // (cannot happen: starts wait for each other) never two windows
     int vw = 16, vh = 9;
     swscanf_s(size.c_str(), L"%dx%d", &vw, &vh);
     s_aspect = (vw > 0 && vh > 0) ? std::min(3.f, std::max(0.5f, (float)vw / (float)vh)) : 16.f / 9.f;
@@ -965,18 +1001,26 @@ bool PipActive() { return s_window != nullptr; }
 
 void PipStart(Tab& t) {
     if (!t.page || !t.hwnd) return;
+    if (s_startSeq && s_startTab == t.id) { Log("pip: tab#%llu is already starting", t.id); return; }
+    if (s_window && s_tabId == t.id) { Log("pip: tab#%llu is already in picture-in-picture", t.id); return; }
     DestroyFly();
     if (s_window) PipExit(false, false);                 // one at a time
-    const std::wstring call = L"window.__lyraPip ? window.__lyraPip.enter(" +
+    static unsigned counter = 0;
+    if (++counter == 0) ++counter;
+    s_startSeq = counter;
+    s_startTab = t.id;
+    // In a try: an exception in enter() reaches Lyra as "ERR ..." (this API drops script errors).
+    const std::wstring call = L"(function(){try{return window.__lyraPip ? window.__lyraPip.enter(" +
         JsString(Tr(L"Playing in picture-in-picture", L"Воспроизводится в окне «картинка в картинке»")) + L", " +
-        JsString(Tr(L"Back to tab", L"Вернуть во вкладку")) + L") : ''";
+        JsString(Tr(L"Back to tab", L"Вернуть во вкладку")) + L") : '';}catch(e){return 'ERR '+e+' '+(e&&e.stack);}})()";
     WKStringRef js = WKStringCreateWithUTF8CString(ToUtf8(call).c_str());
-    WKPageEvaluateJavaScriptInMainFrame(t.page, js, (void*)(uintptr_t)t.id, OnEntered);
+    WKPageEvaluateJavaScriptInMainFrame(t.page, js, new StartContext { t.id, s_startSeq }, OnEntered);
     WKRelease(js);
 }
 
 void PipToggleActive() {
     if (s_window) { PipExit(false, true); return; }
+    if (s_startSeq) { Log("pip: start cancelled"); s_startSeq = 0; return; }   // pressed again before the window
     if (Tab* t = ActiveTab()) PipStart(*t);
 }
 
@@ -1014,6 +1058,7 @@ void PipExit(bool pause, bool showTab) {
 }
 
 void PipDetach(Tab& t) {
+    if (s_startSeq && s_startTab == t.id) s_startSeq = 0;
     if (!s_window || s_tabId != t.id) return;
     DestroyFly();
     if (t.page) WKPageSetVideoPictureInPictureWindow(t.page, 0, false);
@@ -1026,5 +1071,8 @@ void PipMessage(WPARAM tabId, LPARAM what) {
         for (auto& t : g_tabs) if (t->id == (unsigned long long)tabId && t->state == TabState::Live) { PipStart(*t); return; }
     } else if (s_window && s_tabId == (unsigned long long)tabId) {
         PipExit(false, true);
+    } else if (s_startSeq && s_startTab == (unsigned long long)tabId) {
+        Log("pip: start cancelled");                     // exit before the window: no window at all
+        s_startSeq = 0;
     }
 }
