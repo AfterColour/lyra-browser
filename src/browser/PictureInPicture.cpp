@@ -13,6 +13,7 @@
 
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKMutableDictionary.h>
+#include <WebKit/WKPagePrivate.h>                      // WKPageSetVideoPictureInPictureWindow
 #include <WebKit/WKPageFullScreenClient.h>      // WKCompletionListenerComplete
 #include <WebKit/WKScriptMessageRef.h>
 #include <WebKit/WKUserContentControllerRef.h>
@@ -21,25 +22,15 @@
 
 namespace {
 
-// Main frame, document start. __lyraPip.enter() marks the video and switches the page to "only
-// the video" (returns "W x H"), leave() undoes it. A small button over videos and the standard
+// Main frame, document start. __lyraPip.enter() marks the video (data-lyra-pip; returns "W x H"):
+// the engine draws it into Lyra's window too (WKPageSetVideoPictureInPictureWindow), and the page
+// stays as it is and keeps working. leave() unmarks it. A small button over videos and the standard
 // requestPictureInPicture() ask Lyra through the lyraPip message handler.
 const char kScript[] = R"JS((function () {
   if (window.__lyraPip) return;
   var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lyraPip;
   if (!h) return;
-  var current = null, pending = null, style = null, toggleFn = null, savedX = 0, savedY = 0;
-  var CSS =
-    'html[data-lyra-pip-mode], html[data-lyra-pip-mode] body { overflow: hidden !important; background: #000 !important; }' +
-    'html[data-lyra-pip-mode] body * { visibility: hidden !important; }' +
-    'html[data-lyra-pip-mode] [data-lyra-pip-anc] { transform: none !important; filter: none !important; contain: none !important;' +
-    '  perspective: none !important; will-change: auto !important; translate: none !important; scale: none !important;' +
-    '  rotate: none !important; backdrop-filter: none !important; zoom: 1 !important; content-visibility: visible !important;' +
-    '  position: static !important; margin: 0 !important; padding: 0 !important; border: 0 !important; }' +
-    'html[data-lyra-pip-mode] video[data-lyra-pip] { visibility: visible !important; position: absolute !important; left: 0 !important;' +
-    '  top: 0 !important; right: auto !important; bottom: auto !important; width: 100vw !important; height: 100vh !important;' +
-    '  max-width: none !important; max-height: none !important; margin: 0 !important; transform: none !important;' +
-    '  object-fit: contain !important; background: #000 !important; z-index: 2147483647 !important; }';
+  var current = null, pending = null;
   function videos() { return Array.prototype.slice.call(document.querySelectorAll('video')); }
   function area(v) { var r = v.getBoundingClientRect(); return r.width * r.height; }
   function best() {
@@ -53,59 +44,23 @@ const char kScript[] = R"JS((function () {
     pending = null;
     if (!v) return '';
     leave();
-    savedX = window.scrollX; savedY = window.scrollY;
-    var was = v.getBoundingClientRect();
     current = v;
     v.setAttribute('data-lyra-pip', '');
-    for (var a = v.parentElement; a; a = a.parentElement) a.setAttribute('data-lyra-pip-anc', '');
-    style = document.createElement('style');
-    style.textContent = CSS;
-    document.documentElement.appendChild(style);
-    document.documentElement.setAttribute('data-lyra-pip-mode', '');
-    toggleFn = function (e) { e.preventDefault(); e.stopPropagation(); var c = current || v; if (c.paused) c.play(); else c.pause(); };
-    v.addEventListener('click', toggleFn, true);
     hideButton();
-    offX = offY = 0;
     keepTimer = setInterval(keep, 250);
-    setTimeout(align, 0);
     try { v.dispatchEvent(new Event('enterpictureinpicture')); } catch (e) {}
-    return (v.videoWidth || 16) + 'x' + (v.videoHeight || 9) + '|' + [was.left, was.top, was.width, was.height, innerWidth, innerHeight].join(',');
+    return (v.videoWidth || 16) + 'x' + (v.videoHeight || 9);
   }
-  // Sites re-render while playing (YouTube swaps the video for ads): keep the marks on the
-  // playing video and its ancestors, and the page scrolled to the top.
+  // The next video, or a site swapping its <video> element (YouTube's ads): follow the one playing.
   var keepTimer = 0;
-  function mark(v) {
-    v.setAttribute('data-lyra-pip', '');
-    for (var a = v.parentElement; a; a = a.parentElement) if (!a.hasAttribute('data-lyra-pip-anc')) a.setAttribute('data-lyra-pip-anc', '');
-  }
-  // Some pages put the video under an element that becomes the reference for "fixed" (YouTube's
-  // player sits below its 56 px top bar): measure where the video landed and move it to 0,0.
-  var offX = 0, offY = 0;
-  function align() {
-    if (!current) return;
-    var r = current.getBoundingClientRect();
-    if (Math.abs(r.top) < 0.5 && Math.abs(r.left) < 0.5) return;
-    offX -= r.left; offY -= r.top;
-    current.style.setProperty('left', offX + 'px', 'important');
-    current.style.setProperty('top', offY + 'px', 'important');
-  }
-  function unalign(v) { v.style.removeProperty('left'); v.style.removeProperty('top'); offX = offY = 0; }
-  window.addEventListener('resize', function () { setTimeout(align, 0); }, true);
   function keep() {
     if (!current) return;
-    if (!current.isConnected || (current.paused && best() && best() !== current && !best().paused)) {
-      var b = best();
-      if (b && b !== current) {
-        current.removeAttribute('data-lyra-pip');
-        current.removeEventListener('click', toggleFn, true);
-        unalign(current);
-        current = b;
-        current.addEventListener('click', toggleFn, true);
-      }
+    var b = best();
+    if (b && b !== current && (!current.isConnected || (current.paused && !b.paused))) {
+      current.removeAttribute('data-lyra-pip');
+      current = b;
     }
-    mark(current);
-    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
-    align();
+    if (!current.hasAttribute('data-lyra-pip')) current.setAttribute('data-lyra-pip', '');
   }
   function leave() {
     if (!current) return;
@@ -113,44 +68,36 @@ const char kScript[] = R"JS((function () {
     var v = current;
     current = null;
     v.removeAttribute('data-lyra-pip');
-    v.removeEventListener('click', toggleFn, true);
-    unalign(v);
-    Array.prototype.forEach.call(document.querySelectorAll('[data-lyra-pip-anc]'), function (e) { e.removeAttribute('data-lyra-pip-anc'); });
-    document.documentElement.removeAttribute('data-lyra-pip-mode');
-    if (style) style.remove();
-    style = null;
-    window.scrollTo(savedX, savedY);
     try { v.dispatchEvent(new Event('leavepictureinpicture')); } catch (e) {}
   }
-  // Leaves, then (once the page has laid out again in its own size) tells where the video is:
+  // "Back to tab": leaves, brings the video into view if it was scrolled away, and tells where it is:
   // "left,top,width,height,viewport width,viewport height" in CSS pixels.
-  function leaveMeasured() {
+  function back() {
     var v = current;
     leave();
-    if (!v) return Promise.resolve('');
+    if (!v || !v.isConnected) return Promise.resolve('');
+    function where() {
+      var r = v.getBoundingClientRect();
+      return [r.left, r.top, r.width, r.height, innerWidth, innerHeight].map(function (n) { return Math.round(n * 10) / 10; }).join(',');
+    }
+    var r = v.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) return Promise.resolve(where());
+    v.scrollIntoView({ block: 'center' });
     return new Promise(function (resolve) {
-      var done = false;
-      function measure() {
-        if (done) return;
-        done = true;
-        var r = v.getBoundingClientRect();
-        resolve([r.left, r.top, r.width, r.height, innerWidth, innerHeight].map(function (n) { return Math.round(n * 10) / 10; }).join(','));
-      }
-      requestAnimationFrame(function () { requestAnimationFrame(measure); });
-      setTimeout(measure, 300);
+      requestAnimationFrame(function () { requestAnimationFrame(function () { resolve(where()); }); });
+      setTimeout(function () { resolve(where()); }, 300);
     });
   }
   Object.defineProperty(window, '__lyraPip', { value: {
-    enter: enter, leave: leave, leaveMeasured: leaveMeasured,
+    enter: enter, leave: leave, back: back,
     pause: function () { if (current) current.pause(); },
     title: function () { return document.title || location.hostname; },
-    // "paused|time|duration|muted|viewport|video rect" for the window's controls
+    // "paused|time|duration|muted|video size|volume" for the window's controls
     state: function () {
       var v = current;
       if (!v) return '';
-      var r = v.getBoundingClientRect();
       return [v.paused ? 1 : 0, v.currentTime || 0, isFinite(v.duration) ? v.duration : 0, v.muted ? 1 : 0,
-              innerWidth + 'x' + innerHeight, Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height)].join('|');
+              (v.videoWidth || 0) + 'x' + (v.videoHeight || 0), v.volume].join('|');
     },
     cmd: function (c, arg) {
       var v = current;
@@ -159,6 +106,7 @@ const char kScript[] = R"JS((function () {
       else if (c === 'seek') v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.1, v.currentTime + arg));
       else if (c === 'seekTo') v.currentTime = arg;
       else if (c === 'mute') v.muted = !v.muted;
+      else if (c === 'volume') { v.volume = Math.max(0, Math.min(1, arg)); if (arg > 0) v.muted = false; }
     }
   }});
 
@@ -221,7 +169,7 @@ const char kScript[] = R"JS((function () {
   }, true);
 })();)JS";
 
-HWND s_window = nullptr;                  // the picture-in-picture window (holds the tab's view)
+HWND s_window = nullptr;                  // the picture-in-picture window (the engine draws the video into it)
 HWND s_overlay = nullptr;                 // the controls over it (layered, shown while the pointer is on it)
 unsigned long long s_tabId = 0;
 float s_aspect = 16.f / 9.f;              // video width / height
@@ -229,14 +177,22 @@ std::wstring s_title;
 std::unique_ptr<Font> s_fGlyph, s_fBig, s_fText;
 
 // What the page reported last (VideoState) and the controls' state.
-struct VideoState { bool paused = true, muted = false; double time = 0, duration = 0; };
+struct VideoState { bool paused = true, muted = false; double time = 0, duration = 0, volume = 1; };
 VideoState s_state;
 int s_hover = 0, s_down = 0;
 bool s_overlayShown = false, s_polling = false;
-DWORD s_lastInside = 0, s_lastPoll = 0;
+DWORD s_lastInside = 0, s_lastPoll = 0, s_lastEnsure = 0, s_volumeHoverAt = 0;
+bool s_volumeDrawn = false;
+bool s_pressed = false;                   // a press on the video: a click plays / pauses, a drag moves the window
+POINT s_pressAt = {};
 constexpr UINT_PTR kTimer = 1;
 
-enum Button { kNone, kBack10, kPlay, kFwd10, kMute, kToTab, kClose, kProgress, kDrag };
+enum Button { kNone, kBack10, kPlay, kFwd10, kMute, kToTab, kClose, kProgress, kVolume, kDrag };
+
+// The volume slider pops up above the mute button while the pointer is on either (and a moment after).
+bool VolumeShown() {
+    return s_hover == kMute || s_hover == kVolume || s_down == kVolume || GetTickCount() - s_volumeHoverAt < 450;
+}
 
 Tab* PipTab() {
     for (auto& t : g_tabs) if (t->id == s_tabId && t->state == TabState::Live) return t.get();
@@ -246,7 +202,7 @@ Tab* PipTab() {
 RECT WindowRc() { RECT rc; GetWindowRect(s_window, &rc); return rc; }
 
 // Overlay layout, in its own pixels (it covers the window exactly).
-struct OverlayLayout { RectF back10, play, fwd10, mute, toTab, close, progress; float w, h; };
+struct OverlayLayout { RectF back10, play, fwd10, mute, toTab, close, progress, volume; float w, h; };
 OverlayLayout Layout() {
     const RECT rc = WindowRc();
     OverlayLayout L;
@@ -261,7 +217,16 @@ OverlayLayout Layout() {
     L.toTab = RectF(L.close.X - S(4) - top, S(8), top, top);
     L.mute = RectF(L.w - S(8) - top, L.h - S(8) - top, top, top);
     L.progress = RectF(S(14), L.h - S(8) - top / 2 - S(10), L.mute.X - S(28), S(20));   // hit area; the bar is thin
+    const float vw = S(30), vh = std::min(S(118), L.mute.Y - S(6) - S(8));
+    L.volume = vh >= S(48) ? RectF(L.mute.X + (top - vw) / 2, L.mute.Y - S(6) - vh, vw, vh) : RectF();
     return L;
+}
+
+// Volume (0..1) at a height on the slider's track.
+double VolumeAt(const OverlayLayout& L, float y) {
+    const float top = L.volume.Y + S(13), bottom = L.volume.GetBottom() - S(13);
+    if (bottom <= top) return s_state.volume;
+    return std::min(1.0, std::max(0.0, (double)(bottom - y) / (bottom - top)));
 }
 
 int HitAt(float x, float y) {
@@ -272,6 +237,7 @@ int HitAt(float x, float y) {
     if (L.close.Contains(x, y)) return kClose;
     if (L.toTab.Contains(x, y)) return kToTab;
     if (L.mute.Contains(x, y)) return kMute;
+    if (L.volume.Height > 0 && VolumeShown() && L.volume.Contains(x, y)) return kVolume;
     if (L.progress.Contains(x, y) && s_state.duration > 0) return kProgress;
     return kDrag;
 }
@@ -342,7 +308,20 @@ void RenderOverlay() {
         else circle(L.close, kClose, 110);
         DrawGlyph(g, L"", L.close, white, s_fGlyph.get());
         circle(L.mute, kMute, 110);
-        DrawGlyph(g, s_state.muted ? L"" : L"", L.mute, white, s_fGlyph.get());
+        const double level = s_state.muted ? 0 : s_state.volume;
+        DrawGlyph(g, (s_state.muted || level <= 0) ? L"\uE74F" : level < 0.5 ? L"\uE993" : L"\uE767", L.mute, white, s_fGlyph.get());
+        s_volumeDrawn = L.volume.Height > 0 && VolumeShown();
+        if (s_volumeDrawn) {
+            const RectF& v = L.volume;
+            FillRound(g, Color(185, 20, 20, 24), v, v.Width / 2);
+            const float x = v.X + v.Width / 2, top = v.Y + S(13), bottom = v.GetBottom() - S(13), barW = S(4);
+            const float y = bottom - (float)level * (bottom - top);
+            FillRound(g, Color(90, 255, 255, 255), RectF(x - barW / 2, top, barW, bottom - top), barW / 2);
+            FillRound(g, white, RectF(x - barW / 2, y, barW, std::max(barW, bottom - y)), barW / 2);
+            SolidBrush knob(white);
+            const float k = s_down == kVolume || s_hover == kVolume ? S(7) : S(6);
+            g.FillEllipse(&knob, x - k, y - k, 2 * k, 2 * k);
+        }
 
         if (s_state.duration > 0) {
             const RectF& p = L.progress;
@@ -387,6 +366,13 @@ void Command(const char* cmd, double arg = 0) {
     s_lastPoll = 0;                                      // show the change at once
 }
 
+void SetVolume(double v) {
+    s_state.volume = v;
+    if (v > 0) s_state.muted = false;
+    Command("volume", v);
+    RenderOverlay();
+}
+
 void OnState(WKTypeRef result, WKErrorRef, void*) {
     s_polling = false;
     std::wstring s;
@@ -397,6 +383,8 @@ void OnState(WKTypeRef result, WKErrorRef, void*) {
     if (swscanf_s(s.c_str(), L"%d|%lf|%lf|%d", &paused, &v.time, &v.duration, &muted) >= 3) {
         v.paused = paused != 0;
         v.muted = muted != 0;
+        if (size_t bar = s.rfind(L'|'); bar != std::wstring::npos) swscanf_s(s.c_str() + bar + 1, L"%lf", &v.volume);
+        if (s_down == kVolume) v.volume = s_state.volume;    // dragging: what the pointer says
         s_state = v;
         if (s_overlayShown) RenderOverlay();
     }
@@ -425,13 +413,16 @@ void ShowOverlay(bool show) {
     }
 }
 
-void PlaceView() {
+// Tells the engine (again) to draw the tab's marked video into the window. Repeated from time to time:
+// the marked video or its player change with the next video. `redraw`: the window was resized.
+void EnsureVideoInWindow(bool redraw) {
     Tab* t = PipTab();
-    if (t && t->pipHwnd) {
-        RECT rc;
-        GetClientRect(s_window, &rc);
-        MoveWindow(t->pipHwnd, 0, 0, std::max(1L, rc.right), std::max(1L, rc.bottom), TRUE);
-    }
+    if (!t || !t->page || !s_window) return;
+    s_lastEnsure = GetTickCount();
+    WKPageSetVideoPictureInPictureWindow(t->page, (uint64_t)(uintptr_t)s_window, redraw);
+}
+
+void PlaceView() {
     if (s_overlayShown) RenderOverlay();
 }
 
@@ -471,8 +462,16 @@ LRESULT CALLBACK OverlayProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
         return TRUE;
     }
     case WM_MOUSEMOVE: {
+        if (s_down == kVolume) { SetVolume(VolumeAt(Layout(), (float)GET_Y_LPARAM(lParam))); return 0; }
         const int hit = HitAt((float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam));
+        if (hit == kMute || hit == kVolume) s_volumeHoverAt = GetTickCount();
         if (hit != s_hover) { s_hover = hit; RenderOverlay(); }
+        return 0;
+    }
+    case WM_MOUSEWHEEL: {                                // volume
+        const double step = GET_WHEEL_DELTA_WPARAM(wParam) / (double)WHEEL_DELTA * 0.05;
+        SetVolume(std::min(1.0, std::max(0.0, (s_state.muted ? 0 : s_state.volume) + step)));
+        s_volumeHoverAt = GetTickCount();
         return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -490,6 +489,11 @@ LRESULT CALLBACK OverlayProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         s_down = HitAt((float)x, (float)y);
+        if (s_down == kVolume) {
+            SetCapture(h);
+            SetVolume(VolumeAt(Layout(), (float)y));
+            return 0;
+        }
         if (s_down == kDrag) {                           // move the window by any empty part
             s_down = 0;
             ReleaseCapture();
@@ -507,6 +511,13 @@ LRESULT CALLBACK OverlayProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (s_down == kVolume) {
+            s_down = 0;
+            if (GetCapture() == h) ReleaseCapture();
+            s_volumeHoverAt = GetTickCount();
+            RenderOverlay();
+            return 0;
+        }
         const int hit = HitAt((float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam));
         const int down = s_down;
         s_down = 0;
@@ -539,8 +550,33 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
         KeepAspect(wParam, (RECT*)lParam);
         return TRUE;
     case WM_SIZE:
+        PlaceView();
+        EnsureVideoInWindow(true);
+        return 0;
     case WM_MOVE:
         PlaceView();
+        return 0;
+    case WM_LBUTTONDOWN:                                 // the video itself (under the overlay's clear parts)
+        s_pressed = true;
+        s_pressAt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        SetCapture(h);
+        return 0;
+    case WM_MOUSEMOVE:
+        if (s_pressed && (std::abs(GET_X_LPARAM(lParam) - s_pressAt.x) > 4 || std::abs(GET_Y_LPARAM(lParam) - s_pressAt.y) > 4)) {
+            s_pressed = false;
+            ReleaseCapture();
+            SendMessageW(h, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (s_pressed) {
+            s_pressed = false;
+            ReleaseCapture();
+            Command("toggle");
+        }
+        return 0;
+    case WM_MOUSEWHEEL:
+        if (s_overlay) SendMessageW(s_overlay, WM_MOUSEWHEEL, wParam, lParam);
         return 0;
     case WM_ERASEBKGND: {
         RECT rc;
@@ -559,6 +595,8 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
         const bool busy = GetCapture() == s_overlay || (GetKeyState(VK_LBUTTON) & 0x8000);
         ShowOverlay(inside || busy || now - s_lastInside < 400);
         if (s_overlayShown && now - s_lastPoll > 500) Poll();
+        if (s_overlayShown && VolumeShown() != s_volumeDrawn) RenderOverlay();   // the slider's moment after
+        if (now - s_lastEnsure > 500) EnsureVideoInWindow(false);
         return 0;
     }
     case WM_CLOSE:
@@ -629,7 +667,6 @@ DWORD s_flyCreated = 0, s_flyStart = 0;
 bool s_flyHasTarget = false;
 DWORD s_flyReadyAt = 0;                // the page has laid out again (0: not yet)
 DWORD s_flyFadeStart = 0;
-float s_enterRect[6] = {};             // where the video was when it left the tab (CSS px + viewport)
 constexpr DWORD kFlyHoldMaxMs = 1200;  // longest wait over the landed video for the page
 constexpr DWORD kFlyFadeMs = 160;
 constexpr UINT_PTR kFlyTimer = 2;
@@ -729,7 +766,11 @@ LRESULT CALLBACK FlyProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 // A picture of the picture-in-picture window, shown where it is.
 bool StartFly() {
-    DestroyFly();
+    // A previous flight, if any (the picture of the tab stays: it is for this one).
+    if (s_fly) { HWND f = s_fly; s_fly = nullptr; KillTimer(f, kFlyTimer); DestroyWindow(f); }
+    if (s_flyBitmap) { DeleteObject(s_flyBitmap); s_flyBitmap = nullptr; }
+    s_flyHasTarget = false;
+    s_flyReadyAt = s_flyFadeStart = 0;
     if (!s_window) return false;
     static bool registered = false;
     HINSTANCE hi = GetModuleHandleW(nullptr);
@@ -792,7 +833,7 @@ bool VideoScreenRect(Tab& t, const float* v, RECT& out) {
 
 void OnLeaveMeasured(WKTypeRef result, WKErrorRef, void* ctx) {
     if (!s_fly) return;
-    s_flyReadyAt = GetTickCount() + 120;                 // a frame or two to paint it
+    s_flyReadyAt = GetTickCount() + 60;                  // a frame or two (the page did not change)
     const unsigned long long tabId = (unsigned long long)(uintptr_t)ctx;
     std::wstring s;
     if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = WKStr((WKStringRef)result);
@@ -812,21 +853,12 @@ void OnLeaveMeasured(WKTypeRef result, WKErrorRef, void* ctx) {
     SetFlyTarget(to);
 }
 
-// Gives the view back to the main window (hidden; SelectTab shows it).
-void ReturnView(Tab& t) {
-    if (!t.pipHwnd) return;
-    ShowWindow(t.pipHwnd, SW_HIDE);
-    WKViewSetParentWindow(t.view, g_hWnd);
-    t.hwnd = t.pipHwnd;
-    t.pipHwnd = nullptr;
-}
-
 void DestroyPipWindow() {
     if (s_overlay) { HWND o = s_overlay; s_overlay = nullptr; DestroyWindow(o); }
     if (s_window) { HWND h = s_window; s_window = nullptr; KillTimer(h, kTimer); DestroyWindow(h); }
     s_tabId = 0;
     s_hover = s_down = 0;
-    s_overlayShown = s_polling = false;
+    s_overlayShown = s_polling = s_pressed = false;
 }
 
 void OnEntered(WKTypeRef result, WKErrorRef, void* ctx) {
@@ -839,21 +871,12 @@ void OnEntered(WKTypeRef result, WKErrorRef, void* ctx) {
     if (size.empty()) { Log("pip: no video on tab#%llu", tabId); MessageBeep(MB_ICONWARNING); return; }
     int vw = 16, vh = 9;
     swscanf_s(size.c_str(), L"%dx%d", &vw, &vh);
-    for (float& f : s_enterRect) f = 0;
-    if (size_t bar = size.find(L'|'); bar != std::wstring::npos)
-        swscanf_s(size.c_str() + bar + 1, L"%f,%f,%f,%f,%f,%f", &s_enterRect[0], &s_enterRect[1], &s_enterRect[2], &s_enterRect[3], &s_enterRect[4], &s_enterRect[5]);
     s_aspect = (vw > 0 && vh > 0) ? std::min(3.f, std::max(0.5f, (float)vw / (float)vh)) : 16.f / 9.f;
     if (!CreatePipWindow(t->title)) { RunJs(t->page, "window.__lyraPip && __lyraPip.leave()"); return; }
     s_tabId = t->id;
-    t->pipHwnd = t->hwnd;
-    t->hwnd = nullptr;                    // the main window leaves this view alone meanwhile
-    WKViewSetParentWindow(t->view, s_window);
-    ShowWindow(t->pipHwnd, SW_SHOW);
-    PlaceView();
     ShowWindow(s_window, SW_SHOWNOACTIVATE);
+    EnsureVideoInWindow(false);           // the tab stays as it is, usable
     Log("pip: tab#%llu in picture-in-picture (%dx%d)", t->id, vw, vh);
-    RefreshLayout();
-    InvalidateRect(g_hWnd, nullptr, FALSE);
 }
 
 void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void*) {
@@ -906,13 +929,13 @@ void PipToggleActive() {
 void PipExit(bool pause, bool showTab) {
     Tab* t = PipTab();
     Log("pip: back%s", pause ? " (paused)" : "");
-    // "Back to tab" with the main window on screen: animate (the page is told to leave below,
-    // once the tab is shown in its own size).
+    // "Back to tab" with the main window on screen: the window's picture flies to the video (the
+    // page is asked below where it is, once the tab is shown).
     const bool fly = t && showTab && !pause && !IsIconic(g_hWnd) && StartFly();
     if (t) {
+        WKPageSetVideoPictureInPictureWindow(t->page, 0, false);
         if (pause) RunJs(t->page, "window.__lyraPip && (__lyraPip.pause(), __lyraPip.leave())");
         else if (!fly) RunJs(t->page, "window.__lyraPip && __lyraPip.leave()");
-        ReturnView(*t);
     }
     DestroyPipWindow();
     if (!t) return;
@@ -928,9 +951,7 @@ void PipExit(bool pause, bool showTab) {
     RefreshLayout();
     InvalidateRect(g_hWnd, nullptr, FALSE);
     if (fly) {
-        RECT to;
-        if (VideoScreenRect(*t, s_enterRect, to)) SetFlyTarget(to);
-        WKStringRef js = WKStringCreateWithUTF8CString("return window.__lyraPip ? await window.__lyraPip.leaveMeasured() : ''");
+        WKStringRef js = WKStringCreateWithUTF8CString("return window.__lyraPip ? await window.__lyraPip.back() : ''");
         WKMutableDictionaryRef args = WKMutableDictionaryCreate();
         WKPageCallAsyncJavaScript(t->page, js, (WKDictionaryRef)args, nullptr, (void*)(uintptr_t)t->id, OnLeaveMeasured);
         WKRelease(args);
@@ -939,9 +960,9 @@ void PipExit(bool pause, bool showTab) {
 }
 
 void PipDetach(Tab& t) {
-    if (!t.pipHwnd) return;
+    if (!s_window || s_tabId != t.id) return;
     DestroyFly();
-    ReturnView(t);
+    if (t.page) WKPageSetVideoPictureInPictureWindow(t.page, 0, false);
     DestroyPipWindow();
 }
 
