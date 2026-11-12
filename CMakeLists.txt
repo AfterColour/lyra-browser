@@ -87,7 +87,7 @@ target_link_libraries(Lyra PRIVATE
     "${WEBKIT_LIB_DIR}/WebKit2.lib"
     "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
     user32 gdi32 gdiplus dwmapi
-    shell32 shlwapi comdlg32 comctl32
+    shell32 shlwapi comdlg32 comctl32 winspool
     ole32 oleaut32 uuid advapi32
 )
 

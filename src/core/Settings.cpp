@@ -8,6 +8,7 @@ double       g_zoom = 1.0;
 
 std::wstring g_homePage = L"lyra://start";
 std::wstring g_downloadDir;
+std::wstring g_printPrinter;
 
 std::wstring g_searchEngine = L"https://duckduckgo.com/?q=";
 
@@ -48,6 +49,8 @@ void LoadSettings() {
     g_searchEngine = buf;
     GetPrivateProfileStringW(L"Browser", L"DownloadFolder", L"", buf, 512, g_settingsFile.c_str());
     g_downloadDir = buf;
+    GetPrivateProfileStringW(L"Browser", L"Printer", L"", buf, 512, g_settingsFile.c_str());
+    g_printPrinter = buf;
 
     auto geti = [&](const wchar_t* k, int d) {
         return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
@@ -85,6 +88,10 @@ void LoadSettings() {
     g_prefs.readerFont = geti(L"ReaderFont", 1) ? 1 : 0;
     g_prefs.readerTheme = std::min(3, std::max(0, geti(L"ReaderTheme", 0)));
     g_prefs.readerWidth = std::min(2, std::max(0, geti(L"ReaderWidth", 1)));
+    g_prefs.printMargins = std::min(3, std::max(0, geti(L"PrintMargins", 0)));
+    g_prefs.printScale = std::min(200, std::max(25, geti(L"PrintScale", 100)));
+    g_prefs.printHeaders = geti(L"PrintHeaders", 0) != 0;
+    g_prefs.printBackground = geti(L"PrintBackground", 0) != 0;
     g_prefs.restoreSession = geti(L"RestoreSession", 1) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
     g_prefs.images      = geti(L"Images", 1) != 0;
@@ -104,6 +111,7 @@ void SaveSettings() {
     WritePrivateProfileStringW(L"Browser", L"HomePage", g_homePage.c_str(), g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"SearchEngine", g_searchEngine.c_str(), g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"DownloadFolder", g_downloadDir.c_str(), g_settingsFile.c_str());
+    WritePrivateProfileStringW(L"Browser", L"Printer", g_printPrinter.c_str(), g_settingsFile.c_str());
 
     auto puti = [&](const wchar_t* k, int v) {
         WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
@@ -129,4 +137,6 @@ void SaveSettings() {
     puti(L"ReaderSize", g_prefs.readerSize); puti(L"ReaderFont", g_prefs.readerFont);
     puti(L"ReaderTheme", g_prefs.readerTheme); puti(L"ReaderWidth", g_prefs.readerWidth); puti(L"RestoreSession", g_prefs.restoreSession);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
+    puti(L"PrintMargins", g_prefs.printMargins); puti(L"PrintScale", g_prefs.printScale);
+    puti(L"PrintHeaders", g_prefs.printHeaders); puti(L"PrintBackground", g_prefs.printBackground);
 }

@@ -9,6 +9,7 @@ extern double g_zoom;
 extern std::wstring g_homePage;
 extern std::wstring g_searchEngine;
 extern std::wstring g_downloadDir;      // Settings > Downloads; empty = the Windows Downloads folder
+extern std::wstring g_printPrinter;     // the printer chosen last in the print preview (empty: the Windows default)
 
 struct Prefs {
     int  language = 0;           // 0 as in Windows, 1 English, 2 Russian
@@ -45,6 +46,10 @@ struct Prefs {
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;
     int  defaultFont = 16, minFont = 0;
+    // Print preview (ui/PrintPreview.cpp): margins 0 default / 1 minimum / 2 none / 3 wide,
+    // scale in percent, header and footer, background colours and images
+    int  printMargins = 0, printScale = 100;
+    bool printHeaders = false, printBackground = false;
 };
 extern Prefs g_prefs;
 

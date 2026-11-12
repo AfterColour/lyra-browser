@@ -1,9 +1,9 @@
-// Lyra — печать страницы (Ctrl+P): диалог печати Windows, страницы рисует WebKit.
+// Lyra — печать страницы (Ctrl+P): предпросмотр Lyra или диалог печати Windows, страницы рисует WebKit.
 //
-// 1. PrintDlgEx: printer, pages, copies. 2. WKPageComputePagesForPrinting with the printable
-// size of the paper (minus Lyra's margins) splits the page into sheets. 3. One sheet at a time,
-// WKPageDrawPageToImageForPrinting draws it at up to 300 dpi and the bitmap goes to the printer.
-// Everything runs on the UI thread through WebKit's callbacks; the main window stays usable.
+// The job: 1. WKPageComputePagesForPrinting with the area between the margins splits the page into
+// sheets. 2. One sheet at a time, WKPageDrawPageToImageForPrinting draws it at up to 300 dpi and the
+// bitmap goes to the printer, with the header and footer if asked. Everything runs on the UI thread
+// through WebKit's callbacks; the main window stays usable.
 #include "ui/Print.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
@@ -14,6 +14,136 @@
 
 #include <WebKit/WKPagePrivate.h>
 
+// ---- shared geometry and texts ------------------------------------------------------------
+
+PaperGeo PaperGeoOf(HDC dc) {
+    PaperGeo p;
+    if (!dc) return p;
+    p.dpiX = std::max(72, GetDeviceCaps(dc, LOGPIXELSX));
+    p.dpiY = std::max(72, GetDeviceCaps(dc, LOGPIXELSY));
+    p.printW = GetDeviceCaps(dc, HORZRES);
+    p.printH = GetDeviceCaps(dc, VERTRES);
+    p.physW = GetDeviceCaps(dc, PHYSICALWIDTH);
+    p.physH = GetDeviceCaps(dc, PHYSICALHEIGHT);
+    p.offX = GetDeviceCaps(dc, PHYSICALOFFSETX);
+    p.offY = GetDeviceCaps(dc, PHYSICALOFFSETY);
+    if (p.physW <= 0 || p.physH <= 0) { p.physW = p.printW; p.physH = p.printH; p.offX = p.offY = 0; }
+    return p;
+}
+
+SheetGeo SheetGeoOf(const PaperGeo& p, float marginMm) {
+    SheetGeo s;
+    if (!p.Valid()) return s;
+    const int wantX = (int)std::lround(marginMm / 25.4f * p.dpiX), wantY = (int)std::lround(marginMm / 25.4f * p.dpiY);
+    s.left = std::max(wantX, p.offX);
+    s.top = std::max(wantY, p.offY);
+    s.right = std::max(wantX, p.physW - p.offX - p.printW);
+    s.bottom = std::max(wantY, p.physH - p.offY - p.printH);
+    s.areaW = std::max(1, p.physW - s.left - s.right);
+    s.areaH = std::max(1, p.physH - s.top - s.bottom);
+    return s;
+}
+
+PrintTexts PrintTextsOf(const Tab& t) {
+    PrintTexts x;
+    x.title = t.title;
+    x.url = t.url;
+    SYSTEMTIME now;
+    GetLocalTime(&now);
+    wchar_t d[64] = {}, tm[64] = {};
+    GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &now, nullptr, d, 64, nullptr);
+    GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &now, nullptr, tm, 64);
+    x.date = std::wstring(d) + L", " + tm;
+    return x;
+}
+
+bool HeadersFit(const PaperGeo& p, const SheetGeo& s) {
+    if (!p.Valid()) return false;
+    const int need = (int)(7.f / 25.4f * p.dpiY);      // about 7 mm for a line of 8 pt text
+    return s.top >= need && s.bottom >= need;
+}
+
+void DrawHeadersFooters(Graphics& g, const PaperGeo& p, const SheetGeo& s, float scale, float x0, float y0,
+                        const PrintTexts& texts, int number, int total) {
+    if (!HeadersFit(p, s)) return;
+    const float px = 8.f / 72.f * p.dpiY * scale;     // 8 pt
+    if (px < 3) return;                                // too small to read in a thumbnail
+    Font font(L"Segoe UI", px, FontStyleRegular, UnitPixel);
+    SolidBrush ink(Color(255, 70, 70, 70));
+    StringFormat sf;
+    sf.SetLineAlignment(StringAlignmentCenter);
+    sf.SetTrimming(StringTrimmingEllipsisCharacter);
+    sf.SetFormatFlags(StringFormatFlagsNoWrap);
+    g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+    const float left = x0 + s.left * scale, right = x0 + (p.physW - s.right) * scale, width = right - left;
+    const float lineH = px * 1.6f;
+    const float topY = y0 + s.top * scale / 2 - lineH / 2;
+    const float bottomY = y0 + (p.physH - s.bottom / 2.f) * scale - lineH / 2;
+    auto text = [&](const std::wstring& str, float x, float y, float w, StringAlignment a) {
+        if (str.empty() || w <= 0) return;
+        sf.SetAlignment(a);
+        g.DrawString(str.c_str(), -1, &font, RectF(x, y, w, lineH), &sf, &ink);
+    };
+    // Date on the left; the title in the middle, as wide as it can be without touching the date.
+    RectF dateBox;
+    g.MeasureString(texts.date.c_str(), -1, &font, PointF(0, 0), &dateBox);
+    text(texts.date, left, topY, width, StringAlignmentNear);
+    const float titleW = std::max(0.f, width - 2 * (dateBox.Width + px));
+    text(texts.title, left + (width - titleW) / 2, topY, titleW, StringAlignmentCenter);
+    // Address on the left, "page / total" on the right.
+    const std::wstring pageText = std::to_wstring(number) + L"/" + std::to_wstring(total);
+    RectF pageBox;
+    g.MeasureString(pageText.c_str(), -1, &font, PointF(0, 0), &pageBox);
+    text(texts.url, left, bottomY, std::max(0.f, width - pageBox.Width - 2 * px), StringAlignmentNear);
+    text(pageText, left, bottomY, width, StringAlignmentFar);
+}
+
+bool ParsePageRanges(const std::wstring& text, PageRanges& out) {
+    out.clear();
+    std::wstring s;
+    for (wchar_t c : text) s += (c == L';') ? L',' : (c == 0x2013 || c == 0x2014) ? L'-' : c;
+    size_t i = 0;
+    auto skip = [&]() { while (i < s.size() && iswspace(s[i])) ++i; };
+    auto number = [&](uint32_t& n) {
+        skip();
+        if (i >= s.size() || !iswdigit(s[i])) return false;
+        unsigned long long v = 0;
+        while (i < s.size() && iswdigit(s[i])) { v = v * 10 + (s[i] - L'0'); if (v > 100000) return false; ++i; }
+        n = (uint32_t)v;
+        return n >= 1;
+    };
+    skip();
+    if (i >= s.size()) return true;                    // empty: all pages
+    for (;;) {
+        uint32_t from = 0, to = 0;
+        if (!number(from)) return false;
+        skip();
+        if (i < s.size() && s[i] == L'-') {
+            ++i;
+            skip();
+            if (i < s.size() && iswdigit(s[i])) { if (!number(to) || to < from) return false; }
+            else to = 0;                               // "5-": to the end
+        } else {
+            to = from;
+        }
+        out.push_back({ from, to });
+        skip();
+        if (i >= s.size()) return true;
+        if (s[i] != L',') return false;
+        ++i;
+        skip();
+        if (i >= s.size()) return true;                // a trailing comma is fine
+    }
+}
+
+bool PageInRanges(const PageRanges& ranges, uint32_t n) {
+    if (ranges.empty()) return true;
+    for (auto [from, to] : ranges) if (n >= from && (to == 0 || n <= to)) return true;
+    return false;
+}
+
+// ---- the job ------------------------------------------------------------------------------
+
 namespace {
 
 struct PrintJob {
@@ -22,21 +152,19 @@ struct PrintJob {
     WKFrameRef frame = nullptr;          // retained
     WKPrintInfo info {};
     HDC dc = nullptr;
-    std::vector<std::pair<uint32_t, uint32_t>> ranges;   // 1-based, inclusive; empty = all pages
+    PrintSettings settings;
+    PrintTexts texts;
+    PaperGeo paper;
+    SheetGeo sheet;
     std::vector<WKRect> pageRects;
-    std::vector<uint32_t> pages;         // 0-based pages still to print, in order
+    std::vector<uint32_t> pages;         // 0-based pages still to print, in order (copies included)
     size_t next = 0;
     int printedPages = 0;
     bool docStarted = false;
-    // Device geometry
-    int dpiX = 0, dpiY = 0;
-    int marginX = 0, marginY = 0;        // device pixels from the printable area's corner
-    int areaW = 0, areaH = 0;            // printable width / height minus margins, device pixels
 };
 
 PrintJob* s_job = nullptr;
 
-constexpr float kMarginInches = 0.4f;
 constexpr int kMaxDpi = 300;
 
 void Finish(bool ok) {
@@ -70,9 +198,7 @@ void OnPageImage(const void* pixels, uint32_t width, uint32_t height, uint32_t b
         return;
     }
     if (!job->docStarted) {
-        Tab* t = nullptr;
-        for (auto& tab : g_tabs) if (tab->id == job->tabId) t = tab.get();
-        std::wstring title = t && !t->title.empty() ? t->title : std::wstring(L"Lyra");
+        std::wstring title = !job->texts.title.empty() ? job->texts.title : std::wstring(L"Lyra");
         DOCINFOW di = { sizeof(di) };
         di.lpszDocName = title.c_str();
         if (StartDocW(job->dc, &di) <= 0) { Finish(false); return; }
@@ -80,8 +206,9 @@ void OnPageImage(const void* pixels, uint32_t width, uint32_t height, uint32_t b
     }
 
     // Fit the bitmap into the area between the margins, keeping its proportions.
-    const double sx = (double)job->areaW / width, sy = (double)job->areaH / height;
-    const double k = std::min(sx, sy);
+    const PaperGeo& P = job->paper;
+    const SheetGeo& G = job->sheet;
+    const double k = std::min((double)G.areaW / width, (double)G.areaH / height);
     const int destW = (int)std::lround(width * k), destH = (int)std::lround(height * k);
 
     BITMAPINFO bmi = {};
@@ -92,11 +219,32 @@ void OnPageImage(const void* pixels, uint32_t width, uint32_t height, uint32_t b
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
 
+    std::vector<BYTE> grey;
+    if (job->settings.grayscale) {
+        grey.assign((const BYTE*)pixels, (const BYTE*)pixels + (size_t)bytesPerRow * height);
+        for (uint32_t y = 0; y < height; ++y) {
+            BYTE* row = grey.data() + (size_t)y * bytesPerRow;
+            for (uint32_t x = 0; x < width; ++x) {
+                BYTE* px = row + x * 4;                  // B, G, R, A
+                const BYTE l = (BYTE)((px[2] * 299 + px[1] * 587 + px[0] * 114) / 1000);
+                px[0] = px[1] = px[2] = l;
+            }
+        }
+        pixels = grey.data();
+    }
+
     StartPage(job->dc);
     SetStretchBltMode(job->dc, HALFTONE);
     SetBrushOrgEx(job->dc, 0, 0, nullptr);
-    StretchDIBits(job->dc, job->marginX, job->marginY, destW, destH, 0, 0, (int)width, (int)height,
+    // The device's origin is the printable area's corner, not the paper's.
+    StretchDIBits(job->dc, G.left - P.offX, G.top - P.offY, destW, destH, 0, 0, (int)width, (int)height,
                   pixels, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    if (job->settings.headers) {
+        Graphics g(job->dc);
+        g.SetPageUnit(UnitPixel);
+        DrawHeadersFooters(g, P, G, 1.f, (float)-P.offX, (float)-P.offY, job->texts,
+                           (int)job->pages[job->next] + 1, (int)job->pageRects.size());
+    }
     EndPage(job->dc);
     ++job->printedPages;
     ++job->next;
@@ -109,10 +257,10 @@ void DrawNextPage() {
     if (job->next >= job->pages.size()) { Finish(true); return; }
     const uint32_t index = job->pages[job->next];
     const WKRect& r = job->pageRects[index];
-    // Device pixels per CSS pixel: the page width spread over the printable width, at up to 300 dpi
-    // (the printer scales the rest; a sheet at full printer resolution would take hundreds of MB).
-    const double targetDpi = std::min(job->dpiX, kMaxDpi);
-    const double targetWidth = job->areaW * targetDpi / job->dpiX;
+    // Device pixels per CSS pixel: the page width spread over the area between the margins, at up to
+    // 300 dpi (the printer scales the rest; a sheet at full printer resolution would take hundreds of MB).
+    const double targetDpi = std::min(job->paper.dpiX, kMaxDpi);
+    const double targetWidth = job->sheet.areaW * targetDpi / job->paper.dpiX;
     const float scale = r.size.width > 0 ? (float)(targetWidth / r.size.width) : 1.f;
     WKPageDrawPageToImageForPrinting(job->page, job->frame, job->info, index, scale, OnPageImage, job);
 }
@@ -126,12 +274,9 @@ void OnPagesComputed(WKRect* pageRects, uint32_t pageCount, double, WKErrorRef e
         return;
     }
     job->pageRects.assign(pageRects, pageRects + pageCount);
-    if (job->ranges.empty()) {
-        for (uint32_t i = 0; i < pageCount; ++i) job->pages.push_back(i);
-    } else {
-        for (auto [from, to] : job->ranges)
-            for (uint32_t p = std::max(1u, from); p <= std::min(to, pageCount); ++p) job->pages.push_back(p - 1);
-    }
+    std::vector<uint32_t> once;
+    for (uint32_t i = 0; i < pageCount; ++i) if (PageInRanges(job->settings.ranges, i + 1)) once.push_back(i);
+    for (int c = 0; c < std::max(1, job->settings.copiesByLyra); ++c) job->pages.insert(job->pages.end(), once.begin(), once.end());
     Log("print: %u page(s) laid out, %zu to print", pageCount, job->pages.size());
     if (job->pages.empty()) { Finish(true); return; }
     DrawNextPage();
@@ -141,12 +286,36 @@ void OnPagesComputed(WKRect* pageRects, uint32_t pageCount, double, WKErrorRef e
 
 bool PrintInProgress() { return s_job != nullptr; }
 
-void PrintActivePage() {
+bool StartPrintJob(Tab& t, HDC dc, const PrintSettings& settings) {
+    if (s_job || !dc) { if (dc) DeleteDC(dc); return false; }
+    WKFrameRef frame = t.page ? WKPageGetMainFrame(t.page) : nullptr;
+    if (!frame) { DeleteDC(dc); return false; }
+    auto* job = new PrintJob();
+    job->tabId = t.id;
+    job->dc = dc;
+    job->settings = settings;
+    job->texts = PrintTextsOf(t);
+    job->paper = PaperGeoOf(dc);
+    job->sheet = SheetGeoOf(job->paper, settings.marginMm);
+    // WebKit wants the area in points.
+    job->info.pageSetupScaleFactor = settings.scale > 0 ? settings.scale : 1;
+    job->info.availablePaperWidth = job->sheet.areaW * 72.f / job->paper.dpiX;
+    job->info.availablePaperHeight = job->sheet.areaH * 72.f / job->paper.dpiY;
+    job->page = t.page;
+    WKRetain(job->page);
+    job->frame = frame;
+    WKRetain(job->frame);
+    s_job = job;
+    Log("print: paper %.0fx%.0f pt at %d dpi, margin %.0f mm, scale %.2f", job->info.availablePaperWidth,
+        job->info.availablePaperHeight, job->paper.dpiX, settings.marginMm, job->info.pageSetupScaleFactor);
+    WKPageComputePagesForPrinting(job->page, job->frame, job->info, OnPagesComputed, job);
+    return true;
+}
+
+void PrintActivePageSystemDialog() {
     if (s_job) { MessageBeep(MB_ICONWARNING); return; }
     Tab* t = ActiveTab();
     if (!t || !t->page) return;
-    WKFrameRef frame = WKPageGetMainFrame(t->page);
-    if (!frame) return;
 
     PRINTPAGERANGE ranges[16] = {};
     PRINTDLGEXW pd = {};
@@ -161,47 +330,15 @@ void PrintActivePage() {
     pd.nCopies = 1;
     pd.nStartPage = START_PAGE_GENERAL;
     HRESULT hr = PrintDlgExW(&pd);
-    auto freeDialog = [&]() {
-        if (pd.hDevMode) GlobalFree(pd.hDevMode);
-        if (pd.hDevNames) GlobalFree(pd.hDevNames);
-    };
+    if (pd.hDevMode) GlobalFree(pd.hDevMode);
+    if (pd.hDevNames) GlobalFree(pd.hDevNames);
     if (FAILED(hr) || pd.dwResultAction != PD_RESULT_PRINT || !pd.hDC) {
         if (pd.hDC) DeleteDC(pd.hDC);
-        freeDialog();
         return;
     }
-    freeDialog();
-
-    auto* job = new PrintJob();
-    job->tabId = t->id;
-    job->dc = pd.hDC;
+    PrintSettings settings;
+    settings.marginMm = 10;
     if (pd.Flags & PD_PAGENUMS)
-        for (DWORD i = 0; i < pd.nPageRanges; ++i) job->ranges.push_back({ ranges[i].nFromPage, ranges[i].nToPage });
-
-    job->dpiX = std::max(72, GetDeviceCaps(job->dc, LOGPIXELSX));
-    job->dpiY = std::max(72, GetDeviceCaps(job->dc, LOGPIXELSY));
-    const int printableW = GetDeviceCaps(job->dc, HORZRES), printableH = GetDeviceCaps(job->dc, VERTRES);
-    const int physW = GetDeviceCaps(job->dc, PHYSICALWIDTH), physH = GetDeviceCaps(job->dc, PHYSICALHEIGHT);
-    const int offX = GetDeviceCaps(job->dc, PHYSICALOFFSETX), offY = GetDeviceCaps(job->dc, PHYSICALOFFSETY);
-    // Lyra's margin from the paper edge, but never inside the area the printer cannot reach.
-    const int wantX = (int)(kMarginInches * job->dpiX), wantY = (int)(kMarginInches * job->dpiY);
-    const int left = std::max(wantX, offX), top = std::max(wantY, offY);
-    const int right = std::max(wantX, physW - offX - printableW), bottom = std::max(wantY, physH - offY - printableH);
-    job->marginX = left - offX;
-    job->marginY = top - offY;
-    job->areaW = std::max(1, (physW > 0 ? physW : printableW) - left - right);
-    job->areaH = std::max(1, (physH > 0 ? physH : printableH) - top - bottom);
-
-    // WebKit wants the paper in points.
-    job->info.pageSetupScaleFactor = 1;
-    job->info.availablePaperWidth = job->areaW * 72.f / job->dpiX;
-    job->info.availablePaperHeight = job->areaH * 72.f / job->dpiY;
-
-    job->page = t->page;
-    WKRetain(job->page);
-    job->frame = frame;
-    WKRetain(job->frame);
-    s_job = job;
-    Log("print: paper %.0fx%.0f pt at %d dpi", job->info.availablePaperWidth, job->info.availablePaperHeight, job->dpiX);
-    WKPageComputePagesForPrinting(job->page, job->frame, job->info, OnPagesComputed, job);
+        for (DWORD i = 0; i < pd.nPageRanges; ++i) settings.ranges.push_back({ ranges[i].nFromPage, ranges[i].nToPage });
+    StartPrintJob(*t, pd.hDC, settings);
 }
