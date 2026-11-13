@@ -31,7 +31,7 @@ void CreateTab(const std::wstring& input);
 void CreatePrivateTab();             // Ctrl+Shift+N: a private (incognito) tab
 // The page's context menu: `input` (an address or a search) in a new tab, in the background (the
 // open tab stays) or in front, and private or not.
-void OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
+Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
 void ReopenClosedTab();
 void CloseTab(int i);
 void CloseAllTabs();

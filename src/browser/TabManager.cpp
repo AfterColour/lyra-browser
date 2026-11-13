@@ -8,6 +8,7 @@
 #include "app/Log.h"
 #include "browser/PageClients.h"
 #include "browser/Session.h"
+#include "browser/SplitView.h"
 #include "browser/Tab.h"
 #include "browser/WebContext.h"
 #include "core/Constants.h"
@@ -132,7 +133,7 @@ void ParkBackgroundViews(int w, int h) {
     for (auto& tp : g_tabs) {
         Tab& t = *tp;
         if (&t == active || !t.hwnd || t.state != TabState::Live) continue;
-        if (t.hwnd == g_fullScreenView) continue;
+        if (t.hwnd == g_fullScreenView || SplitVisible(t)) continue;   // (the other half is placed by SplitLayout)
         if (IsReady(t)) {
             if (!s_parkedAt.count(t.id)) s_parkedAt[t.id] = GetTickCount();
             ParkView(t.hwnd, w, h);
@@ -148,7 +149,7 @@ void ExpireReadyTabs() {
     for (auto& [id, at] : s_parkedAt) {
         if (now - at <= kReadyForMs) continue;
         Tab* t = FindTab(id);
-        if (t && t->hwnd && t != ActiveTab() && IsWindowVisible(t->hwnd)) {
+        if (t && t->hwnd && t != ActiveTab() && !SplitVisible(*t) && IsWindowVisible(t->hwnd)) {
             ShowWindow(t->hwnd, SW_HIDE);
             Log("tab#%llu no longer kept ready", id);
         }
@@ -168,9 +169,15 @@ void SelectTab(int i) {
     // A tab shown before (or the prepared start page) is covered by its last picture until
     // WebKit has drawn it again; a brand-new tab is not (it has nothing to show yet).
     Tab* from = ActiveTab();
-    const bool seen = std::find(s_mru.begin(), s_mru.end(), g_tabs[i]->id) != s_mru.end();
-    if (from != g_tabs[i].get() && (seen || s_adopting)) TransitionBegin(from, g_tabs[i].get());
-    if (from && from != g_tabs[i].get()) from->hiddenSince = GetTickCount64();
+    Tab* to = g_tabs[i].get();
+    // The other half of the split view is already on screen: no cover, nothing goes hidden.
+    const bool withinSplit = SplitPaired(from, to);
+    const bool seen = std::find(s_mru.begin(), s_mru.end(), to->id) != s_mru.end();
+    if (from != to && !withinSplit && (seen || s_adopting)) TransitionBegin(from, to);
+    if (from && from != to && !withinSplit) {
+        from->hiddenSince = GetTickCount64();
+        if (Tab* half = SplitPartnerOf(*from)) if (half != to) half->hiddenSince = GetTickCount64();
+    }
     g_tabs[i]->hiddenSince = 0;
     g_active = i;
     TouchMru(g_tabs[i]->id);
@@ -467,17 +474,18 @@ void CreatePrivateTab() {
     Navigate(t->page, ToUtf8(PrivatePageUrl()));
 }
 
-void OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
+Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
     if (privateTab && !s_privateStore) s_privateStore = WKWebsiteDataStoreCreateNonPersistentDataStore();
     WKPageConfigurationRef conf = CreatePageConfiguration();
     if (privateTab && s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
     Tab* t = CreateTabWithConfiguration(conf, false, !background);
     WKRelease(conf);
-    if (!t) return;
+    if (!t) return nullptr;
     t->privateTab = privateTab;
     t->url = input;                                // shown until the page commits
     InvalidateChrome();
     Navigate(t->page, ResolveNavigation(input));
+    return t;
 }
 
 static void ReleasePrivateStoreIfUnused() {
@@ -571,9 +579,14 @@ void CloseTab(int i) {
     s_mru.erase(std::remove(s_mru.begin(), s_mru.end(), dead->id), s_mru.end());
     s_parkedAt.erase(dead->id);
     TransitionForget(dead->id);
+    const unsigned long long otherHalf = SplitTabClosed(dead->id);
     DetachTab(*dead);
     if (g_active > i) --g_active;
-    else if (g_active == i) g_active = std::min(i, (int)g_tabs.size() - 1);
+    else if (g_active == i) {
+        int half = -1;                                   // a half of the split view closed: the other one
+        if (otherHalf && FindTab(otherHalf, &half)) g_active = half;
+        else g_active = std::min(i, (int)g_tabs.size() - 1);
+    }
     g_hover = Hit();
     g_down  = Hit();
     RefreshLayout(true);                 // g_L.tabs must match g_tabs before any repaint

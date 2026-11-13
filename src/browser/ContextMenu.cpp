@@ -1,5 +1,6 @@
 // Lyra — контекстное меню страницы: по-русски, в порядке как в других браузерах, с пунктами Lyra.
 #include "browser/ContextMenu.h"
+#include "browser/SplitView.h"
 #include "app/Log.h"
 #include "browser/PictureInPicture.h"
 #include "browser/Tab.h"
@@ -23,6 +24,7 @@ namespace {
 enum : WKContextMenuItemTag {
     kOpenLinkInNewTab = kWKContextMenuItemBaseApplicationTag + 1,
     kOpenLinkInPrivateTab,
+    kOpenLinkInSplit,
     kCopyLinkText,
     kOpenImageInNewTab,
     kCopyImageAddress,
@@ -144,6 +146,7 @@ WKArrayRef BuildMenu(WKArrayRef proposed, const Tab& t, Builder& b) {
     b.Spelling();
     if (!c.link.empty()) {
         b.Lyra(kOpenLinkInNewTab, Tr(L"Open link in new tab", L"Открыть ссылку в новой вкладке"));
+        b.Lyra(kOpenLinkInSplit, Tr(L"Open link in split view", L"Открыть ссылку в разделённом экране"));
         b.Lyra(kOpenLinkInPrivateTab, Tr(L"Open link in private tab", L"Открыть ссылку в приватной вкладке"));
         b.Engine(kWKContextMenuItemTagDownloadLinkToDisk, Tr(L"Save link as\x2026", L"Сохранить ссылку как\x2026"));
         b.Engine(kWKContextMenuItemTagCopyLinkToClipboard, Tr(L"Copy link address", L"Копировать адрес ссылки"));
@@ -296,6 +299,7 @@ void ContextMenuCommand(WPARAM tag) {
     switch ((WKContextMenuItemTag)tag) {
     case kOpenLinkInNewTab:     OpenInNewTab(c.link, true, t->privateTab); break;
     case kOpenLinkInPrivateTab: OpenInNewTab(c.link, false, true); break;
+    case kOpenLinkInSplit:      SplitOpenLink(t->id, c.link, t->privateTab); break;
     case kCopyLinkText:         CopyText(c.linkLabel); break;
     case kOpenImageInNewTab:    OpenInNewTab(c.image, true, t->privateTab); break;
     case kCopyImageAddress:     CopyText(c.image); break;

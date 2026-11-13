@@ -33,6 +33,7 @@
 #include "ui/FullScreen.h"
 #include "browser/TabSleep.h"
 #include "browser/ContextMenu.h"
+#include "browser/SplitView.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
 
@@ -55,6 +56,40 @@ int    g_clientW = 0;
 static int    g_tick = 0;
 
 static bool   g_trackingMouse = false;
+
+// A tab pressed with the left button: once the pointer has moved a few pixels it is a drag, and
+// dropping it on another tab opens the two in split view (browser/SplitView).
+static unsigned long long s_tabPressId = 0;
+static POINT s_tabPressPt = {};
+static bool s_tabDragging = false;
+
+static void TabDragMove(int x, int y) {
+    if (!s_tabPressId) return;
+    if (!s_tabDragging) {
+        if (std::abs(x - s_tabPressPt.x) < GetSystemMetrics(SM_CXDRAG) &&
+            std::abs(y - s_tabPressPt.y) < GetSystemMetrics(SM_CYDRAG)) return;
+        s_tabDragging = true;
+    }
+    const Hit h = HitTest(x, y);
+    int target = -1;
+    bool right = false;
+    if ((h.kind == Hit::TabBody || h.kind == Hit::TabClose || h.kind == Hit::TabAudio) &&
+        h.index >= 0 && h.index < (int)g_L.tabs.size()) {
+        target = h.index;
+        const RectF& r = g_L.tabs[h.index];
+        right = g_L.mode == kLayoutVertical ? (float)y >= r.Y + r.Height / 2 : (float)x >= r.X + r.Width / 2;
+    }
+    SplitTabDragOver(s_tabPressId, target, right);
+    SetCursor(LoadCursor(nullptr, target >= 0 ? IDC_HAND : IDC_ARROW));
+}
+
+static bool TabDragEnd(bool drop) {
+    const bool was = s_tabDragging;
+    s_tabPressId = 0;
+    s_tabDragging = false;
+    if (was) SplitTabDragEnd(drop);
+    return was;
+}
 static bool   g_trackingNc = false;      // TME_NONCLIENT tracking for the window buttons
 
 void LayoutWebViews() {
@@ -69,8 +104,10 @@ void LayoutWebViews() {
     // hidden (they get the right size when they are selected, so a window resize does not send
     // resize IPC to every background page).
     const int w = std::max(0, (int)cr.right - left);
-    if (Tab* t = ActiveTab())
-        if (t->hwnd) MoveWindow(t->hwnd, left, top, w, h, TRUE);
+    if (g_fullScreenView) SplitHidePartner();
+    if (g_fullScreenView || !SplitLayout(left, top, w, h))   // split view: both halves
+        if (Tab* t = ActiveTab())
+            if (t->hwnd) MoveWindow(t->hwnd, left, top, w, h, TRUE);
     if (!g_fullScreenView) ParkBackgroundViews(w, h);
 }
 
@@ -320,7 +357,25 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         break;
 
+    case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd && SplitSetCursor()) return TRUE;
+        if (s_tabDragging) return TRUE;                  // (TabDragMove sets it)
+        break;
+
     case WM_MOUSEMOVE: {
+        if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
+            if (!g_trackingMouse) {
+                TRACKMOUSEEVENT t = { sizeof(t), TME_LEAVE, hWnd, 0 };
+                TrackMouseEvent(&t);
+                g_trackingMouse = true;
+            }
+            SetHover(Hit());
+            return 0;
+        }
+        if (s_tabPressId && (wParam & MK_LBUTTON)) {
+            TabDragMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            if (s_tabDragging) return 0;
+        }
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         SetHover(h);
         if (!g_trackingMouse) {
@@ -333,11 +388,13 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
     case WM_MOUSELEAVE:
         g_trackingMouse = false;
+        SplitMouse(msg, 0, 0);
         SetHover(Hit());
         CheckTabUnfreeze(hWnd);
         return 0;
 
     case WM_LBUTTONDOWN: {
+        if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // divider / gutter
         // The active tab is in picture-in-picture: a click on its empty page brings it back.
         if (Tab* t = ActiveTab())
             if (t->pipHwnd && GET_Y_LPARAM(lParam) >= (int)g_L.chromeH && GET_X_LPARAM(lParam) >= (int)g_L.sideW) {
@@ -347,12 +404,26 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         g_down = h;
         if (h.kind == Hit::Pill) { g_down = Hit(); ShowUrlEdit(); return 0; }
-        if (h.kind == Hit::TabBody) SelectTab(h.index);
+        if (h.kind == Hit::TabBody) {
+            SelectTab(h.index);
+            if (h.index >= 0 && h.index < (int)g_tabs.size()) {
+                s_tabPressId = g_tabs[h.index]->id;
+                s_tabPressPt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                s_tabDragging = false;
+            }
+        }
         if (h.kind != Hit::None) SetCapture(hWnd);
         InvalidateChrome();
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
+        if (TabDragEnd(true)) {                          // a tab dropped (on another tab: split view)
+            g_down = Hit();
+            if (GetCapture() == hWnd) ReleaseCapture();
+            InvalidateChrome();
+            return 0;
+        }
         Hit up = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         Hit down = g_down;
         g_down = Hit();
@@ -378,6 +449,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_CAPTURECHANGED:
+        SplitMouse(msg, 0, 0);
+        TabDragEnd(false);
         g_down = Hit();
         InvalidateChrome();
         return 0;
@@ -387,8 +460,20 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
-        enum { kSleep = 1, kSleepOthers, kClose };
+        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose };
         HMENU m = CreatePopupMenu();
+        {
+            const Tab& target = *g_tabs[h.index];
+            if (SplitHas(target) && SplitPartnerOf(target)) {
+                AppendMenuW(m, MF_STRING, kSplitSwap, Tr(L"Swap sides", L"Поменять половины местами"));
+                AppendMenuW(m, MF_STRING, kSplitClose, Tr(L"Close split view", L"Закрыть разделённый экран"));
+            } else if (h.index != g_active) {
+                AppendMenuW(m, MF_STRING, kSplitWith, Tr(L"Open beside current tab (split view)", L"Открыть рядом с текущей (разделённый экран)"));
+            } else {
+                AppendMenuW(m, MF_STRING, kSplitWith, Tr(L"Split view with new tab", L"Разделённый экран с новой вкладкой"));
+            }
+            AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        }
         const std::wstring why = TabSleepBlocker(*g_tabs[h.index]);
         std::wstring sleepText = Tr(L"Put tab to sleep", L"Усыпить вкладку");
         if (!why.empty() && why != L"-") sleepText += L"  (" + why + L")";
@@ -403,7 +488,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         int index = -1;
         Tab* t = FindTab(id, &index);
         if (!t) return 0;
-        if (cmd == kSleep) SleepTabNow(*t);
+        if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
+        else if (cmd == kSplitSwap) SplitSwap();
+        else if (cmd == kSplitClose) SplitClose();
+        else if (cmd == kSleep) SleepTabNow(*t);
         else if (cmd == kSleepOthers) SleepOtherTabs();
         else if (cmd == kClose) CloseTabWithMouse(hWnd, index);
         return 0;
@@ -421,6 +509,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_TIMER: {
         if (wParam == TIMER_TRANSITION) {
             TransitionTick();
+            return 0;
+        }
+        if (wParam == TIMER_SPLIT_REPAINT) {
+            SplitRepaintTimer();
             return 0;
         }
         if (wParam == TIMER_SPARE_TAB) {
@@ -506,6 +598,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_TRANSLATE:
         TranslateResult(lParam);
+        return 0;
+    case WM_APP_SPLIT_FOCUS:
+        SplitFocusTab((unsigned long long)wParam);
         return 0;
     case WM_APP_CONTEXT_MENU:
         ContextMenuCommand(wParam);

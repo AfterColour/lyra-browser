@@ -8,6 +8,7 @@
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "browser/TabSleep.h"
+#include "browser/SplitView.h"
 #include "core/Constants.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
@@ -34,6 +35,7 @@ struct CommandDef {
     const wchar_t *en, *ru, *keys, *shortcut;
     std::function<void()> run;
     const wchar_t* glyph;
+    bool (*shown)() = nullptr;                           // listed only when this says so
 };
 
 HWND s_wnd = nullptr, s_edit = nullptr;
@@ -75,6 +77,9 @@ const std::vector<CommandDef>& Commands() {
         { L"Zoom in", L"Увеличить масштаб", L"bigger крупнее", L"Ctrl++", [] { RunCommand(CMD_ZOOMIN); }, L"\uE8A3" },
         { L"Zoom out", L"Уменьшить масштаб", L"smaller мельче", L"Ctrl+-", [] { RunCommand(CMD_ZOOMOUT); }, L"\uE71F" },
         { L"Reset zoom", L"Сбросить масштаб", L"100%", L"Ctrl+0", [] { RunCommand(CMD_ZOOMRESET); }, L"\uE71E" },
+        { L"Split view with new tab", L"Разделённый экран с новой вкладкой", L"split side two рядом две половины", L"", [] { SplitWithNewTab(); }, L"\uE8A0", [] { return !SplitShown(); } },
+        { L"Swap split view sides", L"Поменять половины экрана местами", L"split swap разделённый", L"", [] { SplitSwap(); }, L"\uE8AB", [] { return SplitShown(); } },
+        { L"Close split view", L"Закрыть разделённый экран", L"split разделённый", L"", [] { SplitClose(); }, L"\uE8A0", [] { return SplitShown(); } },
         { L"Put other tabs to sleep", L"Усыпить остальные вкладки", L"memory sleep память усыпить", L"", [] { SleepOtherTabs(); }, L"\uE708" },
         { L"Block ads on this site (on / off)", L"Блокировка рекламы на этом сайте (вкл. / выкл.)", L"adblock ad реклама", L"", [] { RunCommand(CMD_ADBLOCK_SITE); }, L"\uE72E" },
         { L"Make this page the home page", L"Сделать домашней страницей", L"home домашняя", L"", [] { RunCommand(CMD_SETHOME); }, L"\uE80F" },
@@ -148,6 +153,7 @@ void Rebuild() {
     // Commands, in both languages.
     std::vector<std::pair<int, Row>> cmds;
     for (const CommandDef& c : Commands()) {
+        if (c.shown && !c.shown()) continue;
         const std::wstring title = Tr(c.en, c.ru);
         const int sc = MatchScore(words, Lower(std::wstring(c.en) + L" " + c.ru + L" " + c.keys), Lower(title));
         if (!sc) continue;

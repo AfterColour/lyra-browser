@@ -5,6 +5,7 @@
 #include "browser/Session.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
+#include "browser/SplitView.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
 #include "core/StringUtils.h"
@@ -89,6 +90,7 @@ std::wstring TabSleepBlocker(const Tab& t) {
     if (t.state != TabState::Live || !t.page) return L"-";
     if (t.sleeping || t.lazyPending) return Tr(L"It is not loaded", L"Она не загружена");
     if (&t == ActiveTab()) return Tr(L"It is the open tab", L"Это открытая вкладка");
+    if (SplitVisible(t)) return Tr(L"It is open in split view", L"Она открыта в разделённом экране");
     if (t.privateTab) return Tr(L"Private tabs do not sleep", L"Приватные вкладки не усыпляются");
     if (t.url.empty() || t.url == L"about:blank" || IsInternalPageUrl(t.url)) return Tr(L"A Lyra page", L"Страница Lyra");
     if (t.audible) return Tr(L"It plays sound", L"На ней играет звук");

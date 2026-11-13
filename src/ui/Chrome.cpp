@@ -7,6 +7,7 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "browser/SplitView.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "ui/WindowFrame.h"
@@ -693,6 +694,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
+        SplitPaint(g);                                   // split view: gutter, outline, divider
         if (cur && cur->pipHwnd && !g_fullScreenView) {      // its view is in the picture-in-picture window
             StringFormat cf(StringFormat::GenericTypographic());
             cf.SetAlignment(StringAlignmentCenter);
@@ -801,8 +803,25 @@ static void DrawChrome(Graphics& g, int w, int h) {
             AddRound(p, r, rad);
             Pen pen(T.fieldBorder, 1.f);
             g.DrawPath(&pen, &p);
+        } else if (SplitVisible(tab)) {                  // the other half of the split view
+            FillRound(g, Faded(vertical ? T.tabActive : T.field, 0.55f), r, rad);
+            if (h > 0.f) FillRound(g, Faded(T.hover, h), r, rad);
+            GraphicsPath p;
+            AddRound(p, r, rad);
+            Pen pen(Faded(T.accent, 0.6f), 1.f);
+            g.DrawPath(&pen, &p);
         } else if (h > 0.f) {
             FillRound(g, Faded(T.hover, h), r, rad);
+        }
+        bool dropRight = false;
+        if (SplitDropHint(i, &dropRight)) {               // a tab dragged onto this one: split view
+            const RectF half = vertical ? RectF(r.X, dropRight ? r.Y + r.Height / 2 : r.Y, r.Width, r.Height / 2)
+                                        : RectF(dropRight ? r.X + r.Width / 2 : r.X, r.Y, r.Width / 2, r.Height);
+            FillRound(g, Faded(T.accent, 0.35f), half, rad);
+            GraphicsPath p;
+            AddRound(p, r, rad);
+            Pen pen(T.accent, std::max(1.f, std::round(S(1.5f))));
+            g.DrawPath(&pen, &p);
         }
 
         const float bs = S(14);
