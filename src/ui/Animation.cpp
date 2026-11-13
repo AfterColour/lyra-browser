@@ -51,7 +51,9 @@ void AnimOnFrame() {
     if (s_last.QuadPart) dt = (float)(now.QuadPart - s_last.QuadPart) / (float)freq.QuadPart;
     dt = std::max(0.f, std::min(dt, 0.05f));
     s_last = now;
-    if (!ChromeAnimStep(dt)) {
+    const bool chrome = ChromeAnimStep(dt);
+    const bool settings = SettingsAnimStep(dt);
+    if (!chrome && !settings) {
         std::lock_guard<std::mutex> lock(s_lock);
         s_running = false;
     }

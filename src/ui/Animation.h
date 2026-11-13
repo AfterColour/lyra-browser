@@ -9,6 +9,9 @@
 void AnimRequest();
 void AnimOnFrame();                 // main window: on WM_APP_ANIM_FRAME
 void AnimShutdown();                // main window: on WM_DESTROY
+// The settings window's smooth scrolling runs on the same frame clock (ui/settings/SettingsWindow.cpp);
+// returns true while it still moves.
+bool SettingsAnimStep(float dt);
 
 bool AnimTabsEnabled();
 bool AnimHoverEnabled();

@@ -31,7 +31,7 @@ void DrawGlyph(Graphics& g, const wchar_t* glyph, const RectF& r, const Color& c
     g.DrawString(glyph, -1, f, r, &sf, &b);
 }
 
-void PaintBuffered(HDC hdc, const RECT& rc, bool opaque, const std::function<void(Graphics&)>& draw) {
+void PaintBuffered(HDC hdc, const RECT& rc, bool opaque, const std::function<void(Graphics&)>& draw, bool fastBlend) {
     const int w = rc.right - rc.left, h = rc.bottom - rc.top;
     if (w <= 0 || h <= 0) return;
     BITMAPINFO bi = {};
@@ -66,7 +66,7 @@ void PaintBuffered(HDC hdc, const RECT& rc, bool opaque, const std::function<voi
         g.SetSmoothingMode(SmoothingModeHighQuality);
         g.SetPixelOffsetMode(PixelOffsetModeHalf);
         g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-        g.SetCompositingQuality(CompositingQualityHighQuality);
+        g.SetCompositingQuality(fastBlend ? CompositingQualityHighSpeed : CompositingQualityHighQuality);
         draw(g);
         g.Flush(FlushIntentionSync);
     }

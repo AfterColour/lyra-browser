@@ -6,8 +6,11 @@
 //            buttons; below it the page: group titles over rounded cards of rows
 // The window has no system title bar (see ui/WindowFrame.h).
 #include "ui/settings/SettingsWindow.h"
+#include "app/Log.h"
 #include "core/Localization.h"
+#include "core/Settings.h"
 #include "core/StringUtils.h"
+#include "ui/Animation.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
@@ -31,6 +34,9 @@ static std::vector<SView> g_view;
 static std::vector<std::pair<float, float>> g_groups;
 static int   g_sPage = 0;
 static float g_sScroll = 0.f, g_sContentH = 0.f;
+// Smooth scrolling: the wheel and keys move the target, the view follows it on the frame clock.
+static float s_scrollTarget = 0.f;
+static bool  s_scrollAnim = false;
 static int   g_sHoverSide = -1, g_sHoverRow = -1, g_sHoverPart = -1, g_sDragRow = -1;
 static bool  g_sHoverCtl = false, g_sHoverBack = false, g_sTracking = false, g_sTrackingNc = false;
 static int   g_sCapHover = -1, g_sCapDown = -1;      // window buttons: 0 minimise, 1 maximise, 2 close
@@ -195,16 +201,44 @@ static bool s_searchActive = false, s_queryAllSelected = false;
 
 static std::wstring SSearchText() { return TrimWs(s_query); }
 
+static float SMaxScroll() { return std::max(0.f, g_sContentH - Geo().vpH); }
+
 static void SClampScroll() {
-    SGeo G = Geo();
-    float maxS = std::max(0.f, g_sContentH - G.vpH);
+    const float maxS = SMaxScroll();
     g_sScroll = std::max(0.f, std::min(g_sScroll, maxS));
+    s_scrollTarget = std::max(0.f, std::min(s_scrollTarget, maxS));
 }
 
+// Scrolls to `y` smoothly (instantly with animations off).
+static void SScrollTo(float y) {
+    s_scrollTarget = std::max(0.f, std::min(y, SMaxScroll()));
+    if (!g_prefs.animations) {
+        g_sScroll = s_scrollTarget;
+        s_scrollAnim = false;
+        InvalidateRect(g_setHwnd, nullptr, FALSE);
+        return;
+    }
+    if (std::abs(s_scrollTarget - g_sScroll) < 0.5f) return;
+    s_scrollAnim = true;
+    AnimRequest();
+}
+
+// Wheel notches in a row add up: each one moves the target on from where the last one is going.
 static void SScrollBy(float d) {
-    g_sScroll += d;
-    SClampScroll();
+    SScrollTo((s_scrollAnim ? s_scrollTarget : g_sScroll) + d);
+}
+
+bool SettingsAnimStep(float dt) {
+    if (!s_scrollAnim || !g_setHwnd) { s_scrollAnim = false; return false; }
+    const float diff = s_scrollTarget - g_sScroll;
+    if (std::abs(diff) < 0.5f) {
+        g_sScroll = s_scrollTarget;
+        s_scrollAnim = false;
+    } else {
+        g_sScroll += diff * AnimFactor(dt, 70.f);
+    }
     InvalidateRect(g_setHwnd, nullptr, FALSE);
+    return s_scrollAnim;
 }
 
 static float RowHeight(const SRow& r) {
@@ -296,7 +330,7 @@ static void SCommitTextEdit() {
 void SettingsOpenPage(int i) {
     if (i < 0 || i >= (int)g_pages.size()) return;
     g_sPage = i;
-    g_sScroll = 0.f;
+    g_sScroll = 0.f; s_scrollAnim = false;
     s_query.clear();
     s_queryAllSelected = false;
     RebuildView();
@@ -359,7 +393,7 @@ static void SearchDeactivate() {
 }
 
 static void SearchChanged() {
-    g_sScroll = 0.f;
+    g_sScroll = 0.f; s_scrollAnim = false;
     RebuildView();
     SearchUpdateCaret();
 }
@@ -879,7 +913,9 @@ void SettingsThemeChanged() {
 
 static void PaintSettings(HDC hdc, const RECT& cr) {
     s_sideTransparent = MicaActive();
-    PaintBuffered(hdc, cr, !s_sideTransparent, [](Graphics& g) { DrawSettings(g); });
+    // While the page scrolls smoothly: fast blending (a full paint over Mica took ~67 ms with gamma-
+    // correct blending, ~4 ms without); the still picture at the end is painted in full quality.
+    PaintBuffered(hdc, cr, !s_sideTransparent, [](Graphics& g) { DrawSettings(g); }, s_scrollAnim);
 }
 
 static void UpdateSettingsBackdrop() {
@@ -906,7 +942,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         SRebuildFonts();
         BuildPages();
         SettingsThemeChanged();
-        g_sPage = 0; g_sScroll = 0.f; g_sEditRow = nullptr;
+        g_sPage = 0; g_sScroll = 0.f; s_scrollAnim = false; g_sEditRow = nullptr;
         g_sHoverSide = g_sHoverRow = g_sHoverPart = g_sDragRow = g_sCapHover = g_sCapDown = -1;
         RebuildView();
         SPositionSearch();
@@ -1173,8 +1209,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         case VK_DOWN:  SScrollBy(SS(48)); return 0;
         case VK_PRIOR: SScrollBy(-G.vpH * 0.9f); return 0;
         case VK_NEXT:  SScrollBy(G.vpH * 0.9f); return 0;
-        case VK_HOME:  g_sScroll = 0.f; SScrollBy(0); return 0;
-        case VK_END:   g_sScroll = g_sContentH; SScrollBy(0); return 0;
+        case VK_HOME:  SScrollTo(0.f); return 0;
+        case VK_END:   SScrollTo(g_sContentH); return 0;
         }
         break;
     }
