@@ -81,27 +81,31 @@ bool NativeCaptionButtons() {
 }
 
 static void PlaceCaptionButtons(Layout& L, float w, float rowH, const ChromeDims& d) {
-    float cw = std::floor(S(d.cap)), capTop = 0, capH = rowH;
+    float cw = std::floor(S(d.cap)), cwClose = cw, capTop = 0, capH = rowH, right = w;
     if (NativeCaptionButtons()) {
-        // The system buttons: Lyra's buttons take exactly their place. DWM gives it in window
-        // coordinates; vertically it is drawn from the top of the client area, also when
-        // maximised (where the window itself starts above the screen edge).
-        float total = std::floor(S(46)) * 3;
+        // The system buttons: Lyra's buttons take exactly their place, so that while the hover
+        // fades in or out the system glyph and Lyra's lie on each other. DWM gives an area in
+        // window coordinates that is wider than the buttons; they sit at its right end, 46 px
+        // (at 96 dpi) each and the close button 48 px (measured on Windows 11). Vertically they
+        // are drawn from the top of the client area, also when maximised (where the window
+        // itself starts above the screen edge).
+        cw = std::round(S(46));
+        cwClose = std::round(S(48));
         capH = std::min(rowH, std::floor(S(32)));
         RECT b = {}, wr = {};
         POINT o = { 0, 0 };
         if (SUCCEEDED(DwmGetWindowAttribute(g_hWnd, DWMWA_CAPTION_BUTTON_BOUNDS, &b, sizeof(b))) &&
             b.right > b.left && b.bottom > b.top && GetWindowRect(g_hWnd, &wr) && ClientToScreen(g_hWnd, &o)) {
-            const float left = (float)(b.left - (o.x - wr.left));     // client coordinates
-            if (left > 0 && left < w) total = w - left;
+            const float r = (float)(b.right - (o.x - wr.left));        // client coordinates
+            if (r > 0 && r <= w) right = r;
+            if (cw * 2 + cwClose > (float)(b.right - b.left)) cw = cwClose = (float)(b.right - b.left) / 3;
             capH = std::min(rowH, (float)(b.bottom - b.top));
         }
-        cw = total / 3;
     }
     L.captionH = rowH;
-    L.capClose = RectF(w - cw, capTop, cw, capH);
-    L.capMax   = RectF(w - cw * 2, capTop, cw, capH);
-    L.capMin   = RectF(w - cw * 3, capTop, cw, capH);
+    L.capClose = RectF(right - cwClose, capTop, cwClose, capH);
+    L.capMax   = RectF(right - cwClose - cw, capTop, cw, capH);
+    L.capMin   = RectF(right - cwClose - cw * 2, capTop, cw, capH);
 }
 
 // The star sits at the right end of the address field (left of reload when that is inside).
@@ -327,6 +331,37 @@ static float HoverAmount(const Hit& h) {
 
 static Color Faded(const Color& c, float a) {
     return Color((BYTE)std::lround(c.GetA() * std::max(0.f, std::min(1.f, a))), c.GetR(), c.GetG(), c.GetB());
+}
+
+// A window button glyph where DWM draws the system one: the same font, but placed by its outline
+// (not by the text line), centred on the button at whole pixels the way DWM does: one pixel
+// higher in a maximised window, one pixel to the right in a normal one (its 1-px border). Text drawing put it a pixel or two off and blurred its 1-px lines,
+// so the two glyphs showed double while the hover faded in or out.
+static void DrawSystemCaptionGlyph(Graphics& g, const wchar_t* glyph, const RectF& r, const Color& c, Font* f, bool zoomed) {
+    FontFamily family;
+    if (!f || f->GetFamily(&family) != Ok) return;
+    GraphicsPath path;
+    StringFormat sf(StringFormat::GenericTypographic());
+    path.AddString(glyph, -1, &family, f->GetStyle(), f->GetSize(), PointF(0, 0), &sf);
+    RectF ink;
+    if (path.GetBounds(&ink) != Ok || ink.Width <= 0) return;
+    const float cx = r.X + std::floor(r.Width / 2) + 0.5f + (zoomed ? 0.f : 1.f);
+    const float cy = r.Y + std::floor(r.Height / 2) + 0.5f - (zoomed ? 1.f : 0.f);
+    // Centred, with the outline's left and top edges on whole pixels (crisp 1-px lines).
+    const float dx = std::round(ink.X + (cx - (ink.X + ink.Width / 2))) - ink.X;
+    const float dy = std::round(ink.Y + (cy - (ink.Y + ink.Height / 2))) - ink.Y;
+    Matrix m;
+    m.Translate(dx, dy);
+    path.Transform(&m);
+    SolidBrush b(c);
+    if (ink.Height < 3) {                                 // "minimise": a crisp line, as DWM draws it
+        g.FillRectangle(&b, ink.X + dx, ink.Y + dy, std::round(ink.Width), std::max(1.f, std::floor(ink.Height + 0.25f)));
+        return;
+    }
+    const SmoothingMode old = g.GetSmoothingMode();
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.FillPath(&b, &path);
+    g.SetSmoothingMode(old);
 }
 
 // `top` painted over the opaque `base` (keeps full opacity).
@@ -690,7 +725,9 @@ static void DrawChrome(Graphics& g, int w, int h) {
                                            : Over(T.frame, p ? T.pressed : T.hover);
                 SolidBrush b(Faded(fill, a));
                 g.FillRectangle(&b, *c.r);
-                DrawGlyph(g, c.glyph, *c.r, Faded(c.close ? Color(255, 255, 255) : T.icon, a), g_fCaption.get());
+                // The system glyph's colour: white (black in the light theme) at about 82 %.
+                const Color ink = c.close ? Color(255, 255, 255) : (g_dark ? Color(210, 255, 255, 255) : Color(225, 0, 0, 0));
+                DrawSystemCaptionGlyph(g, c.glyph, *c.r, Faded(ink, a), g_fCaption.get(), zoomed);
                 continue;
             }
             if (a > 0.f) {
