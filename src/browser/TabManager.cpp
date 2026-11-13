@@ -467,6 +467,19 @@ void CreatePrivateTab() {
     Navigate(t->page, ToUtf8(PrivatePageUrl()));
 }
 
+void OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
+    if (privateTab && !s_privateStore) s_privateStore = WKWebsiteDataStoreCreateNonPersistentDataStore();
+    WKPageConfigurationRef conf = CreatePageConfiguration();
+    if (privateTab && s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
+    Tab* t = CreateTabWithConfiguration(conf, false, !background);
+    WKRelease(conf);
+    if (!t) return;
+    t->privateTab = privateTab;
+    t->url = input;                                // shown until the page commits
+    InvalidateChrome();
+    Navigate(t->page, ResolveNavigation(input));
+}
+
 static void ReleasePrivateStoreIfUnused() {
     if (!s_privateStore) return;
     for (auto& t : g_tabs) if (t->privateTab) return;

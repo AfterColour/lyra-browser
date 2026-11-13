@@ -32,6 +32,7 @@
 #include "core/Localization.h"
 #include "ui/FullScreen.h"
 #include "browser/TabSleep.h"
+#include "browser/ContextMenu.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
 
@@ -505,6 +506,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_TRANSLATE:
         TranslateResult(lParam);
+        return 0;
+    case WM_APP_CONTEXT_MENU:
+        ContextMenuCommand(wParam);
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);

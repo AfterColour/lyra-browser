@@ -29,7 +29,8 @@ constexpr UINT WM_APP_TAB_CRASHED  = WM_APP + 2;   // lParam = WKProcessTerminat
 constexpr UINT WM_APP_ANIM_FRAME   = WM_APP + 3;   // next animation frame (posted once per display refresh)
 constexpr UINT WM_APP_FAVICON      = WM_APP + 5;   // a site icon download finished; lParam see Favicons.cpp
 constexpr UINT WM_APP_PRINT        = WM_APP + 8;   // window.print(); wParam tab id
-constexpr UINT WM_APP_TRANSLATE    = WM_APP + 13;  // a translation batch came back; lParam see Translate.cpp
+constexpr UINT WM_APP_TRANSLATE    = WM_APP + 13;
+constexpr UINT WM_APP_CONTEXT_MENU = WM_APP + 14;  // a Lyra item of a page's context menu was chosen; wParam its tag  // a translation batch came back; lParam see Translate.cpp
 constexpr UINT WM_APP_PIP          = WM_APP + 12;  // a page asked for picture-in-picture; wParam tab id, lParam 1 enter / 0 exit
 constexpr UINT WM_APP_MEDIA        = WM_APP + 11;  // a media key / Windows media flyout button; wParam see SystemMedia.h
 constexpr UINT WM_APP_TRAY         = WM_APP + 9;   // the notifications tray icon (Permissions.cpp)

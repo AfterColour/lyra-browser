@@ -1,4 +1,5 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
+#include "browser/ContextMenu.h"
 #include "browser/PageClients.h"
 #include "browser/DevProbe.h"
 #include "browser/Translate.h"
@@ -417,6 +418,8 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
     sc.didChangeCanGoBack    = OnStateChanged;
     sc.didChangeCanGoForward = OnStateChanged;
     WKPageSetPageStateClient(page, &sc.base);
+
+    ContextMenuSetClient(page, ctx);
 }
 
 void ClearPageClients(WKPageRef page) {
@@ -432,4 +435,5 @@ void ClearPageClients(WKPageRef page) {
     WKPageFindClientV0 fc = {};
     fc.base.version = 0;
     WKPageSetPageFindClient(page, &fc.base);
+    ContextMenuClearClient(page);
 }
