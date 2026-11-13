@@ -102,6 +102,7 @@ static void TabDragMove(int x, int y) {
         target = h.index;
         int li = -1, ri = -1;
         if (SplitStripPair(&li, &ri) && (target == li || target == ri)) target = -1;   // already a split view
+        if (target >= 0 && (g_tabs[target]->pinned || g_tabs[pressed]->pinned)) target = -1;   // pinned: no split view
         if (target >= 0) {
             const RectF& r = g_L.tabs[target];
             right = g_L.mode == kLayoutVertical ? (float)y >= r.Y + r.Height / 2 : (float)x >= r.X + r.Width / 2;
@@ -521,11 +522,19 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
-        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose };
+        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin };
         HMENU m = CreatePopupMenu();
         {
             const Tab& target = *g_tabs[h.index];
-            if (SplitHas(target) && SplitPartnerOf(target)) {
+            const bool split = SplitHas(target) && SplitPartnerOf(target);
+            AppendMenuW(m, MF_STRING, kPin, target.pinned ? Tr(L"Unpin tab", L"Открепить вкладку")
+                                          : split ? Tr(L"Pin tab (ends split view)", L"Закрепить вкладку (разделённый экран закроется)")
+                                                  : Tr(L"Pin tab", L"Закрепить вкладку"));
+            AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            const Tab* open = ActiveTab();
+            if (target.pinned || (h.index != g_active && open && open->pinned)) {
+                // (pinned tabs do not join a split view)
+            } else if (split) {
                 AppendMenuW(m, MF_STRING, kSplitSwap, Tr(L"Swap sides", L"Поменять половины местами"));
                 AppendMenuW(m, MF_STRING, kSplitClose, Tr(L"Close split view", L"Закрыть разделённый экран"));
             } else if (h.index != g_active) {
@@ -533,7 +542,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             } else {
                 AppendMenuW(m, MF_STRING, kSplitWith, Tr(L"Split view with new tab", L"Разделённый экран с новой вкладкой"));
             }
-            AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            if (!(target.pinned || (h.index != g_active && open && open->pinned))) AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         }
         const std::wstring why = TabSleepBlocker(*g_tabs[h.index]);
         std::wstring sleepText = Tr(L"Put tab to sleep", L"Усыпить вкладку");
@@ -552,7 +561,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         int index = -1;
         Tab* t = FindTab(id, &index);
         if (!t) return 0;
-        if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
+        if (cmd == kPin) SetTabPinned(index, !t->pinned);
+        else if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
         else if (cmd == kSplitSwap) SplitSwap();
         else if (cmd == kSplitClose) SplitClose();
         else if (cmd == kSleep) SleepTabNow(*t);

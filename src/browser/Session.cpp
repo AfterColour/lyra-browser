@@ -102,7 +102,7 @@ std::string PageState(WKPageRef page) {
     return out;
 }
 
-struct SavedTab { std::wstring url, title; std::string state; };
+struct SavedTab { std::wstring url, title; std::string state; bool pinned = false; };
 
 std::string s_lastSignature;
 DWORD s_lastSave = 0;
@@ -128,9 +128,10 @@ std::string Build(bool clean, std::string* signature) {
         if (t.lazyPending) state = t.lazyState.empty() ? std::string() : Base64((const unsigned char*)t.lazyState.data(), t.lazyState.size());
         else if (t.page && !IsInternalPageUrl(t.url) && !t.url.empty()) state = PageState(t.page);
         out << "tab\nurl " << OneLine(url) << "\ntitle " << OneLine(t.title) << "\n";
+        if (t.pinned) out << "pinned 1\n";
         if (!state.empty()) out << "state " << state << "\n";
         out << "end\n";
-        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << '\n';
+        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << (t.pinned ? 1 : 0) << '\n';
     }
     if (signature) *signature = sig.str();
     return out.str();
@@ -174,7 +175,7 @@ void SessionTick() {
     s_lastSave = now;
 }
 
-bool SessionRestore() {
+bool SessionRestore(bool pinnedOnly) {
     std::ifstream f(SessionFile(), std::ios::binary);
     if (!f) return false;
     std::vector<SavedTab> tabs;
@@ -197,14 +198,20 @@ bool SessionRestore() {
         else if (const char* v = value("url")) cur.url = FromUtf8(v);
         else if (const char* v = value("title")) cur.title = FromUtf8(v);
         else if (const char* v = value("state")) cur.state = v;
+        else if (const char* v = value("pinned")) cur.pinned = atoi(v) != 0;
     }
     // Closed before any tab starts WebKit's processes: they inherit open CRT files, and an
     // inherited handle kept session.txt locked, so later saves could not replace it.
     f.close();
     if (tabs.empty()) return false;
-    if (clean && !g_prefs.restoreSession) return false;
+    // Pinned tabs come back in any case (not loaded until they are opened); the rest only when
+    // the session is restored.
+    if (pinnedOnly || (clean && !g_prefs.restoreSession)) {
+        tabs.erase(std::remove_if(tabs.begin(), tabs.end(), [](const SavedTab& s) { return !s.pinned; }), tabs.end());
+        pinnedOnly = true;
+    }
     // A single empty start page is not worth restoring.
-    if (tabs.size() == 1 && tabs[0].url == kStartAlias) return false;
+    if (tabs.empty() || (tabs.size() == 1 && tabs[0].url == kStartAlias && !tabs[0].pinned)) return false;
     Log("session: restoring %zu tab(s) (previous exit %s)", tabs.size(), clean ? "normal" : "NOT clean");
 
     for (auto& s : tabs) {
@@ -217,8 +224,10 @@ bool SessionRestore() {
         t->lazyState = Unbase64(s.state);
         t->url = s.url;
         t->title = s.title.empty() ? HostOf(s.url) : s.title;
+        t->pinned = s.pinned;
     }
-    if (g_tabs.empty()) return false;
+    // (pinned ones first, as they were saved: nothing to sort)
+    if (g_tabs.empty() || pinnedOnly) return false;     // the caller opens its start tab after them
     SelectTab(std::min(std::max(active, 0), (int)g_tabs.size() - 1));
     return true;
 }

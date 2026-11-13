@@ -567,6 +567,24 @@ void MoveTab(int from, int to) {
     g_down = Hit();
 }
 
+int PinnedTabCount() {
+    int n = 0;
+    for (auto& t : g_tabs) if (t->pinned) ++n;
+    return n;
+}
+
+void SetTabPinned(int index, bool pinned) {
+    if (index < 0 || index >= (int)g_tabs.size() || g_tabs[index]->pinned == pinned) return;
+    Tab& t = *g_tabs[index];
+    if (pinned && SplitHas(t)) SplitClose();            // a pinned tab is not a half of a split view
+    const int count = PinnedTabCount();
+    t.pinned = pinned;
+    Log("tab#%llu %s", t.id, pinned ? "pinned" : "unpinned");
+    if (FindTab(t.id, &index)) MoveTab(index, pinned ? count : count - 1);
+    RefreshLayout(true);
+    InvalidateChrome();
+}
+
 void CloseTab(int i) {
     if (g_closing) return;
     if (g_tabOp) { Log("CloseTab(%d) re-entered during a tab operation -> ignored", i); return; }

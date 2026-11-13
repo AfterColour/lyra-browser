@@ -159,9 +159,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         if (!arg.empty()) { startUrl = arg; fromCommandLine = true; }
     }
     // The tabs of the last session (always after a crash; after a normal exit if Settings say so).
-    const bool restored = g_prefs.onboarded && !fromCommandLine && SessionRestore();
+    const bool restored = g_prefs.onboarded && SessionRestore(fromCommandLine);
     if (!restored) CreateTab(startUrl);
-    else if (fromCommandLine) CreateTab(startUrl);
     ScheduleSpareTab(3000);              // the next new tab, once the first page is up
 
     MSG msg;

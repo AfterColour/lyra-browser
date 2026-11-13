@@ -35,6 +35,10 @@ Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
 void ReopenClosedTab();
 // Moves the tab at `from` so that it ends up at index `to` (the others keep their order).
 void MoveTab(int from, int to);
+// Pinned tabs stay at the start of the list, narrow (only the site icon), and come back after a
+// restart. Pinning moves the tab after the pinned ones, unpinning right after them.
+void SetTabPinned(int index, bool pinned);
+int PinnedTabCount();
 void CloseTab(int i);
 void CloseAllTabs();
 void HandleTabCrashed(unsigned long long id, int reason);

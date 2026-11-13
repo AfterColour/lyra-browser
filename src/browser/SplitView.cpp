@@ -81,6 +81,11 @@ void Arrange() {
 }
 
 void Pair(unsigned long long left, unsigned long long right) {
+    {
+        const Tab* a = FindTab(left);
+        const Tab* b = FindTab(right);
+        if (!a || !b || a->pinned || b->pinned) { Log("split: tab#%llu | tab#%llu refused (pinned)", left, right); return; }
+    }
     if (s_left || s_right) {
         // A tab of the old pair that is not in the new one: back to the background.
         for (unsigned long long id : { s_left, s_right })

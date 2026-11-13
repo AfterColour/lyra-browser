@@ -146,7 +146,7 @@ WKArrayRef BuildMenu(WKArrayRef proposed, const Tab& t, Builder& b) {
     b.Spelling();
     if (!c.link.empty()) {
         b.Lyra(kOpenLinkInNewTab, Tr(L"Open link in new tab", L"Открыть ссылку в новой вкладке"));
-        b.Lyra(kOpenLinkInSplit, Tr(L"Open link in split view", L"Открыть ссылку в разделённом экране"));
+        if (!t.pinned) b.Lyra(kOpenLinkInSplit, Tr(L"Open link in split view", L"Открыть ссылку в разделённом экране"));
         b.Lyra(kOpenLinkInPrivateTab, Tr(L"Open link in private tab", L"Открыть ссылку в приватной вкладке"));
         b.Engine(kWKContextMenuItemTagDownloadLinkToDisk, Tr(L"Save link as\x2026", L"Сохранить ссылку как\x2026"));
         b.Engine(kWKContextMenuItemTagCopyLinkToClipboard, Tr(L"Copy link address", L"Копировать адрес ссылки"));

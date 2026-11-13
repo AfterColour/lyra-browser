@@ -32,6 +32,7 @@ struct Tab {
     bool  audible = false;          // the page plays sound (speaker on the tab)
     bool  muted = false;            // muted with the tab's speaker
     bool  openedByPage = false;     // created by window.open / target=_blank
+    bool  pinned = false;           // pinned: a narrow icon at the start of the tab list, kept across restarts
     // Restored from the last session and not shown yet: nothing is loaded until it is selected
     // (Session.cpp). url / title hold the saved ones meanwhile.
     bool  lazyPending = false;

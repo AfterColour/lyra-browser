@@ -139,8 +139,8 @@ static void MergeSplitTabs(Layout& L) {
     if (L.mode == kLayoutCompact && (g_active == li || g_active == ri)) size[g_active == li ? ri : li] = 0;
     else if (vertical) size[ri] = 0;                    // one row, the halves side by side
     else { size[li] += step + size[ri]; size[ri] = 0; }
-    float pos = vertical ? L.tabs[0].Y : L.tabs[0].X;
-    for (size_t i = 0; i < n; ++i) {
+    float pos = vertical ? L.tabs[li].Y : L.tabs[li].X;     // (tabs before the pair keep their places)
+    for (size_t i = (size_t)li; i < n; ++i) {
         if (vertical) { L.tabs[i].Y = std::floor(pos); L.tabs[i].Height = size[i]; }
         else { L.tabs[i].X = std::floor(pos); L.tabs[i].Width = size[i]; }
         if (size[i] > 0) pos += size[i] + step;
@@ -152,6 +152,8 @@ static void MergeSplitTabs(Layout& L) {
         PlaceReloadInPill(L);
     }
 }
+
+constexpr float kPinnedW = 40.f;                         // a pinned tab (96-DPI pixels)
 
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
@@ -180,8 +182,12 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float left = L.fwd.GetRight() + S(8);
         const float right = trail - S(4) - btn - gap;
         const float ty = std::floor((bar - tabH) / 2);
-        const float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
-        const int inactive = n ? (int)n - 1 : 0;
+        float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
+        int pinnedIn = 0;                                // pinned tabs (not the open one): a fixed narrow width
+        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned && (int)i != g_active) ++pinnedIn;
+        const float pinW = std::floor(S(kPinnedW));
+        avail = std::max(0.f, avail - pinW * (float)pinnedIn);
+        const int inactive = n ? (int)n - 1 - pinnedIn : 0;
         float inW = S(150), pillW = 0;
         if (inactive == 0) {
             pillW = std::min(avail, S(860));
@@ -197,7 +203,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         }
         float x = left;
         for (size_t i = 0; i < n; ++i) {
-            const float tw = ((int)i == g_active) ? pillW : inW;
+            const float tw = ((int)i == g_active) ? pillW : g_tabs[i]->pinned ? pinW : inW;
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(tw), tabH);
             x += tw + gap;
         }
@@ -215,13 +221,18 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float left = edge, right = L.capMin.X - S(8) - btn - gap;
         const float ty = std::floor((strip - tabH) / 2);
         const float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
-        float tw = n ? avail / (float)n : 0.f;
+        int pinnedN = 0;
+        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned) ++pinnedN;
+        const float pinW = std::floor(S(kPinnedW));
+        const size_t normal = n - (size_t)pinnedN;
+        float tw = normal ? std::max(0.f, avail - pinW * (float)pinnedN) / (float)normal : 0.f;
         tw = std::max(S(28), std::min(tw, S(200)));
         if (s_frozen) tw = std::min(tw, s_frozenTabW);
         float x = left;
         for (size_t i = 0; i < n; ++i) {
-            L.tabs[i] = RectF(std::floor(x), ty, std::floor(tw), tabH);
-            x += tw + gap;
+            const float w = g_tabs[i]->pinned ? pinW : tw;
+            L.tabs[i] = RectF(std::floor(x), ty, std::floor(w), tabH);
+            x += w + gap;
         }
         L.newTab = RectF(std::floor(std::min(x, right + gap)), std::floor((strip - btn) / 2), btn, btn);
 
@@ -254,7 +265,20 @@ static void ComputeTarget(Layout& L, int clientW) {
 
         const float rowH = tabH + S(2);
         float y = bar + S(4);
+        // Pinned tabs: a grid of icons at the top of the list.
+        const float cell = std::floor(S(kPinnedW)), cgap = S(4);
+        const int cols = std::max(1, (int)((L.sideW - S(12) + cgap) / (cell + cgap)));
+        int col = 0;
+        bool anyPinned = false;
         for (size_t i = 0; i < n; ++i) {
+            if (!g_tabs[i]->pinned) continue;
+            anyPinned = true;
+            L.tabs[i] = RectF(S(6) + (cell + cgap) * (float)col, std::floor(y), cell, rowH);
+            if (++col == cols) { col = 0; y += rowH + cgap; }
+        }
+        if (anyPinned) y += (col ? rowH + cgap : 0.f) + S(4);
+        for (size_t i = 0; i < n; ++i) {
+            if (g_tabs[i]->pinned) continue;
             L.tabs[i] = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
             y += rowH + S(1);
         }
