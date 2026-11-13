@@ -50,6 +50,12 @@ void InvalidateChrome();
 // where they are to the new places; otherwise they jump there.
 void ComputeLayout(int clientW, bool animate = false);
 Hit HitTest(int px, int py);
+// A split view is one tab in the list: the index of the half's tab under (x, y) when `index`
+// is that tab, else `index`.
+int SplitTabAt(int index, int x, int y);
+struct Tab;
+// A tab as it looks when open (field colour, border, icon, title) in `r`: the dragged tab.
+void DrawTabFace(Graphics& g, const Tab& t, const RectF& r);
 // Use instead of assigning g_hover: starts the hover fade.
 void SetHover(const Hit& h);
 // Advances tab and hover animations; returns true while anything still moves.

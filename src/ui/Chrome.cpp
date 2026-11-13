@@ -8,6 +8,7 @@
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
 #include "browser/SplitView.h"
+#include "ui/TabDrag.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "ui/WindowFrame.h"
@@ -124,6 +125,34 @@ static void PlaceReloadInPill(Layout& L) {
     PlaceStar(L);
 }
 
+// Split view: its two tabs are one tab in the list. The left half's tab takes both places (the
+// right half's gets no size); in the compact layout, while the split is open, the open half is
+// the address field and the other half's tab gets no size. The tabs after them move up.
+static void MergeSplitTabs(Layout& L) {
+    int li = -1, ri = -1;
+    if (!SplitStripPair(&li, &ri) || ri >= (int)L.tabs.size()) return;
+    const bool vertical = L.mode == kLayoutVertical;
+    const float step = vertical ? S(1) : S(2);
+    const size_t n = L.tabs.size();
+    std::vector<float> size(n);
+    for (size_t i = 0; i < n; ++i) size[i] = vertical ? L.tabs[i].Height : L.tabs[i].Width;
+    if (L.mode == kLayoutCompact && (g_active == li || g_active == ri)) size[g_active == li ? ri : li] = 0;
+    else if (vertical) size[ri] = 0;                    // one row, the halves side by side
+    else { size[li] += step + size[ri]; size[ri] = 0; }
+    float pos = vertical ? L.tabs[0].Y : L.tabs[0].X;
+    for (size_t i = 0; i < n; ++i) {
+        if (vertical) { L.tabs[i].Y = std::floor(pos); L.tabs[i].Height = size[i]; }
+        else { L.tabs[i].X = std::floor(pos); L.tabs[i].Width = size[i]; }
+        if (size[i] > 0) pos += size[i] + step;
+    }
+    if (vertical) L.newTab.Y = std::floor(pos);
+    else L.newTab.X = std::min(L.newTab.X, std::floor(pos));
+    if (L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
+        L.pill = L.tabs[g_active];
+        PlaceReloadInPill(L);
+    }
+}
+
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
     const float w = (float)clientW;
@@ -231,6 +260,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         }
         L.newTab = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
     }
+    MergeSplitTabs(L);
 }
 
 // g_L = s_target, with the tab rectangles (and the compact "+" / address field) taken from the
@@ -789,11 +819,24 @@ static void DrawChrome(Graphics& g, int w, int h) {
     tf.SetFormatFlags(tf.GetFormatFlags() | StringFormatFlagsNoWrap);
     tf.SetTrimming(StringTrimmingEllipsisCharacter);
     tf.SetLineAlignment(StringAlignmentCenter);
+    int splitL = -1, splitR = -1;
+    const bool splitPair = SplitStripPair(&splitL, &splitR) && splitR < n;
     for (int i = 0; i < n; ++i) {
         if (IsCompactActive(i)) continue;
         const RectF& r = L.tabs[i];
+        if (r.Width < 1.f || r.Height < 1.f) continue;   // (the right half of a split view: drawn with the left)
         const Tab& tab = *g_tabs[i];
-        const bool act = (i == g_active);
+        if (TabDragGhostId() == tab.id && !(splitPair && (i == splitL || i == splitR))) {
+            // Lifted by a drag (ui/TabDrag): an empty slot where it was.
+            GraphicsPath p;
+            AddRound(p, RectF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1), S(6));
+            Pen pen(Faded(T.text2, 0.45f), 1.f);
+            pen.SetDashStyle(DashStyleDash);
+            g.DrawPath(&pen, &p);
+            continue;
+        }
+        const bool merged = splitPair && i == splitL;    // the split view's one tab
+        const bool act = merged ? (g_active == splitL || g_active == splitR) : (i == g_active);
         const float h = std::max({ HoverAmount(MakeHit(Hit::TabBody, i)), HoverAmount(MakeHit(Hit::TabClose, i)),
                                    HoverAmount(MakeHit(Hit::TabAudio, i)) });
         const float rad = S(6);
@@ -822,6 +865,54 @@ static void DrawChrome(Graphics& g, int w, int h) {
             AddRound(p, r, rad);
             Pen pen(T.accent, std::max(1.f, std::round(S(1.5f))));
             g.DrawPath(&pen, &p);
+        }
+
+        if (merged) {                                    // [left half's page | right half's page]
+            {                                            // a light accent outline: it is not an ordinary tab
+                GraphicsPath p;
+                AddRound(p, RectF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1), rad);
+                Pen pen(Faded(T.accent, act ? 0.6f : 0.38f), 1.f);
+                g.DrawPath(&pen, &p);
+            }
+            const bool showClose = CloseVisible(i);
+            const float right = showClose ? CloseRect(i).X - S(2) : r.GetRight() - S(4);
+            const float mid = std::floor(r.X + r.Width / 2);
+            const bool shown = act;
+            for (int k = 0; k < 2; ++k) {
+                const Tab& ht = *g_tabs[k ? splitR : splitL];
+                const float hx = k ? mid : r.X, hr = k ? right : mid;
+                if (TabDragGhostId() == ht.id) {         // being pulled out: its half is empty
+                    GraphicsPath p;
+                    AddRound(p, RectF(hx + S(3), r.Y + S(3), hr - hx - S(6), r.Height - S(6)), S(4));
+                    Pen pen(Faded(T.text2, 0.45f), 1.f);
+                    pen.SetDashStyle(DashStyleDash);
+                    g.DrawPath(&pen, &p);
+                    continue;
+                }
+                const bool open = g_tabs[k ? splitR : splitL].get() == ActiveTab();
+                const float bs = S(14);
+                const RectF badge(std::floor(hx + S(8)), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);
+                if (ht.privateTab) DrawPrivateBadge(g, badge);
+                else DrawSiteBadge(g, ht, badge);
+                const float tx = badge.GetRight() + S(6), tr = hr - S(6);
+                if (tr - tx > S(10)) {
+                    SolidBrush tb((shown && !open) || ht.sleeping ? T.text2 : T.text);
+                    g.DrawString(ht.title.c_str(), -1, (shown && open && !vertical) ? g_fTabBold.get() : g_fTab.get(),
+                                 RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
+                }
+                if (shown && open) {                     // which half has the keyboard
+                    const float uw = std::max(0.f, hr - hx - S(16));
+                    FillRound(g, T.accent, RectF(hx + S(8), r.GetBottom() - S(3.5f), uw, std::max(2.f, std::round(S(2)))), S(1));
+                }
+            }
+            Pen sep(Faded(T.text2, 0.45f), 1.f);
+            g.DrawLine(&sep, mid + 0.5f, r.Y + S(8), mid + 0.5f, r.GetBottom() - S(8));
+            if (showClose) {
+                RectF c = CloseRect(i);
+                hoverFill(c, MakeHit(Hit::TabClose, i), dwn(Hit::TabClose, i), S(4));
+                DrawGlyph(g, L"\uE711", c, T.text2, g_fCaption.get());
+            }
+            continue;
         }
 
         const float bs = S(14);
@@ -866,6 +957,23 @@ static void DrawChrome(Graphics& g, int w, int h) {
             hoverFill(a, MakeHit(Hit::TabAudio, i), dwn(Hit::TabAudio, i), S(4));
             DrawGlyph(g, tab.muted ? L"\uE74F" : L"\uE767", a, T.text2, g_fIconSm.get());
         }
+    }
+
+    // A tab that has just landed after a drag (ui/TabDrag): a soft ring spreads out of it and fades.
+    for (int i = 0; i < n; ++i) {
+        const RectF& r = L.tabs[i];
+        if (r.Width < 1.f || r.Height < 1.f) continue;
+        float t = TabLandPulse(g_tabs[i]->id);
+        if (t < 0.f && splitPair && i == splitL) t = TabLandPulse(g_tabs[splitR]->id);
+        if (t < 0.f) continue;
+        const float e = 1.f - (1.f - t) * (1.f - t) * (1.f - t);          // ease out
+        const float grow = S(5) * e;
+        const RectF ring(r.X - grow, r.Y - grow, r.Width + grow * 2, r.Height + grow * 2);
+        GraphicsPath p;
+        AddRound(p, ring, S(6) + grow);
+        Pen pen(Faded(T.accent, 0.75f * (1.f - t)), std::max(1.f, S(1.5f)));
+        g.DrawPath(&pen, &p);
+        FillRound(g, Faded(T.accent, 0.16f * (1.f - e)), r, S(6));
     }
 
     // New tab
@@ -1074,4 +1182,36 @@ void PaintChrome(HDC hdc, const RECT& rc) {
         g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         DrawChrome(g, cr.right, cr.bottom);
     });
+}
+
+int SplitTabAt(int index, int x, int y) {
+    int li = -1, ri = -1;
+    if (!SplitStripPair(&li, &ri) || index != li || index >= (int)g_L.tabs.size()) return index;
+    if (g_L.mode == kLayoutCompact && (g_active == li || g_active == ri)) return index;
+    const RectF& r = g_L.tabs[index];
+    (void)y;
+    return (float)x >= std::floor(r.X + r.Width / 2) ? ri : li;
+}
+
+void DrawTabFace(Graphics& g, const Tab& t, const RectF& r) {
+    const Theme& T = g_th;
+    const float rad = S(6);
+    FillRound(g, g_L.mode == kLayoutVertical ? T.tabActive : T.field, r, rad);
+    GraphicsPath p;
+    AddRound(p, r, rad);
+    Pen pen(T.fieldBorder, 1.f);
+    g.DrawPath(&pen, &p);
+    const float bs = S(14);
+    const RectF badge(std::floor(r.X + S(9)), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);
+    if (t.privateTab) DrawPrivateBadge(g, badge);
+    else DrawSiteBadge(g, t, badge);
+    StringFormat tf(StringFormat::GenericTypographic());
+    tf.SetFormatFlags(tf.GetFormatFlags() | StringFormatFlagsNoWrap);
+    tf.SetTrimming(StringTrimmingEllipsisCharacter);
+    tf.SetLineAlignment(StringAlignmentCenter);
+    const float tx = badge.GetRight() + S(7), tr = r.GetRight() - S(10);
+    if (tr - tx > S(10)) {
+        SolidBrush tb(T.text);
+        g.DrawString(t.title.c_str(), -1, g_fTab.get(), RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
+    }
 }

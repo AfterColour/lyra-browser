@@ -1,6 +1,7 @@
 // Lyra — часы анимаций: кадры в такт обновлению экрана, плавное приближение к цели.
 #include "ui/Animation.h"
 #include "browser/SplitView.h"
+#include "ui/TabDrag.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
 #include "ui/Chrome.h"
@@ -55,7 +56,8 @@ void AnimOnFrame() {
     const bool chrome = ChromeAnimStep(dt);
     const bool settings = SettingsAnimStep(dt);
     const bool split = SplitAnimStep(dt);
-    if (!chrome && !settings && !split) {
+    const bool drag = TabDragAnimStep(dt);
+    if (!chrome && !settings && !split && !drag) {
         std::lock_guard<std::mutex> lock(s_lock);
         s_running = false;
     }

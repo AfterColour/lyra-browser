@@ -555,6 +555,18 @@ void ReopenClosedTab() {
     CreateTab(url);
 }
 
+void MoveTab(int from, int to) {
+    const int n = (int)g_tabs.size();
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    const unsigned long long activeId = ActiveTab() ? ActiveTab()->id : 0;
+    std::unique_ptr<Tab> t = std::move(g_tabs[from]);
+    g_tabs.erase(g_tabs.begin() + from);
+    g_tabs.insert(g_tabs.begin() + to, std::move(t));
+    if (activeId) FindTab(activeId, &g_active);
+    g_hover = Hit();
+    g_down = Hit();
+}
+
 void CloseTab(int i) {
     if (g_closing) return;
     if (g_tabOp) { Log("CloseTab(%d) re-entered during a tab operation -> ignored", i); return; }

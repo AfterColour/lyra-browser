@@ -20,6 +20,7 @@ namespace {
 unsigned long long s_left = 0, s_right = 0;          // the pair (tab ids), 0 = no split
 float s_ratio = 0.5f;                                // the left half's share of the width (shown)
 float s_target = 0.5f;                               // where it is going (divider drag, double-click)
+float s_viewRatio = 0.5f;                            // what the views are laid out at (frozen under the cover)
 unsigned long long s_dragTab = 0, s_dropTab = 0;     // tab drag onto a tab: the dragged one, the target
 bool s_dropRight = false;
 RECT s_paneL = {}, s_paneR = {}, s_divider = {};     // last layout, client coordinates
@@ -60,6 +61,7 @@ void Hook(bool on) {
     if (!on && s_hook) { UnhookWindowsHookEx(s_hook); s_hook = nullptr; }
 }
 
+void FreeCover();
 void Forget() {
     // Pictures taken while split would show both halves when one of them is shown alone.
     if (s_left) TransitionForget(s_left);
@@ -67,7 +69,15 @@ void Forget() {
     s_left = s_right = 0;
     s_dragging = s_hoverDivider = false;
     s_paneL = s_paneR = s_divider = {};
+    FreeCover();
     Hook(false);
+}
+
+// The two tabs side by side in the tab list, left half first: they are drawn as one tab.
+void Arrange() {
+    int li = -1, ri = -1;
+    if (!FindTab(s_left, &li) || !FindTab(s_right, &ri) || ri == li + 1) return;
+    MoveTab(ri, ri > li ? li + 1 : li);
 }
 
 void Pair(unsigned long long left, unsigned long long right) {
@@ -80,24 +90,29 @@ void Pair(unsigned long long left, unsigned long long right) {
     }
     s_left = left;
     s_right = right;
-    s_ratio = s_target = 0.5f;
+    s_ratio = s_target = s_viewRatio = 0.5f;
     Hook(true);
     TransitionCancel();
     Log("split: tab#%llu | tab#%llu", left, right);
+    Arrange();
     RefreshLayout(true);
     InvalidateRect(g_hWnd, nullptr, FALSE);
 }
 
 // Places the halves for a page area of w and the current ratio.
-void Geometry(int left, int top, int w, int h) {
+void GeometryFor(float ratio, int left, int top, int w, int h, RECT* pl, RECT* pr, RECT* div) {
     const int m = Margin(), g = Gutter();
     const int inner = std::max(0, w - 2 * m - g);
-    int lw = (int)std::lround(inner * s_ratio);
+    int lw = (int)std::lround(inner * ratio);
     const int minW = std::min(MinPane(), inner / 2);
     lw = std::clamp(lw, minW, inner - minW);
-    s_paneL = { left + m, top + m, left + m + lw, top + h - m };
-    s_paneR = { s_paneL.right + g, top + m, left + w - m, top + h - m };
-    s_divider = { s_paneL.right, top, s_paneR.left, top + h };
+    *pl = { left + m, top + m, left + m + lw, top + h - m };
+    *pr = { pl->right + g, top + m, left + w - m, top + h - m };
+    *div = { pl->right, top, pr->left, top + h };
+}
+
+void Geometry(int left, int top, int w, int h) {
+    GeometryFor(s_viewRatio, left, top, w, h, &s_paneL, &s_paneR, &s_divider);
 }
 
 void Place(Tab* t, const RECT& r) {
@@ -130,6 +145,183 @@ RECT PageArea() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
     return { (LONG)g_L.sideW, (LONG)g_L.chromeH, cr.right, cr.bottom };
+}
+
+// --- The divider picture ---------------------------------------------------------------
+// Resizing two pages for every mouse move makes the divider step (WebKit relays each page
+// out and draws it again first). While the divider is dragged, a picture of the page area
+// taken when the drag began is shown over it instead: the divider and the halves move in it
+// at the display rate. The views get their new size once, when the drag ends; the picture
+// goes away (fading) once both have drawn at that size.
+HWND s_cover = nullptr;
+HDC s_coverDC = nullptr, s_snapDC = nullptr;
+HBITMAP s_coverBmp = nullptr, s_snapBmp = nullptr;
+HGDIOBJ s_coverOld = nullptr, s_snapOld = nullptr;
+void* s_coverBits = nullptr;
+SIZE s_coverSize = {};
+POINT s_coverPos = {};
+RECT s_snapL = {}, s_snapR = {};                     // the halves in the picture (cover coordinates)
+COLORREF s_fillL = 0, s_fillR = 0;                   // what a growing half shows past its picture
+enum class Cover { None, Moving, Waiting, Fading } s_coverState = Cover::None;
+int s_waitPaints = 0;
+DWORD s_coverSince = 0;
+BYTE s_coverAlpha = 255;
+
+LRESULT CALLBACK CoverProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+    if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    return DefWindowProcW(h, msg, w, l);
+}
+
+HBITMAP NewDib(HDC ref, int w, int h, void** bits) {
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    void* b = nullptr;
+    HBITMAP bmp = CreateDIBSection(ref, &bi, DIB_RGB_COLORS, &b, nullptr, 0);
+    if (bits) *bits = b;
+    return bmp;
+}
+
+// The most common of a few pixels down a column of a half, a little left of its right edge
+// (past the scroll bar): the page's background, as far as it can be told.
+COLORREF SampleFill(const RECT& r) {
+    const int x = std::max((int)r.left, (int)r.right - 1 - (int)std::lround(S(24)));
+    std::map<COLORREF, int> n;
+    for (int i = 1; i <= 9; ++i) ++n[GetPixel(s_snapDC, x, r.top + (int)((r.bottom - r.top) * i / 10))];
+    COLORREF best = RGB(255, 255, 255);
+    int most = 0;
+    for (auto& [c, k] : n) if (k > most) { most = k; best = c; }
+    return best;
+}
+
+void FreeCover() {
+    if (s_cover) { DestroyWindow(s_cover); s_cover = nullptr; }
+    if (s_coverDC) { SelectObject(s_coverDC, s_coverOld); DeleteDC(s_coverDC); s_coverDC = nullptr; }
+    if (s_coverBmp) { DeleteObject(s_coverBmp); s_coverBmp = nullptr; }
+    if (s_snapDC) { SelectObject(s_snapDC, s_snapOld); DeleteDC(s_snapDC); s_snapDC = nullptr; }
+    if (s_snapBmp) { DeleteObject(s_snapBmp); s_snapBmp = nullptr; }
+    s_coverBits = nullptr;
+    s_coverState = Cover::None;
+    if (g_hWnd) KillTimer(g_hWnd, TIMER_SPLIT_COVER);
+}
+
+void PushCover() {
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, s_coverAlpha, 0 };
+    POINT src = { 0, 0 };
+    UpdateLayeredWindow(s_cover, nullptr, &s_coverPos, &s_coverSize, s_coverDC, &src, 0, &bf, ULW_ALPHA);
+}
+
+// Draws the halves at s_ratio into the cover.
+void RenderCover() {
+    if (!s_coverDC) return;
+    const int w = s_coverSize.cx, h = s_coverSize.cy;
+    RECT nl, nr, nd;
+    GeometryFor(s_ratio, 0, 0, w, h, &nl, &nr, &nd);
+    HBRUSH gutter = CreateSolidBrush(g_dark ? RGB(24, 25, 28) : RGB(226, 228, 233));
+    RECT all = { 0, 0, w, h };
+    FillRect(s_coverDC, &all, gutter);
+    DeleteObject(gutter);
+    auto half = [&](const RECT& to, const RECT& from, COLORREF fill) {
+        const int tw = to.right - to.left, th = to.bottom - to.top, fw = from.right - from.left;
+        const int cw = std::min(tw, fw);
+        BitBlt(s_coverDC, to.left, to.top, cw, th, s_snapDC, from.left, from.top, SRCCOPY);
+        if (tw > cw) {
+            HBRUSH b = CreateSolidBrush(fill);
+            RECT rest = { to.left + cw, to.top, to.right, to.bottom };
+            FillRect(s_coverDC, &rest, b);
+            DeleteObject(b);
+        }
+    };
+    half(nl, s_snapL, s_fillL);
+    half(nr, s_snapR, s_fillR);
+    Graphics g(s_coverDC);
+    g.SetSmoothingMode(SmoothingModeHighQuality);
+    const Theme& T = g_th;
+    const RECT& act = (ActiveTab() && ActiveTab()->id == s_left) ? nl : nr;
+    const float m = (float)Margin(), o = m / 2.f;
+    Pen outline(T.accent, std::max(2.f, std::round(S(2))));
+    g.DrawRectangle(&outline, act.left - o, act.top - o, (REAL)(act.right - act.left) + m, (REAL)(act.bottom - act.top) + m);
+    const float gw = std::max(2.f, std::round(S(3))), gh = std::round(S(36));
+    const float cx = (nd.left + nd.right) / 2.f, cy = (nd.top + nd.bottom) / 2.f;
+    FillRound(g, T.accent, RectF(cx - gw / 2, cy - gh / 2, gw, gh), gw / 2);
+    PushCover();
+}
+
+// The picture of the page area as it is now; false if it cannot be shown.
+bool BeginCover() {
+    if (s_coverState != Cover::None) FreeCover();
+    RECT pa;
+    GetClientRect(g_hWnd, &pa);
+    pa.left = (LONG)g_L.sideW;
+    pa.top = (LONG)g_L.chromeH;
+    const int w = pa.right - pa.left, h = pa.bottom - pa.top;
+    if (w <= 0 || h <= 0 || IsIconic(g_hWnd)) return false;
+    static bool registered = false;
+    HINSTANCE hi = GetModuleHandleW(nullptr);
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = CoverProc;
+        wc.hInstance = hi;
+        wc.lpszClassName = L"LyraSplitCover";
+        if (!RegisterClassExW(&wc)) return false;
+        registered = true;
+    }
+    POINT tl = { pa.left, pa.top };
+    ClientToScreen(g_hWnd, &tl);
+    HDC screen = GetDC(nullptr);
+    s_snapBmp = NewDib(screen, w, h, nullptr);
+    s_coverBmp = NewDib(screen, w, h, &s_coverBits);
+    s_snapDC = CreateCompatibleDC(screen);
+    s_coverDC = CreateCompatibleDC(screen);
+    bool ok = s_snapBmp && s_coverBmp && s_snapDC && s_coverDC;
+    if (ok) {
+        s_snapOld = SelectObject(s_snapDC, s_snapBmp);
+        s_coverOld = SelectObject(s_coverDC, s_coverBmp);
+        BitBlt(s_snapDC, 0, 0, w, h, screen, tl.x, tl.y, SRCCOPY);   // DWM's picture: GPU pages come out right
+    }
+    ReleaseDC(nullptr, screen);
+    if (!ok) { FreeCover(); return false; }
+    s_snapL = { s_paneL.left - pa.left, s_paneL.top - pa.top, s_paneL.right - pa.left, s_paneL.bottom - pa.top };
+    s_snapR = { s_paneR.left - pa.left, s_paneR.top - pa.top, s_paneR.right - pa.left, s_paneR.bottom - pa.top };
+    s_fillL = SampleFill(s_snapL);
+    s_fillR = SampleFill(s_snapR);
+    s_coverPos = tl;
+    s_coverSize = { w, h };
+    s_coverAlpha = 255;
+    s_cover = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                              L"LyraSplitCover", L"", WS_POPUP, tl.x, tl.y, w, h, g_hWnd, nullptr, hi, nullptr);
+    if (!s_cover) { FreeCover(); return false; }
+    s_coverState = Cover::Moving;
+    RenderCover();
+    SetWindowPos(s_cover, HWND_TOP, tl.x, tl.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return true;
+}
+
+void CoverPainted(WKErrorRef, void*) {
+    if (s_coverState == Cover::Waiting && --s_waitPaints <= 0) {
+        s_coverState = Cover::Fading;
+        s_coverSince = GetTickCount();
+    }
+}
+
+// The divider has stopped: the views take the new size, the picture waits for them.
+void CommitCover() {
+    s_viewRatio = s_ratio;
+    LayoutWebViews();
+    InvalidateRect(g_hWnd, nullptr, FALSE);
+    if (s_coverState != Cover::Moving) return;
+    s_coverState = Cover::Waiting;
+    s_coverSince = GetTickCount();
+    s_waitPaints = 0;
+    for (Tab* t : { Left(), Right() })
+        if (t && t->page) { ++s_waitPaints; WKPageForceRepaint(t->page, nullptr, CoverPainted); }
+    if (!s_waitPaints) { s_coverState = Cover::Fading; }
+    SetTimer(g_hWnd, TIMER_SPLIT_COVER, 15, nullptr);
 }
 
 } // namespace
@@ -195,10 +387,11 @@ void SplitToggle() {
 void SplitSwap() {
     if (!s_left || !s_right) return;
     std::swap(s_left, s_right);
-    s_ratio = s_target = 1.f - s_target;
+    s_ratio = s_target = s_viewRatio = 1.f - s_target;
     TransitionForget(s_left);
     TransitionForget(s_right);
-    LayoutWebViews();
+    Arrange();
+    RefreshLayout(true);
     RepaintHalves(true);
     InvalidateRect(g_hWnd, nullptr, FALSE);
 }
@@ -305,10 +498,12 @@ bool SplitMouse(UINT msg, int x, int y) {
             if (now - s_lastDown <= GetDoubleClickTime()) {   // double-click: half and half
                 s_lastDown = 0;
                 s_target = 0.5f;
+                if (s_coverState != Cover::Moving) BeginCover();
                 AnimRequest();
                 return true;
             }
             s_lastDown = now;
+            if (s_coverState != Cover::Moving) BeginCover();
             s_dragging = true;
             s_dragOffset = x - s_paneL.right;
             SetCapture(g_hWnd);
@@ -326,14 +521,14 @@ bool SplitMouse(UINT msg, int x, int y) {
         if (!s_dragging) return false;
         s_dragging = false;
         if (GetCapture() == g_hWnd) ReleaseCapture();
-        RepaintHalves(true);
+        AnimRequest();                                   // (SplitAnimStep commits once it has settled)
         InvalidateRect(g_hWnd, nullptr, FALSE);
         return true;
     case WM_MOUSELEAVE:
         if (s_hoverDivider) { s_hoverDivider = false; InvalidateRect(g_hWnd, &s_divider, FALSE); }
         return false;
     case WM_CAPTURECHANGED:
-        if (s_dragging) { s_dragging = false; InvalidateRect(g_hWnd, nullptr, FALSE); }
+        if (s_dragging) { s_dragging = false; AnimRequest(); InvalidateRect(g_hWnd, nullptr, FALSE); }
         return false;
     }
     return false;
@@ -348,15 +543,40 @@ void SplitFocusTab(unsigned long long id) {
 }
 
 bool SplitAnimStep(float dt) {
-    if (std::fabs(s_target - s_ratio) < 1e-4f) return false;
-    if (!SplitShown()) { s_ratio = s_target; return false; }
+    const bool cover = s_coverState == Cover::Moving;
+    if (!cover && std::fabs(s_target - s_ratio) < 1e-4f) return false;
+    if (!SplitShown()) { s_ratio = s_viewRatio = s_target; FreeCover(); return false; }
     const RECT pa = PageArea();
     const float inner = (float)std::max(1L, pa.right - pa.left - 2 * Margin() - Gutter());
-    s_ratio += (s_target - s_ratio) * AnimFactor(dt, 22.f);
-    if (std::fabs(s_target - s_ratio) * inner < 0.5f) s_ratio = s_target;
-    LayoutWebViews();
-    InvalidateRect(g_hWnd, &pa, FALSE);
-    return s_ratio != s_target;
+    if (s_ratio != s_target) {
+        s_ratio += (s_target - s_ratio) * AnimFactor(dt, 14.f);
+        if (std::fabs(s_target - s_ratio) * inner < 0.5f) s_ratio = s_target;
+        if (cover) RenderCover();
+        else { s_viewRatio = s_ratio; LayoutWebViews(); InvalidateRect(g_hWnd, &pa, FALSE); }
+    }
+    if (s_ratio == s_target && cover && !s_dragging) {   // released and settled: the views follow
+        CommitCover();
+        return false;
+    }
+    return s_ratio != s_target || s_dragging;
+}
+
+void SplitCoverTimer() {
+    switch (s_coverState) {
+    case Cover::Waiting:
+        if (GetTickCount() - s_coverSince > 700) { s_coverState = Cover::Fading; s_coverSince = GetTickCount(); }
+        break;
+    case Cover::Fading: {
+        const DWORD t = GetTickCount() - s_coverSince;
+        if (t >= 120) { FreeCover(); RepaintHalves(true); return; }
+        s_coverAlpha = (BYTE)(255 - 255 * t / 120);
+        PushCover();
+        break;
+    }
+    default:
+        FreeCover();
+        break;
+    }
 }
 
 void SplitTabDragOver(unsigned long long draggedId, int targetIndex, bool right) {
@@ -394,4 +614,21 @@ bool SplitDropHint(int index, bool* right) {
     if (!s_dropTab || index < 0 || index >= (int)g_tabs.size() || g_tabs[index]->id != s_dropTab) return false;
     if (right) *right = s_dropRight;
     return true;
+}
+
+bool SplitStripPair(int* left, int* right) {
+    int li = -1, ri = -1;
+    if (!s_left || !s_right || !FindTab(s_left, &li) || !FindTab(s_right, &ri) || ri != li + 1) return false;
+    if (left) *left = li;
+    if (right) *right = ri;
+    return true;
+}
+
+void SplitDetach(unsigned long long id) {
+    Tab* t = FindTab(id);
+    if (!t || !SplitPartnerOf(*t)) return;
+    Log("split: tab#%llu dragged out -> ordinary tabs", id);
+    int index = -1;
+    if (ActiveTab() != t && FindTab(id, &index)) SelectTab(index);
+    SplitClose();
 }

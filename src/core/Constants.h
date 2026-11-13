@@ -12,6 +12,7 @@ constexpr int   ID_URL_EDIT = 1001;
 constexpr UINT_PTR TIMER_UI = 1;
 constexpr UINT_PTR TIMER_TAB_UNFREEZE = 2;   // tabs may widen again after a close (see FreezeTabWidths)
 constexpr UINT_PTR TIMER_SPARE_TAB = 3;      // prepare the next new tab in the background (see PrepareSpareTab)
+constexpr UINT_PTR TIMER_SPLIT_COVER = 6;    // split view: the divider picture waits for the halves, then fades
 constexpr UINT_PTR TIMER_SPLIT_REPAINT = 5;  // split view: both halves draw again after a resize (see SplitView)
 constexpr UINT_PTR TIMER_TRANSITION = 4;     // the tab switch cover fades (see TabTransition)
 

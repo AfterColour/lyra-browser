@@ -34,6 +34,7 @@
 #include "browser/TabSleep.h"
 #include "browser/ContextMenu.h"
 #include "browser/SplitView.h"
+#include "ui/TabDrag.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
 
@@ -62,33 +63,78 @@ static bool   g_trackingMouse = false;
 static unsigned long long s_tabPressId = 0;
 static POINT s_tabPressPt = {};
 static bool s_tabDragging = false;
+static POINT s_tabLastPt = {};
+static RectF s_tabPressRect;                     // where the grabbed tab (or half) was on screen when pressed
+
+// The pressed tab as it is drawn now (before the press selects it and the tab list moves): its
+// half of the split view's tab, the address field (compact layout, open tab), or its own place.
+static RectF PressedTabRect(int hitIndex, int tabIndex) {
+    if (hitIndex < 0 || hitIndex >= (int)g_L.tabs.size()) return RectF();
+    if (g_L.mode == kLayoutCompact && hitIndex == g_active) return g_L.pill;
+    RectF r = g_L.tabs[hitIndex];
+    int li = -1, ri = -1;
+    if (SplitStripPair(&li, &ri) && hitIndex == li && (tabIndex == li || tabIndex == ri)) {
+        const float half = std::floor(r.Width / 2);
+        r = RectF(tabIndex == li ? r.X : r.X + half, r.Y, tabIndex == li ? half : r.Width - half, r.Height);
+    }
+    return r;
+}
 
 static void TabDragMove(int x, int y) {
     if (!s_tabPressId) return;
+    int pressed = -1;
+    if (!FindTab(s_tabPressId, &pressed)) { s_tabPressId = 0; return; }
     if (!s_tabDragging) {
         if (std::abs(x - s_tabPressPt.x) < GetSystemMetrics(SM_CXDRAG) &&
             std::abs(y - s_tabPressPt.y) < GetSystemMetrics(SM_CYDRAG)) return;
         s_tabDragging = true;
+        RectF from = s_tabPressRect;
+        if (from.Width < 1.f) from = RectF((float)s_tabPressPt.x - S(80), (float)s_tabPressPt.y - S(16), S(160), S(32));
+        TabDragStart(s_tabPressId, s_tabPressPt, from);
     }
+    TabDragMoveTo({ x, y });
+    s_tabLastPt = { x, y };
     const Hit h = HitTest(x, y);
     int target = -1;
     bool right = false;
     if ((h.kind == Hit::TabBody || h.kind == Hit::TabClose || h.kind == Hit::TabAudio) &&
         h.index >= 0 && h.index < (int)g_L.tabs.size()) {
         target = h.index;
-        const RectF& r = g_L.tabs[h.index];
-        right = g_L.mode == kLayoutVertical ? (float)y >= r.Y + r.Height / 2 : (float)x >= r.X + r.Width / 2;
+        int li = -1, ri = -1;
+        if (SplitStripPair(&li, &ri) && (target == li || target == ri)) target = -1;   // already a split view
+        if (target >= 0) {
+            const RectF& r = g_L.tabs[target];
+            right = g_L.mode == kLayoutVertical ? (float)y >= r.Y + r.Height / 2 : (float)x >= r.X + r.Width / 2;
+        }
     }
     SplitTabDragOver(s_tabPressId, target, right);
-    SetCursor(LoadCursor(nullptr, target >= 0 ? IDC_HAND : IDC_ARROW));
 }
 
 static bool TabDragEnd(bool drop) {
     const bool was = s_tabDragging;
+    const unsigned long long pressedId = s_tabPressId;
     s_tabPressId = 0;
     s_tabDragging = false;
-    if (was) SplitTabDragEnd(drop);
-    return was;
+    if (!was) return false;
+    // Where the lifted tab lands: on the tab it was dropped on, or back in its place.
+    RectF into;
+    bool onTarget = false;
+    for (int i = 0; i < (int)g_tabs.size() && i < (int)g_L.tabs.size(); ++i)
+        if (drop && SplitDropHint(i, nullptr)) { into = g_L.tabs[i]; onTarget = true; break; }
+    // A half of the split view's tab dropped away from that tab: pulled out, an ordinary tab again
+    // (the copy then flies to its own place in the list).
+    if (drop && !onTarget) {
+        int li = -1, ri = -1, pressed = -1;
+        if (SplitStripPair(&li, &ri) && FindTab(pressedId, &pressed) && (pressed == li || pressed == ri)) {
+            const bool compactOpen = g_L.mode == kLayoutCompact && (g_active == li || g_active == ri);
+            RectF whole = compactOpen ? g_L.pill : g_L.tabs[li];
+            whole.Inflate(S(6), S(6));
+            if (!whole.Contains((float)s_tabLastPt.x, (float)s_tabLastPt.y)) SplitDetach(pressedId);
+        }
+    }
+    TabDragFinish(onTarget ? &into : nullptr);
+    SplitTabDragEnd(drop);
+    return true;
 }
 static bool   g_trackingNc = false;      // TME_NONCLIENT tracking for the window buttons
 
@@ -171,6 +217,17 @@ static void CheckTabUnfreeze(HWND hWnd) {
 
 static void CloseTabWithMouse(HWND hWnd, int index) {
     FreezeTabWidths();
+    // The split view's tab is one tab: both its pages close.
+    int li = -1, ri = -1;
+    if (SplitStripPair(&li, &ri) && (index == li || index == ri) && !(g_L.mode == kLayoutCompact && index == g_active)) {
+        const unsigned long long other = g_tabs[index == li ? ri : li]->id, self = g_tabs[index]->id;
+        int j = -1;
+        if (FindTab(other, &j)) CloseTab(j);
+        if (FindTab(self, &j)) CloseTab(j);
+        RehoverFromCursor(hWnd);
+        CheckTabUnfreeze(hWnd);
+        return;
+    }
     CloseTab(index);
     RehoverFromCursor(hWnd);
     CheckTabUnfreeze(hWnd);
@@ -359,7 +416,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd && SplitSetCursor()) return TRUE;
-        if (s_tabDragging) return TRUE;                  // (TabDragMove sets it)
+        if (s_tabDragging) { SetCursor(LoadCursor(nullptr, IDC_ARROW)); return TRUE; }
         break;
 
     case WM_MOUSEMOVE: {
@@ -405,6 +462,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         g_down = h;
         if (h.kind == Hit::Pill) { g_down = Hit(); ShowUrlEdit(); return 0; }
         if (h.kind == Hit::TabBody) {
+            const int hitIndex = h.index;
+            h.index = SplitTabAt(h.index, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));   // a split view's half
+            s_tabPressRect = PressedTabRect(hitIndex, h.index);
+            g_down = h;
             SelectTab(h.index);
             if (h.index >= 0 && h.index < (int)g_tabs.size()) {
                 s_tabPressId = g_tabs[h.index]->id;
@@ -480,7 +541,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         AppendMenuW(m, MF_STRING | (why.empty() ? 0 : MF_GRAYED), kSleep, sleepText.c_str());
         AppendMenuW(m, MF_STRING, kSleepOthers, Tr(L"Put other tabs to sleep", L"Усыпить остальные вкладки"));
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
+        if (SplitHas(*g_tabs[h.index]) && SplitPartnerOf(*g_tabs[h.index]))
+            AppendMenuW(m, MF_STRING, kClose, Tr(L"Close both pages", L"Закрыть обе страницы"));
+        else
+            AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ClientToScreen(hWnd, &pt);
         const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, nullptr);
@@ -509,6 +573,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_TIMER: {
         if (wParam == TIMER_TRANSITION) {
             TransitionTick();
+            return 0;
+        }
+        if (wParam == TIMER_SPLIT_COVER) {
+            SplitCoverTimer();
             return 0;
         }
         if (wParam == TIMER_SPLIT_REPAINT) {

@@ -33,6 +33,8 @@ void CreatePrivateTab();             // Ctrl+Shift+N: a private (incognito) tab
 // open tab stays) or in front, and private or not.
 Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
 void ReopenClosedTab();
+// Moves the tab at `from` so that it ends up at index `to` (the others keep their order).
+void MoveTab(int from, int to);
 void CloseTab(int i);
 void CloseAllTabs();
 void HandleTabCrashed(unsigned long long id, int reason);

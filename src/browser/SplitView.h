@@ -28,6 +28,9 @@ void SplitOpenLink(unsigned long long fromId, const std::wstring& url, bool priv
 void SplitToggle();                                  // menu / palette: close it, or split with a new tab
 void SplitSwap();                                    // the halves change sides
 void SplitClose();
+// A half dragged out of the split view's tab and dropped elsewhere: the two become ordinary tabs
+// again (next to each other), the dragged one stays open.
+void SplitDetach(unsigned long long id);
 // CloseTab, after the tab left g_tabs: returns the other half's id if `id` was in the pair.
 unsigned long long SplitTabClosed(unsigned long long id);
 
@@ -36,7 +39,8 @@ unsigned long long SplitTabClosed(unsigned long long id);
 bool SplitLayout(int left, int top, int w, int h);
 // Element full screen: the other half is hidden until it ends.
 void SplitHidePartner();
-void SplitRepaintTimer();                            // TIMER_SPLIT_REPAINT
+void SplitRepaintTimer();
+void SplitCoverTimer();                              // TIMER_SPLIT_COVER                            // TIMER_SPLIT_REPAINT
 
 // DrawChrome, after the page area background: the gutter, the outline and the divider grip.
 void SplitPaint(Gdiplus::Graphics& g);
@@ -53,6 +57,10 @@ void SplitTabDragOver(unsigned long long draggedId, int targetIndex, bool right)
 void SplitTabDragEnd(bool drop);
 bool SplitTabDragging();
 bool SplitDropHint(int index, bool* right);          // is tab `index` the drop target, and which side
+
+// The tab list shows the pair as one tab: the left half's tab at `left`, the right half's right
+// after it. False if there is no pair (or its tabs are not next to each other yet).
+bool SplitStripPair(int* left, int* right);
 
 // The divider glides to where the mouse is (frame clock, ui/Animation.cpp); true while it moves.
 bool SplitAnimStep(float dt);
