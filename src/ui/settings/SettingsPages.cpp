@@ -452,6 +452,7 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Go to tab 1-8", L"Перейти к вкладке 1–8"), L"Ctrl+1 … 8", true));
         p.rows.push_back(RInfo(Tr(L"Go to last tab", L"Последняя вкладка"), L"Ctrl+9", true));
         p.rows.push_back(RInfo(Tr(L"Reopen closed tab", L"Вернуть закрытую вкладку"), L"Ctrl+Shift+T", true));
+        p.rows.push_back(RInfo(Tr(L"Command palette", L"Палитра команд"), L"Ctrl+K", true));
         p.rows.push_back(RInfo(Tr(L"History", L"История"), L"Ctrl+H", true));
         p.rows.push_back(RInfo(Tr(L"Bookmarks", L"Закладки"), L"Ctrl+Shift+O", true));
         p.rows.push_back(RInfo(Tr(L"Bookmark this page", L"Добавить в закладки"), L"Ctrl+D", true));

@@ -17,6 +17,7 @@
 #include "ui/AddressBar.h"
 #include "ui/BookmarkPopup.h"
 #include "ui/Chrome.h"
+#include "ui/CommandPalette.h"
 #include "ui/MainWindow.h"
 #include "ui/settings/SettingsWindow.h"
 
@@ -75,6 +76,7 @@ void RunCommand(int cmd) {
     case CMD_PIP:       PipToggleActive(); break;
     case CMD_READER:    ReaderToggle(); break;
     case CMD_TRANSLATE: TranslateToggle(); break;
+    case CMD_PALETTE:   CommandPaletteShow(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -143,6 +145,7 @@ void ShowMoreMenu() {
         AppendMenuW(m, MF_STRING | (web ? 0 : MF_GRAYED), CMD_TRANSLATE, label.c_str());
     }
     AppendMenuW(m, MF_STRING | (PipActive() ? MF_CHECKED : 0), CMD_PIP, Tr(L"Picture in Picture", L"Картинка в картинке"));
+    AppendMenuW(m, MF_STRING, CMD_PALETTE,   Tr(L"Command Palette\x2026\tCtrl+K", L"Палитра команд\x2026\tCtrl+K"));
     AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));
     AppendMenuW(m, MF_STRING | (PrintInProgress() ? MF_GRAYED : 0), CMD_PRINT,
                 Tr(L"Print\x2026\tCtrl+P", L"Печать\x2026\tCtrl+P"));
@@ -191,6 +194,7 @@ bool HandleShortcut(const MSG& m) {
         case 'D': RunCommand(CMD_BOOKMARK_PAGE); return true;
         case 'J': RunCommand(CMD_DOWNLOADS); return true;
         case 'F': RunCommand(CMD_FIND); return true;
+        case 'K': CommandPaletteShow(); return true;
         case 'G': FindBarNext(shift); return true;
         case 'P': RunCommand(CMD_PRINT); return true;
         case VK_OEM_COMMA: RunCommand(CMD_SETTINGS); return true;
