@@ -170,6 +170,8 @@ void SelectTab(int i) {
     Tab* from = ActiveTab();
     const bool seen = std::find(s_mru.begin(), s_mru.end(), g_tabs[i]->id) != s_mru.end();
     if (from != g_tabs[i].get() && (seen || s_adopting)) TransitionBegin(from, g_tabs[i].get());
+    if (from && from != g_tabs[i].get()) from->hiddenSince = GetTickCount64();
+    g_tabs[i]->hiddenSince = 0;
     g_active = i;
     TouchMru(g_tabs[i]->id);
     // The compact layout depends on the active tab; LayoutWebViews puts the new view in place
@@ -276,6 +278,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     tab->page  = page;
     tab->hwnd  = viewWnd;
     tab->openedByPage = openedByPage;
+    tab->hiddenSince = GetTickCount64();
     Tab* raw = tab.get();
 
     SetPageClients(page, ctx.get());
@@ -292,6 +295,59 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     if (select) SelectTab((int)g_tabs.size() - 1);
     else ShowWindow(raw->hwnd, SW_HIDE);
     return raw;
+}
+
+bool UnloadTab(Tab& t, const std::string& state) {
+    if (g_closing || g_tabOp || g_modalDepth > 0 || t.state != TabState::Live || t.privateTab || !t.view || !t.page) return false;
+    if (&t == ActiveTab() || t.pipHwnd || (t.hwnd && t.hwnd == g_fullScreenView)) return false;
+    TabOpGuard guard;
+    RECT cr;
+    GetClientRect(g_hWnd, &cr);
+    const int top = (int)g_L.chromeH, left = (int)g_L.sideW;
+    RECT r = { left, top, std::max<LONG>(cr.right, left + 1), std::max<LONG>(cr.bottom, top + 1) };
+    WKPageConfigurationRef conf = CreatePageConfiguration();
+    WKViewRef view = WKViewCreate(r, conf, g_hWnd);
+    WKRelease(conf);
+    if (!view) return false;
+    WKPageRef page = WKViewGetPage(view);
+    HWND hwnd = WKViewGetWindow(view);
+    if (!page || !hwnd) {
+        if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
+        WKRelease(view);
+        return false;
+    }
+    WKViewSetIsInWindow(view, true);
+    ShowWindow(hwnd, SW_HIDE);
+
+    // The old page: no more callbacks, then closed with its view (as in DestroyTab).
+    WKViewRef oldView = t.view;
+    WKPageRef oldPage = t.page;
+    HWND oldHwnd = t.hwnd;
+    ClearPageClients(oldPage);
+    t.view = view;
+    t.page = page;
+    t.hwnd = hwnd;
+    SetPageClients(page, t.ctx);
+    WKStringRef appName = WKStringCreateWithUTF8CString(kUserAgentAppName);
+    WKPageSetApplicationNameForUserAgent(page, appName);
+    WKRelease(appName);
+    WKPageSetPageZoomFactor(page, g_zoom);
+    if (oldHwnd && IsWindow(oldHwnd)) DestroyWindow(oldHwnd);
+    else WKPageClose(oldPage);
+    WKRelease(oldView);
+
+    s_parkedAt.erase(t.id);
+    TransitionForget(t.id);                // its last picture (memory) goes too
+    t.lazyPending = true;
+    t.lazyUrl = t.url;
+    t.lazyState = state;
+    t.sleeping = true;
+    t.loading = false;
+    t.progress = t.fade = 0.f;
+    t.audible = false;
+    t.translatable = t.translated = t.translateCollecting = false;
+    t.readerable = false;
+    return true;
 }
 
 static bool IsStartInput(const std::wstring& input) {

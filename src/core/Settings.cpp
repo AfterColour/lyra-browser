@@ -91,6 +91,8 @@ void LoadSettings() {
     g_prefs.printMargins = std::min(3, std::max(0, geti(L"PrintMargins", 0)));
     g_prefs.printScale = std::min(200, std::max(25, geti(L"PrintScale", 100)));
     g_prefs.printHeaders = geti(L"PrintHeaders", 0) != 0;
+    g_prefs.sleepTabs = geti(L"SleepTabs", 1) != 0;
+    g_prefs.sleepAfter = std::min(4, std::max(0, geti(L"SleepTabsAfter", 2)));
     g_prefs.printBackground = geti(L"PrintBackground", 0) != 0;
     g_prefs.restoreSession = geti(L"RestoreSession", 1) != 0;
     g_prefs.js          = geti(L"JavaScript", 1) != 0;
@@ -138,5 +140,6 @@ void SaveSettings() {
     puti(L"ReaderTheme", g_prefs.readerTheme); puti(L"ReaderWidth", g_prefs.readerWidth); puti(L"RestoreSession", g_prefs.restoreSession);
     puti(L"DefaultFont", g_prefs.defaultFont); puti(L"MinFont", g_prefs.minFont);
     puti(L"PrintMargins", g_prefs.printMargins); puti(L"PrintScale", g_prefs.printScale);
+    puti(L"SleepTabs", g_prefs.sleepTabs); puti(L"SleepTabsAfter", g_prefs.sleepAfter);
     puti(L"PrintHeaders", g_prefs.printHeaders); puti(L"PrintBackground", g_prefs.printBackground);
 }

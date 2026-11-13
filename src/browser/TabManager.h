@@ -33,6 +33,10 @@ void ReopenClosedTab();
 void CloseTab(int i);
 void CloseAllTabs();
 void HandleTabCrashed(unsigned long long id, int reason);
+// Unloads a background tab (browser/TabSleep.cpp): its page and web process go away, a new empty
+// page takes their place and loads `state` / its address when the tab is shown again, like a
+// restored tab. False if it cannot be done now.
+bool UnloadTab(Tab& t, const std::string& state);
 
 // Tabs used recently stay rendered off-screen (Settings > Tabs > "Ready tabs"), so switching
 // back to them is instant: only the active view is in place, the "ready" ones are parked

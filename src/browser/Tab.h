@@ -37,6 +37,9 @@ struct Tab {
     bool  lazyPending = false;
     std::wstring lazyUrl;
     std::string  lazyState;         // WebKit session state (back/forward list), may be empty
+    // Put to sleep (browser/TabSleep.cpp): unloaded like a restored tab (lazyPending), drawn faded.
+    bool  sleeping = false;
+    ULONGLONG hiddenSince = 0;      // GetTickCount64 when the tab stopped being the active one (0: active)
 };
 
 // Callback context handed to WebKit as `clientInfo`.

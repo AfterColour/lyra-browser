@@ -13,3 +13,4 @@ bool SessionRestore();               // creates the saved tabs; false = nothing 
 void SessionTick();                  // main timer: saves when something changed
 void SessionSave(bool clean);        // clean = Lyra is closing normally
 void SessionLoadLazyTab(Tab& t);     // SelectTab: a restored tab is shown for the first time
+std::string SessionPageState(WKPageRef page);   // the back/forward list, raw (as Tab::lazyState holds it)

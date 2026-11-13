@@ -49,6 +49,9 @@ struct Prefs {
     // Print preview (ui/PrintPreview.cpp): margins 0 default / 1 minimum / 2 none / 3 wide,
     // scale in percent, header and footer, background colours and images
     int  printMargins = 0, printScale = 100;
+    // Sleeping tabs (browser/TabSleep.cpp): on/off, after 0 5 / 1 15 / 2 30 / 3 60 / 4 120 minutes
+    bool sleepTabs = true;
+    int  sleepAfter = 2;
     bool printHeaders = false, printBackground = false;
 };
 extern Prefs g_prefs;

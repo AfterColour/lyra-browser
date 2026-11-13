@@ -31,6 +31,7 @@
 #include "ui/Dialogs.h"
 #include "core/Localization.h"
 #include "ui/FullScreen.h"
+#include "browser/TabSleep.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
 
@@ -380,6 +381,32 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         InvalidateChrome();
         return 0;
 
+    case WM_RBUTTONUP: {                                 // the tab menu
+        Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
+        if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
+        const unsigned long long id = g_tabs[h.index]->id;
+        enum { kSleep = 1, kSleepOthers, kClose };
+        HMENU m = CreatePopupMenu();
+        const std::wstring why = TabSleepBlocker(*g_tabs[h.index]);
+        std::wstring sleepText = Tr(L"Put tab to sleep", L"Усыпить вкладку");
+        if (!why.empty() && why != L"-") sleepText += L"  (" + why + L")";
+        AppendMenuW(m, MF_STRING | (why.empty() ? 0 : MF_GRAYED), kSleep, sleepText.c_str());
+        AppendMenuW(m, MF_STRING, kSleepOthers, Tr(L"Put other tabs to sleep", L"Усыпить остальные вкладки"));
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ClientToScreen(hWnd, &pt);
+        const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, nullptr);
+        DestroyMenu(m);
+        int index = -1;
+        Tab* t = FindTab(id, &index);
+        if (!t) return 0;
+        if (cmd == kSleep) SleepTabNow(*t);
+        else if (cmd == kSleepOthers) SleepOtherTabs();
+        else if (cmd == kClose) CloseTabWithMouse(hWnd, index);
+        return 0;
+    }
     case WM_MBUTTONUP: {
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);
@@ -449,6 +476,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (g_prefs.animations && (sliding || (g_prefs.loadIndicator == 0 && act && act->loading))) AnimRequest();
         }
         if (g_tick % 32 == 0) ExpireReadyTabs();
+        if (g_tick % 32 == 16) TabSleepTick();
         if (g_tick % 32 == 0) {
             for (auto& tp : g_tabs)
                 if (SyncTab(*tp)) dirty = true;

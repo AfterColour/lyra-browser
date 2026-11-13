@@ -40,6 +40,7 @@
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
 #include "ui/MainWindow.h"
+#include "browser/TabSleep.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
 
@@ -140,6 +141,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     MediaControlsInit();                               // media keys, Windows' media flyout
     PasswordsInit();                                   // saved passwords: offer to save, fill in
     PipInit();                                         // picture-in-picture
+    TabSleepInit();                                    // sleeping tabs (typed-text check)
     ReaderInit();                                      // reader view
     TranslateInit();                                   // page translation (the DeepL key)
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and

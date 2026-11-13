@@ -124,7 +124,8 @@ std::string Build(bool clean, std::string* signature) {
         std::wstring url = t.lazyPending ? t.lazyUrl : SavedUrl(t.url);
         if (url.empty()) url = t.url;
         std::string state;
-        if (t.lazyPending) state = t.lazyState;
+        // A tab not loaded (restored, or asleep) keeps the raw state: encoded like the others.
+        if (t.lazyPending) state = t.lazyState.empty() ? std::string() : Base64((const unsigned char*)t.lazyState.data(), t.lazyState.size());
         else if (t.page && !IsInternalPageUrl(t.url) && !t.url.empty()) state = PageState(t.page);
         out << "tab\nurl " << OneLine(url) << "\ntitle " << OneLine(t.title) << "\n";
         if (!state.empty()) out << "state " << state << "\n";
@@ -222,9 +223,13 @@ bool SessionRestore() {
     return true;
 }
 
+std::string SessionPageState(WKPageRef page) { return page ? Unbase64(PageState(page)) : std::string(); }
+
 void SessionLoadLazyTab(Tab& t) {
     if (!t.lazyPending || !t.page) return;
     t.lazyPending = false;
+    if (t.sleeping) Log("tab#%llu wakes up", t.id);
+    t.sleeping = false;
     const std::wstring url = std::move(t.lazyUrl);
     const std::string state = std::move(t.lazyState);
     if (!state.empty() && url.compare(0, 7, L"lyra://") != 0) {

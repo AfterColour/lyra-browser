@@ -810,7 +810,21 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const float bx = badgeOnly ? r.X + (r.Width - bs) / 2 : r.X + S(9);
         const RectF badge(std::floor(bx), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);
         if (tab.privateTab) DrawPrivateBadge(g, badge);
-        else DrawSiteBadge(g, tab, badge);
+        else if (!tab.sleeping) DrawSiteBadge(g, tab, badge);
+        else {                                           // asleep: the icon at 45 % (drawn aside, then faded)
+            const int pw = (int)std::ceil(badge.Width) + 2, ph = (int)std::ceil(badge.Height) + 2;
+            Bitmap icon(pw, ph, PixelFormat32bppPARGB);
+            {
+                Graphics ig(&icon);
+                ig.SetSmoothingMode(SmoothingModeHighQuality);
+                ig.SetTextRenderingHint(TextRenderingHintAntiAlias);
+                DrawSiteBadge(ig, tab, RectF(1, 1, badge.Width, badge.Height));
+            }
+            ColorMatrix cm = { { { 1, 0, 0, 0, 0 }, { 0, 1, 0, 0, 0 }, { 0, 0, 1, 0, 0 }, { 0, 0, 0, 0.45f, 0 }, { 0, 0, 0, 0, 1 } } };
+            ImageAttributes ia;
+            ia.SetColorMatrix(&cm);
+            g.DrawImage(&icon, RectF(badge.X - 1, badge.Y - 1, (float)pw, (float)ph), 0, 0, (float)pw, (float)ph, UnitPixel, &ia);
+        }
 
         const bool showClose = CloseVisible(i);
         if (!badgeOnly) {
@@ -818,7 +832,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             float tr = showClose ? CloseRect(i).X - S(4) : r.GetRight() - S(8);
             if (AudioShown(i)) tr = AudioRect(i).X - S(2);
             if (tr - tx > S(10)) {
-                SolidBrush tb(T.text);
+                SolidBrush tb(tab.sleeping ? T.text2 : T.text);
                 g.DrawString(tab.title.c_str(), -1, (act && !vertical) ? g_fTabBold.get() : g_fTab.get(),
                              RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
             }

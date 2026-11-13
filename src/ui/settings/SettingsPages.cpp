@@ -303,6 +303,16 @@ void BuildPages() {
             { Tr(L"Off", L"Выкл."), L"1", L"2", L"4" },
             []() { return g_prefs.warmTabs >= 4 ? 3 : g_prefs.warmTabs; },
             [save](int i) { g_prefs.warmTabs = i == 3 ? 4 : i; RefreshLayout(); save(); }));
+        p.rows.push_back(RToggle(Tr(L"Put unused tabs to sleep", L"Усыплять неиспользуемые вкладки"),
+            Tr(L"Tabs not opened for a while are unloaded from memory and load again when you open them.",
+               L"Вкладки, которые давно не открывали, выгружаются из памяти и загружаются снова, когда вы на них переходите."),
+            &g_prefs.sleepTabs, save));
+        p.rows.push_back(RChoice(Tr(L"Sleep after", L"Усыплять через"),
+            Tr(L"Sooner when Windows is short of memory. Never tabs that play sound or have typed text.",
+               L"Раньше, если Windows не хватает памяти. Вкладки со звуком или введённым текстом не усыпляются."),
+            { Tr(L"5 minutes", L"5 минут"), Tr(L"15 minutes", L"15 минут"), Tr(L"30 minutes", L"30 минут"),
+              Tr(L"1 hour", L"1 час"), Tr(L"2 hours", L"2 часа") },
+            []() { return g_prefs.sleepAfter; }, [save](int i) { g_prefs.sleepAfter = i; save(); }));
         p.rows.push_back(RToggle(Tr(L"Prepare the new tab", L"Готовить новую вкладку заранее"),
             Tr(L"A start page waits in the background, so a new tab appears at once.",
                L"Стартовая страница ждёт в фоне, и новая вкладка появляется сразу."),
