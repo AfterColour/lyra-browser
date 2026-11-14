@@ -49,6 +49,9 @@ WKWebsiteDataStoreRef CreateWebsiteDataStore() {
 void ApplyWebPrefs() {
     if (!g_preferences) return;
     WKPreferencesSetJavaScriptEnabled(g_preferences, g_prefs.js);
+    // Spelling: pasted text and whole fields are checked in the background (WebCore asks for the
+    // whole field after a paste only with asynchronous checking; typing checks the word either way).
+    WKPreferencesSetAsynchronousSpellCheckingEnabled(g_preferences, true);
     WKPreferencesSetLoadsImagesAutomatically(g_preferences, g_prefs.images);
     WKPreferencesSetLocalStorageEnabled(g_preferences, g_prefs.localStorage);
     WKPreferencesSetDatabasesEnabled(g_preferences, g_prefs.databases);

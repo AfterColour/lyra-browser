@@ -73,6 +73,8 @@ void Forget() {
     Hook(false);
 }
 
+void RepaintHalves(bool now);
+
 // The two tabs side by side in the tab list, left half first: they are drawn as one tab.
 void Arrange() {
     int li = -1, ri = -1;
@@ -102,6 +104,9 @@ void Pair(unsigned long long left, unsigned long long right) {
     Arrange();
     RefreshLayout(true);
     InvalidateRect(g_hWnd, nullptr, FALSE);
+    // A half that was hidden shows its last frame until it draws again: ask both for a new one
+    // (now and once more when they have their new size).
+    RepaintHalves(true);
 }
 
 // Places the halves for a page area of w and the current ratio.
