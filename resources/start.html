@@ -34,6 +34,7 @@
     --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
     --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06);
     --a1: #9E80FF; --a2: #6A4CE0; --gold: #FFD68C; --ease: cubic-bezier(.2, .8, .2, 1);
+    --spring: cubic-bezier(.3, 1.3, .5, 1);   /* a small overshoot: things land, not stop */
   }
   :root[data-theme="dark"] {
     --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
@@ -78,14 +79,16 @@
          --g-hover: rgba(255,255,255,.08); --g-field: rgba(255,255,255,.08); }
   body.tone-light { --g-bg: rgba(255,255,255,.62); --g-line: rgba(0,0,0,.08); --g-text: #1B1D21; --g-text2: #5A6070;
                     --g-hover: rgba(0,0,0,.05); --g-field: rgba(0,0,0,.05); }
-  #board { position: relative; z-index: 1; transition: margin-left .45s var(--ease); }
+  #board { position: relative; z-index: 1; transform-origin: 0 0; transition: transform .55s var(--ease); }
   .w { position: absolute; border-radius: 20px; color: var(--g-text); background: var(--g-bg);
        box-shadow: inset 0 0 0 1px var(--g-line), 0 18px 40px -24px rgba(0,0,0,.6);
        -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
-       transition: left .35s var(--ease), top .35s var(--ease), width .35s var(--ease), height .35s var(--ease), opacity .4s, transform .4s var(--ease);
+       left: 0; top: 0;   /* the position is `translate` (cheap to animate), set by place() */
+       transition: translate .5s var(--spring), width .35s var(--ease), height .35s var(--ease), opacity .35s var(--ease),
+                   transform .35s var(--spring), box-shadow .3s var(--ease);
        display: flex; flex-direction: column; overflow: hidden; }
   .w.bare { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .w.enter { opacity: 0; transform: translateY(14px) scale(.98); }
+  .w.enter { opacity: 0; transform: scale(.92); }
   .w .body { flex: 1; min-height: 0; padding: 16px 18px; display: flex; flex-direction: column; }
   .w h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--g-text2); letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
   .w h2 .grow { flex: 1; }
@@ -170,21 +173,32 @@
   .pill:hover { background: var(--g-hover); }
 
   /* ---- editing ----------------------------------------------------------------------- */
-  body.editing #board::before { content: ""; position: absolute; inset: 0 -8px; border-radius: 12px; pointer-events: none;
+  #board::before { content: ""; position: absolute; inset: 0 -8px; border-radius: 12px; pointer-events: none; opacity: 0; transition: opacity .45s var(--ease);
                                 background: repeating-linear-gradient(90deg, rgba(255,255,255,.03) 0 calc(var(--cw) - 16px), transparent calc(var(--cw) - 16px) var(--cw)); }
-  body.tone-light.editing #board::before { background: repeating-linear-gradient(90deg, rgba(0,0,0,.03) 0 calc(var(--cw) - 16px), transparent calc(var(--cw) - 16px) var(--cw)); }
+  body.editing #board::before { opacity: 1; }
+  body.tone-light #board::before { background: repeating-linear-gradient(90deg, rgba(0,0,0,.03) 0 calc(var(--cw) - 16px), transparent calc(var(--cw) - 16px) var(--cw)); }
   body.editing .w { cursor: grab; box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 1px rgba(158,128,255,.35), 0 18px 40px -24px rgba(0,0,0,.6); }
   body.editing .w.bare { background: rgba(255,255,255,.04); }
   body.editing .w .body { pointer-events: none; }
-  body.editing .w.dragging { cursor: grabbing; transition: none; z-index: 5; box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 2px var(--a1), 0 30px 60px -20px rgba(0,0,0,.7); }
-  .w .tools { position: absolute; top: 8px; right: 8px; display: none; gap: 4px; z-index: 2; }
-  body.editing .w .tools { display: flex; }
+  body.editing .w.dragging { cursor: grabbing; z-index: 5; transition: transform .3s var(--spring), box-shadow .3s var(--ease), opacity .35s;
+                             box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 2px var(--a1), 0 30px 60px -20px rgba(0,0,0,.7); }
+  body.editing .w.lift { transform: scale(1.035); box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 2px var(--a1), 0 40px 70px -24px rgba(0,0,0,.75); }
+  body.editing .w.landing { z-index: 4; }
+  .w .tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; z-index: 2; opacity: 0; transform: scale(.7); pointer-events: none;
+              transition: opacity .25s var(--ease), transform .35s var(--spring); }
+  body.editing .w .tools { opacity: 1; transform: none; pointer-events: auto; }
+  body.editing .w.dragging .tools, body.editing .w.dragging .grip { opacity: 0; }
   .w .tools button { width: 26px; height: 26px; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
   .w .tools button:hover { background: rgba(0,0,0,.7); }
-  .w .grip { position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; display: none; cursor: nwse-resize; z-index: 2; }
+  .w .grip { position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; cursor: nwse-resize; z-index: 2;
+             opacity: 0; pointer-events: none; transition: opacity .25s var(--ease); }
   .w .grip::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid var(--g-text2); border-bottom: 2px solid var(--g-text2); border-radius: 0 0 3px 0; }
-  body.editing .w .grip { display: block; }
-  .ghost { position: absolute; border-radius: 20px; background: rgba(158,128,255,.16); box-shadow: inset 0 0 0 2px rgba(158,128,255,.6); pointer-events: none; transition: all .15s; z-index: 0; }
+  body.editing .w .grip { opacity: 1; pointer-events: auto; }
+  .ghost { position: absolute; left: 0; top: 0; border-radius: 20px; background: rgba(158,128,255,.14); box-shadow: inset 0 0 0 2px rgba(158,128,255,.55);
+           pointer-events: none; z-index: 0; transition: translate .22s var(--ease), width .22s var(--ease), height .22s var(--ease), opacity .2s;
+           animation: ghostIn .25s var(--ease); }
+  .ghost.gone { opacity: 0; }
+  @keyframes ghostIn { from { opacity: 0; transform: scale(.96); } }
 
   .corner { position: fixed; right: 18px; bottom: 14px; z-index: 3; height: 34px; padding: 0 14px; border-radius: 999px;
             display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--g-text); background: var(--g-bg);
@@ -196,15 +210,24 @@
 
   /* the panel on the right while editing */
   #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 6; display: flex; flex-direction: column;
-           background: rgba(22, 20, 38, .90); color: #F4F2FF; -webkit-backdrop-filter: blur(24px) saturate(140%); backdrop-filter: blur(24px) saturate(140%);
+           background: rgba(22, 20, 38, .95); color: #F4F2FF;
            box-shadow: -1px 0 0 rgba(255,255,255,.08), -20px 0 60px -20px rgba(0,0,0,.6);
            transform: translateX(105%); transition: transform .45s var(--ease); }
   body.editing #panel { transform: none; }
   #panel header { padding: 20px 20px 12px; }
   #panel h3 { margin: 0 0 14px; font: 300 22px/1.2 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; }
-  .tabs { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(255,255,255,.06); }
-  .tabs button { flex: 1; height: 30px; border-radius: 999px; color: rgba(236,232,255,.66); font-size: 13px; transition: background .25s, color .25s; }
-  .tabs button[aria-pressed="true"] { background: rgba(255,255,255,.12); color: #fff; }
+  .tabs, .seg { position: relative; display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(255,255,255,.06); }
+  .tabs::before, .seg::before { content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 5px); border-radius: 999px;
+                                background: rgba(255,255,255,.12); transition: left .45s var(--spring); }
+  .tabs.second::before, .seg.second::before { left: calc(50% + 1px); }
+  .tabs button, .seg button { position: relative; flex: 1; height: 30px; border-radius: 999px; color: rgba(236,232,255,.66); font-size: 13px; transition: background .25s, color .25s; }
+  .tabs button[aria-pressed="true"], .seg button[aria-pressed="true"] { color: #fff; }
+  .seg button { height: 28px; font-size: 12.5px; }
+  .layout { padding: 6px 0 14px; margin-bottom: 8px; box-shadow: 0 1px 0 rgba(255,255,255,.07); }
+  .layout .cap { font-size: 12px; color: rgba(236,232,255,.6); margin: 0 0 8px; }
+  .layout .hint { font-size: 12px; color: rgba(236,232,255,.55); margin: 8px 2px 0; min-height: 17px; transition: opacity .2s; }
+  #panel .scroll > div:not(.hidden) { animation: tabIn .4s var(--ease); }
+  @keyframes tabIn { from { margin-top: 8px; color: transparent; } }
   #panel .scroll { flex: 1; overflow: auto; padding: 8px 20px 20px; }
   .wlist button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; text-align: left; transition: background .2s; }
   .wlist button:hover { background: rgba(255,255,255,.06); }
@@ -216,8 +239,8 @@
   .wlist .plus { margin-left: auto; color: rgba(236,232,255,.6); font-size: 18px; }
   .walls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .walls button { position: relative; height: 84px; border-radius: 14px; overflow: hidden; background-size: cover; background-position: center;
-                  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); transition: transform .25s var(--ease), box-shadow .25s; }
-  .walls button:hover { transform: translateY(-2px); }
+                  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); top: 0; transition: top .25s var(--ease), box-shadow .25s; }
+  .walls button:hover { top: -2px; }
   .walls button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--a1), 0 10px 26px -12px rgba(140,110,255,.9); }
   .walls button span { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
   .walls button.wp-morning span { color: #2a2440; text-shadow: none; }
@@ -290,7 +313,12 @@
     <div class="tabs"><button data-tab="widgets" aria-pressed="true" id="tabWidgets"></button><button data-tab="walls" aria-pressed="false" id="tabWalls"></button></div>
   </header>
   <div class="scroll">
-    <div class="wlist" id="wlist"></div>
+    <div id="widgetsTab">
+      <div class="layout"><p class="cap" id="layoutCap"></p>
+        <div class="seg" id="layoutSeg"><button data-mode="auto" id="layoutAuto"></button><button data-mode="free" id="layoutFree"></button></div>
+        <p class="hint" id="layoutHint"></p></div>
+      <div class="wlist" id="wlist"></div>
+    </div>
     <div id="wallsTab" class="hidden">
       <div class="walls" id="walls"></div>
       <div class="slider"><label><span id="dimLabel"></span><span id="dimValue"></span></label><input type="range" id="dim" min="0" max="70" step="5"></div>
@@ -328,6 +356,8 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const T = {
   en: {
     newTab: "New Tab", customize: "Customize", panelTitle: "Your start page", tabWidgets: "Widgets", tabWalls: "Wallpaper",
+    layout: "Widget layout", layoutAuto: "Automatic", layoutFree: "Free",
+    layoutHintAuto: "Widgets line up by themselves and close the gaps.", layoutHintFree: "Widgets stay exactly where you put them.",
     reset: "Reset", done: "Done", dim: "Darken", remove: "Remove", settings: "Settings",
     resetAsk: "Put the start page back as it was at first?",
     favorites: "Favorites", allBookmarks: "All bookmarks", add: "Add", frequent: "Frequently visited", noFrequent: "Sites you visit often will appear here.",
@@ -360,6 +390,8 @@ const T = {
   },
   ru: {
     newTab: "Новая вкладка", customize: "Настроить", panelTitle: "Ваша стартовая страница", tabWidgets: "Виджеты", tabWalls: "Обои",
+    layout: "Расположение виджетов", layoutAuto: "Автоматически", layoutFree: "Свободно",
+    layoutHintAuto: "Виджеты выстраиваются сами и закрывают пустоты.", layoutHintFree: "Виджеты остаются ровно там, где вы их оставили.",
     reset: "Сбросить", done: "Готово", dim: "Затемнение", remove: "Убрать", settings: "Настройки",
     resetAsk: "Вернуть стартовую страницу к первоначальному виду?",
     favorites: "Избранное", allBookmarks: "Все закладки", add: "Добавить", frequent: "Часто посещаемые", noFrequent: "Здесь появятся сайты, которые вы открываете чаще всего.",
@@ -435,7 +467,7 @@ let saveTimer = 0;
 function save(now) {
   clearTimeout(saveTimer);
   const go = () => { location.href = "lyra://start-save?cfg=" + encodeURIComponent(JSON.stringify(cfg)); };
-  if (now) go(); else saveTimer = setTimeout(go, 500);
+  if (now) go(); else saveTimer = setTimeout(go, 800);
 }
 const newId = (type) => type + "-" + Math.random().toString(36).slice(2, 7);
 
@@ -486,13 +518,23 @@ function makeStars() {
 // ---- grid geometry --------------------------------------------------------------------------
 const COLS = 12, ROW = 64, GAP = 16, TOP = 56, PANEL = 340;
 let cw = 80, offY = TOP;
+let boardScale = 1;
 function measure() {
-  const room = innerWidth - (editing ? PANEL : 0);
-  const width = Math.max(480, Math.min(1180, room - 64));
+  const width = Math.max(480, Math.min(1180, innerWidth - 64));
   cw = width / COLS;
   const board = $("board");
+  const left = Math.max(16, (innerWidth - width) / 2);
   board.style.width = width + "px";
-  board.style.marginLeft = Math.max(16, (room - width) / 2) + "px";
+  board.style.marginLeft = left + "px";
+  // Edit mode: the panel takes the right side and the board shrinks as a picture to fit beside it.
+  boardScale = 1;
+  let shift = 0;
+  if (editing) {
+    const room = innerWidth - PANEL;
+    boardScale = Math.min(1, (room - 48) / width);
+    shift = Math.max(16, (room - width * boardScale) / 2) - left;
+  }
+  board.style.transform = boardScale === 1 && !shift ? "" : "translate(" + shift + "px, " + (editing ? 12 : 0) + "px) scale(" + boardScale + ")";
   board.style.setProperty("--cw", cw + "px");
   const rows = cfg.widgets.reduce((m, w) => Math.max(m, w.y + w.h), 0);
   // Fewer rows than the window: the widgets sit a little above the middle.
@@ -502,8 +544,7 @@ function measure() {
   document.documentElement.style.setProperty("--page-h", Math.max(innerHeight, h) + "px");
 }
 function place(node, w) {
-  node.style.left = (w.x * cw) + "px";
-  node.style.top = (offY + w.y * ROW) + "px";
+  node.style.translate = (w.x * cw) + "px " + (offY + w.y * ROW) + "px";
   node.style.width = (w.w * cw - GAP) + "px";
   node.style.height = (w.h * ROW - GAP) + "px";
   node.style.setProperty("--h", (w.h * ROW - GAP) + "px");
@@ -528,6 +569,30 @@ function compact() {
       w.y--;
     }
   }
+}
+const freeMode = () => cfg.layout === "free";
+// The closest grid spot for `t` that overlaps nobody but `self` (free layout: nothing moves aside).
+function nearestFree(t, self) {
+  let best = null, bd = Infinity;
+  for (let y = Math.max(0, t.y - 12); y <= t.y + 12; y++)
+    for (let x = 0; x + t.w <= COLS; x++) {
+      const d = (x - t.x) * (x - t.x) + 1.4 * (y - t.y) * (y - t.y);
+      if (d >= bd) continue;
+      const probe = { x, y, w: t.w, h: t.h };
+      if (cfg.widgets.some((o) => o !== self && overlaps(probe, o))) continue;
+      bd = d; best = probe;
+    }
+  if (best) return best;
+  return { x: Math.min(t.x, COLS - t.w), y: cfg.widgets.reduce((m, o) => o === self ? m : Math.max(m, o.y + o.h), 0), w: t.w, h: t.h };
+}
+// Automatic layout: where every widget would end up if `w` took the spot `t`.
+function preview(w, t) {
+  const saved = cfg.widgets.map((o) => [o, o.x, o.y, o.w, o.h]);
+  w.x = t.x; w.y = t.y; w.w = t.w; w.h = t.h;
+  settle(w); compact();
+  const out = new Map(cfg.widgets.map((o) => [o, { x: o.x, y: o.y, w: o.w, h: o.h }]));
+  for (const [o, x, y, ww, hh] of saved) { o.x = x; o.y = y; o.w = ww; o.h = hh; }
+  return out;
 }
 function freeSpot(w, h) {
   for (let y = 0; y < 80; y++)
@@ -806,69 +871,112 @@ function setEditing(on) {
   editing = on;
   document.body.classList.toggle("editing", on);
   closePop();
+  if (!on) save();     // after the closing animation, not during it
   if (on) renderPanel();
-  else save(true);
   render();
 }
 let ghost = null;
 function showGhost(w) {
-  if (!ghost) { ghost = el("div", "ghost"); $("board").appendChild(ghost); }
-  place(ghost, w);
+  if (!ghost) { ghost = el("div", "ghost"); place(ghost, w); $("board").appendChild(ghost); }
+  else place(ghost, w);
 }
-function hideGhost() { if (ghost) { ghost.remove(); ghost = null; } }
+function hideGhost() {
+  if (!ghost) return;
+  const g = ghost; ghost = null;
+  g.classList.add("gone");
+  setTimeout(() => g.remove(), 220);
+}
+// While a widget is held: the spot it would take. Automatic layout: the others glide out of the way
+// now; free layout: nothing else moves, the widget takes the nearest empty spot.
+let pending = null;
+function aim(w, t, node) {
+  if (freeMode()) { const spot = nearestFree(t, w); pending = new Map([[w, spot]]); showGhost(spot); return; }
+  pending = preview(w, t);
+  for (const [o, pos] of pending) if (o !== w) { const n = nodes.get(o.id); if (n) place(n, pos); }
+  showGhost(pending.get(w));
+}
+function land(w, node) {
+  hideGhost();
+  if (pending) for (const [o, pos] of pending) Object.assign(o, pos);
+  pending = null;
+  node.classList.remove("dragging", "lift");
+  node.classList.add("landing");
+  setTimeout(() => node.classList.remove("landing"), 520);
+  document.body.classList.remove("dragging");
+  render(); save();
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function startDrag(e, w, node) {
   if (!editing || e.button !== 0) return;
   e.preventDefault();
-  const r = node.getBoundingClientRect();
-  const dx = e.clientX - r.left, dy = e.clientY - r.top;
-  const target = { x: w.x, y: w.y, w: w.w, h: w.h };
-  node.classList.add("dragging");
+  const baseX = w.x * cw, baseY = offY + w.y * ROW, sx = e.clientX, sy = e.clientY;
+  let held = false, lx = w.x, ly = w.y;
   node.setPointerCapture(e.pointerId);
   const move = (ev) => {
-    const br = $("board").getBoundingClientRect();
-    node.style.left = (ev.clientX - br.left - dx) + "px";
-    node.style.top = (ev.clientY - br.top - dy) + "px";
-    target.x = Math.max(0, Math.min(COLS - w.w, Math.round((ev.clientX - br.left - dx) / cw)));
-    target.y = Math.max(0, Math.round((ev.clientY - br.top - dy - offY) / ROW));
-    showGhost(target);
+    const dx = (ev.clientX - sx) / boardScale, dy = (ev.clientY - sy) / boardScale;
+    if (!held) {
+      if (Math.abs(dx) + Math.abs(dy) < 4) return;
+      held = true;
+      node.classList.add("dragging", "lift");
+      document.body.classList.add("dragging");
+      pending = null;
+      showGhost(w);
+    }
+    const px = baseX + dx, py = baseY + dy;
+    node.style.translate = px + "px " + py + "px";
+    const tx = clamp(Math.round(px / cw), 0, COLS - w.w), ty = Math.max(0, Math.round((py - offY) / ROW));
+    if (tx === lx && ty === ly && pending) return;     // same cell: nothing to recompute
+    lx = tx; ly = ty;
+    aim(w, { x: tx, y: ty, w: w.w, h: w.h }, node);
   };
   const up = () => {
     node.removeEventListener("pointermove", move);
     node.removeEventListener("pointerup", up);
-    node.classList.remove("dragging");
-    hideGhost();
-    w.x = target.x; w.y = target.y;
-    settle(w); compact(); render(); save();
+    node.removeEventListener("pointercancel", up);
+    if (held) land(w, node);
   };
   node.addEventListener("pointermove", move);
   node.addEventListener("pointerup", up);
+  node.addEventListener("pointercancel", up);
 }
 function startResize(e, w, node) {
   if (!editing || e.button !== 0) return;
   e.preventDefault(); e.stopPropagation();
   const k = KINDS[w.type];
-  const start = { x: e.clientX, y: e.clientY, w: w.w, h: w.h };
+  const sx = e.clientX, sy = e.clientY, sw = w.w, sh = w.h;
   const grip = e.currentTarget;
   grip.setPointerCapture(e.pointerId);
   node.classList.add("dragging");
-  const target = { x: w.x, y: w.y, w: w.w, h: w.h };
+  document.body.classList.add("dragging");
+  let lw = sw, lh = sh;
+  pending = null;
+  showGhost(w);
   const move = (ev) => {
-    target.w = Math.max(k.minW, Math.min(COLS - w.x, Math.round(start.w + (ev.clientX - start.x) / cw)));
-    target.h = Math.max(k.minH, Math.min(k.maxH, Math.round(start.h + (ev.clientY - start.y) / ROW)));
-    node.style.width = Math.max(60, start.w * cw - GAP + (ev.clientX - start.x)) + "px";
-    node.style.height = Math.max(40, start.h * ROW - GAP + (ev.clientY - start.y)) + "px";
-    showGhost(target);
+    const dx = (ev.clientX - sx) / boardScale, dy = (ev.clientY - sy) / boardScale;
+    node.style.width = Math.max(60, sw * cw - GAP + dx) + "px";
+    node.style.height = Math.max(40, sh * ROW - GAP + dy) + "px";
+    let tw = clamp(Math.round(sw + dx / cw), k.minW, COLS - w.x), th = clamp(Math.round(sh + dy / ROW), k.minH, k.maxH);
+    if (freeMode()) {           // free layout: grow only into empty space, as far as it goes
+      const fits = (ww, hh) => !cfg.widgets.some((o) => o !== w && overlaps({ x: w.x, y: w.y, w: ww, h: hh }, o));
+      if (!fits(tw, th)) { if (fits(tw, lh)) th = lh; else if (fits(lw, th)) tw = lw; else { tw = lw; th = lh; } }
+    }
+    if (tw === lw && th === lh && pending) return;
+    lw = tw; lh = th;
+    const t = { x: w.x, y: w.y, w: tw, h: th };
+    if (freeMode()) { pending = new Map([[w, t]]); showGhost(t); }
+    else aim(w, t, node);
   };
   const up = () => {
     grip.removeEventListener("pointermove", move);
     grip.removeEventListener("pointerup", up);
-    node.classList.remove("dragging");
-    hideGhost();
-    w.w = target.w; w.h = target.h;
-    settle(w); compact(); render(); fill(w, node); save();
+    grip.removeEventListener("pointercancel", up);
+    const changed = pending && pending.get(w) && (pending.get(w).w !== sw || pending.get(w).h !== sh);
+    land(w, node);
+    if (changed) fill(w, node);
   };
   grip.addEventListener("pointermove", move);
   grip.addEventListener("pointerup", up);
+  grip.addEventListener("pointercancel", up);
 }
 function addWidget(type) {
   const k = KINDS[type];
@@ -885,7 +993,7 @@ function removeWidget(w) {
   cfg.widgets = cfg.widgets.filter((x) => x !== w);
   delete cfg.data[w.id];
   if (node) node.classList.add("enter");
-  setTimeout(() => { compact(); render(); }, 300);
+  setTimeout(() => { if (!freeMode()) compact(); render(); }, 320);
   renderPanel(); save();
 }
 
@@ -898,7 +1006,14 @@ function renderPanel() {
   $("reset").textContent = s.reset; $("done").textContent = s.done;
   $("dimLabel").textContent = s.dim;
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === panelTab)));
-  $("wlist").classList.toggle("hidden", panelTab !== "widgets");
+  $("widgetsTab").classList.toggle("hidden", panelTab !== "widgets");
+  document.querySelector(".tabs").classList.toggle("second", panelTab === "walls");
+  $("layoutCap").textContent = s.layout;
+  $("layoutAuto").textContent = s.layoutAuto; $("layoutFree").textContent = s.layoutFree;
+  $("layoutSeg").classList.toggle("second", freeMode());
+  $("layoutAuto").setAttribute("aria-pressed", String(!freeMode()));
+  $("layoutFree").setAttribute("aria-pressed", String(freeMode()));
+  $("layoutHint").textContent = freeMode() ? s.layoutHintFree : s.layoutHintAuto;
   $("wallsTab").classList.toggle("hidden", panelTab !== "walls");
   const list = $("wlist");
   list.textContent = "";
@@ -946,6 +1061,13 @@ function renderPanel() {
   $("dimValue").textContent = (wp.dim || 0) + "%";
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { panelTab = b.dataset.tab; renderPanel(); }));
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  const mode = b.dataset.mode;
+  if ((mode === "free") === freeMode()) return;
+  cfg.layout = mode;
+  if (mode === "auto") { settle(null); compact(); render(); }   // back to automatic: close the gaps
+  renderPanel(); save();
+}));
 $("dim").addEventListener("input", () => { cfg.wallpaper.dim = +$("dim").value; $("dimValue").textContent = cfg.wallpaper.dim + "%"; applyWallpaper(); save(); });
 $("done").addEventListener("click", () => setEditing(false));
 $("reset").addEventListener("click", () => {
