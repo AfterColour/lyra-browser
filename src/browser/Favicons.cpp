@@ -51,15 +51,27 @@ std::wstring FaviconFolderUrl() {
 }
 
 // ---- download (worker thread) --------------------------------------------------
-static std::string Fetch(const FetchJob& job) {
+// Sites that answer only browsers turn away a bare "Lyra" agent, so the icon fetcher says what
+// Lyra is: a WebKit browser.
+static const wchar_t kAgent[] = L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Lyra";
+
+// GET `url`; the body if the answer is 200 and not larger than `limit`.
+static std::string Get(const std::wstring& url, size_t limit) {
     std::string data;
-    HINTERNET session = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Lyra",
-                                    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    URL_COMPONENTS uc = { sizeof(uc) };
+    wchar_t host[256] = {}, path[2048] = {};
+    uc.lpszHostName = host; uc.dwHostNameLength = ARRAYSIZE(host);
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = ARRAYSIZE(path);
+    wchar_t extra[1024] = {};
+    uc.lpszExtraInfo = extra; uc.dwExtraInfoLength = ARRAYSIZE(extra);
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return data;
+    const std::wstring object = std::wstring(path) + extra;
+    HINTERNET session = WinHttpOpen(kAgent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return data;
     WinHttpSetTimeouts(session, 4000, 4000, 4000, 6000);
-    if (HINTERNET conn = WinHttpConnect(session, job.host.c_str(), job.port, 0)) {
-        const DWORD flags = job.scheme == L"https" ? WINHTTP_FLAG_SECURE : 0;
-        if (HINTERNET req = WinHttpOpenRequest(conn, L"GET", L"/favicon.ico", nullptr, WINHTTP_NO_REFERER,
+    if (HINTERNET conn = WinHttpConnect(session, host, uc.nPort, 0)) {
+        const DWORD flags = uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+        if (HINTERNET req = WinHttpOpenRequest(conn, L"GET", object.empty() ? L"/" : object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                                WINHTTP_DEFAULT_ACCEPT_TYPES, flags)) {
             if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(req, nullptr)) {
@@ -71,7 +83,7 @@ static std::string Fetch(const FetchJob& job) {
                     DWORD got = 0;
                     while (WinHttpReadData(req, buf, sizeof(buf), &got) && got > 0) {
                         data.append(buf, got);
-                        if (data.size() > (512u << 10)) { data.clear(); break; }   // not an icon
+                        if (data.size() > limit) { data.clear(); break; }
                     }
                 }
             }
@@ -81,6 +93,65 @@ static std::string Fetch(const FetchJob& job) {
     }
     WinHttpCloseHandle(session);
     return data;
+}
+
+// A format GDI+ can decode (ICO, PNG, GIF, JPEG, BMP); an HTML error page is not.
+static bool LooksLikeImage(const std::string& b) {
+    if (b.size() < 8) return false;
+    const unsigned char* u = (const unsigned char*)b.data();
+    return (u[0] == 0 && u[1] == 0 && u[2] == 1 && u[3] == 0) || (u[0] == 0x89 && u[1] == 'P' && u[2] == 'N' && u[3] == 'G') ||
+           (u[0] == 'G' && u[1] == 'I' && u[2] == 'F') || (u[0] == 0xFF && u[1] == 0xD8) || (u[0] == 'B' && u[1] == 'M');
+}
+
+// The icon a page names in <link rel="... icon ..." href="...">: a large PNG (apple-touch-icon) is
+// best, then any icon that is not an SVG (GDI+ cannot draw those). Returns an absolute address.
+static std::wstring IconFromPage(const std::string& html, const std::wstring& origin) {
+    std::string lower = html;
+    for (auto& c : lower) c = (char)tolower((unsigned char)c);
+    std::string best;
+    int bestScore = -1;
+    size_t at = 0;
+    while ((at = lower.find("<link", at)) != std::string::npos) {
+        const size_t end = lower.find('>', at);
+        if (end == std::string::npos) break;
+        const std::string tag = lower.substr(at, end - at), orig = html.substr(at, end - at);
+        at = end;
+        const size_t rel = tag.find("rel=");
+        if (rel == std::string::npos || tag.find("icon", rel) == std::string::npos) continue;
+        size_t h = tag.find("href=");
+        if (h == std::string::npos) continue;
+        h += 5;
+        const char quote = tag[h] == '"' || tag[h] == '\'' ? tag[h] : 0;
+        if (quote) ++h;
+        size_t e = quote ? tag.find(quote, h) : tag.find_first_of(" \t\r\n", h);
+        if (e == std::string::npos) e = tag.size();
+        std::string href = orig.substr(h, e - h);
+        const std::string hl = tag.substr(h, e - h);
+        if (href.empty() || hl.find(".svg") != std::string::npos || hl.rfind("data:", 0) == 0) continue;
+        int score = 1;
+        if (tag.find("apple-touch-icon") != std::string::npos) score = 3;
+        else if (hl.find(".png") != std::string::npos) score = 2;
+        if (score > bestScore) { bestScore = score; best = href; }
+    }
+    if (best.empty()) return std::wstring();
+    for (size_t i; (i = best.find("&amp;")) != std::string::npos;) best.replace(i, 5, "&");
+    const std::wstring href = ToWide(best);
+    if (href.rfind(L"http://", 0) == 0 || href.rfind(L"https://", 0) == 0) return href;
+    if (href.rfind(L"//", 0) == 0) return L"https:" + href;
+    if (!href.empty() && href[0] == L'/') return origin + href;
+    return origin + L"/" + href;
+}
+
+static std::string Fetch(const FetchJob& job) {
+    const std::wstring origin = job.scheme + L"://" + job.host +
+        ((job.port == 443 && job.scheme == L"https") || (job.port == 80 && job.scheme == L"http") ? L"" : L":" + std::to_wstring(job.port));
+    std::string data = Get(origin + L"/favicon.ico", 512u << 10);
+    if (LooksLikeImage(data)) return data;
+    // No /favicon.ico (or not an image): the icon the start page itself names.
+    const std::wstring icon = IconFromPage(Get(origin + L"/", 2u << 20), origin);
+    if (icon.empty()) return std::string();
+    data = Get(icon, 512u << 10);
+    return LooksLikeImage(data) ? data : std::string();
 }
 
 static void WorkerLoop() {

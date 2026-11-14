@@ -132,22 +132,46 @@
   .mock.split .half.d { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
 
   /* search engine: every option says plainly what it does with your searches */
-  .engines { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-top: 24px; text-align: left; }
-  .step.wide { width: 960px; }
+  .step.wide { width: 1020px; }
   .step.wide .actions { margin-top: 26px; }
-  .eng { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 11px 14px; border-radius: 16px; background: var(--card);
-         box-shadow: inset 0 0 0 1px var(--line); transition: transform .35s var(--ease), box-shadow .35s, background .35s; }
+  .engines { display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 10px; width: calc(100% + 12px); margin: 20px -6px 0; padding: 4px 6px;
+             text-align: left; align-items: stretch; max-height: calc(100vh - 350px); overflow-y: auto; overscroll-behavior: contain; }
+  .engines.more-below { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+  .engines::-webkit-scrollbar { width: 8px; }
+  .engines::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+  .eng { position: relative; box-sizing: border-box; width: calc((100% - 20px) / 3); display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 16px; background: var(--card);
+         box-shadow: inset 0 0 0 1px var(--line); cursor: default; outline: none;
+         transition: transform .35s var(--ease), box-shadow .35s, background .35s; }
   .eng:hover { transform: translateY(-2px); background: var(--card2); }
+  .eng:focus-visible { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .45); }
   .eng[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--a1), 0 14px 36px -18px rgba(140, 110, 255, .9); background: var(--card2); }
-  .eng .mono { width: 34px; height: 34px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center;
-               color: #fff; font-weight: 700; font-size: 15px; box-shadow: inset 0 -1px 0 rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.25); }
-  .eng .txt { flex: 1; min-width: 0; }
-  .eng .nm { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+  .step.on .eng { animation: engIn .6s var(--ease) backwards; animation-delay: calc(var(--i) * 45ms + 180ms); }
+  @keyframes engIn { from { opacity: 0; transform: translateY(14px) scale(.98); } }
+  .eng .mono { position: relative; width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center;
+               color: #fff; font-weight: 700; font-size: 15px; overflow: hidden;
+               box-shadow: inset 0 -1px 0 rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.25); transition: background .4s; }
+  .eng .mono img { position: absolute; left: 7px; top: 7px; width: 22px; height: 22px; opacity: 0; transform: scale(.7);
+                   transition: opacity .4s var(--ease), transform .5s cubic-bezier(.3, 1.4, .5, 1); }
+  .eng .mono.has { background: #FFFFFF !important; color: transparent; }
+  .eng .mono.has img { opacity: 1; transform: none; }
+  .eng .txt { flex: 1; min-width: 0; display: block; }
+  .eng .nm { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; min-height: 20px; }
   .eng .nm .tick { margin-left: auto; width: 18px; height: 18px; border-radius: 50%; background: var(--a1); color: #fff; font-size: 11px;
                    display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.5);
                    transition: opacity .3s, transform .4s cubic-bezier(.3, 1.4, .5, 1); }
   .eng[aria-pressed="true"] .nm .tick { opacity: 1; transform: none; }
-  .eng .ds { margin-top: 3px; font-size: 12.3px; line-height: 1.42; color: var(--text2); }
+  .eng .sh { display: block; margin-top: 2px; min-height: calc(2 * 1.4em); font-size: 12.5px; line-height: 1.4;   /* two lines for all: the cards line up */ color: var(--text2); }
+  .eng .more { display: flex; width: max-content; align-items: center; gap: 4px; margin-top: 6px; height: 22px; padding: 0 8px 0 0; font-size: 12px;
+               color: rgba(190, 175, 255, .9); border-radius: 6px; transition: color .2s; }
+  .eng .more:hover { color: #fff; }
+  .eng .more svg { width: 10px; height: 10px; transition: transform .45s cubic-bezier(.3, 1.3, .5, 1); }
+  .eng.open .more svg { transform: rotate(180deg); }
+  .eng .fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .5s var(--ease); }
+  .eng.open .fold { grid-template-rows: 1fr; }
+  .eng .fold > div { overflow: hidden; }
+  .eng .ds { padding-top: 2px; padding-bottom: 2px; font-size: 12.3px; line-height: 1.45; color: var(--text2); opacity: 0; transform: translateY(-4px);
+             transition: opacity .35s var(--ease), transform .45s var(--ease); }
+  .eng.open .ds { opacity: 1; transform: none; transition-delay: .08s; }
   .later { margin-top: 14px; font-size: 12.5px; color: var(--text3); }
 
   /* bookmarks import */
@@ -290,15 +314,15 @@ const T = {
     t2: "Where do the tabs go?", l2: "Try each one - you will see it right away.",
     layouts: ["Next to the address", "Their own row", "Down the side"],
     tS: "Which search engine?", lS: "Search engines differ in their results and in what they do with your searches. Here is what each one does.",
-    laterS: "You can pick another one at any time in Settings > Search.",
+    laterS: "You can pick another one at any time in Settings > Search.", more: "More", less: "Less",
     engines: [
-      ["DuckDuckGo", "Does not keep a profile of you or a history of your searches. Results come mostly from Bing; ads depend only on what you searched for."],
-      ["Google", "The largest index and often the most complete results. Your searches are tied to your Google account and activity and used to personalise results and ads."],
-      ["Bing", "Microsoft's own index, with Copilot answers. Searches are used for personalised ads and linked to your Microsoft account when you are signed in."],
-      ["Brave Search", "Its own independent index, not borrowed from Google or Bing. Does not build user profiles; shows anonymous ads in the results."],
-      ["Startpage", "Google's results, with your query passed on without your IP address or cookies. Owned by the advertising company System1."],
-      ["Ecosia", "Results from Bing and Google; its profits go to planting trees. Says it anonymises searches within a week and builds no lasting profiles."],
-      ["Yandex", "Strong with Russian-language queries and services in Russia. Keeps search data for personalisation and ads; as a Russian company it must hand data to authorities when required."],
+      ["DuckDuckGo", "Private by default: no profile, no search history.", "Does not keep a profile of you or a history of your searches. Results come mostly from Bing; ads depend only on what you searched for."],
+      ["Google", "The most complete results. Searches feed your ad profile.", "The largest index and often the most complete results. Your searches are tied to your Google account and activity and used to personalise results and ads."],
+      ["Bing", "Microsoft's index with Copilot answers. Personalised ads.", "Microsoft's own index, with Copilot answers. Searches are used for personalised ads and linked to your Microsoft account when you are signed in."],
+      ["Brave Search", "Its own independent index. No user profiles.", "Its own independent index, not borrowed from Google or Bing. Does not build user profiles; shows anonymous ads in the results."],
+      ["Startpage", "Google's results without the tracking.", "Google's results, with your query passed on without your IP address or cookies. Owned by the advertising company System1."],
+      ["Ecosia", "Its profits plant trees. Results from Bing and Google.", "Results from Bing and Google; its profits go to planting trees. Says it anonymises searches within a week and builds no lasting profiles."],
+      ["Yandex", "Best for Russian-language search. Keeps your data.", "Strong with Russian-language queries and services in Russia. Keeps search data for personalisation and ads; as a Russian company it must hand data to authorities when required."],
     ],
     t3: "Bring your bookmarks along?", l3: "Lyra found these browsers on this computer.",
     l3none: "No other browsers found - a clean start, then.",
@@ -314,15 +338,15 @@ const T = {
     t2: "Где будут вкладки?", l2: "Попробуйте каждый вариант - он сразу появится вверху.",
     layouts: ["Рядом с адресом", "Отдельной строкой", "Сбоку"],
     tS: "Какой поисковик?", lS: "Поисковики отличаются и результатами, и тем, что делают с вашими запросами. Вот как устроен каждый.",
-    laterS: "Выбрать другой можно в любой момент: Настройки > Поиск.",
+    laterS: "Выбрать другой можно в любой момент: Настройки > Поиск.", more: "Подробнее", less: "Свернуть",
     engines: [
-      ["DuckDuckGo", "Не ведёт профиль пользователя и не хранит историю поиска. Результаты в основном от Bing; реклама зависит только от самого запроса."],
-      ["Google", "Самый большой индекс и чаще всего самые полные результаты. Запросы связываются с аккаунтом Google и вашей активностью и используются для персональной выдачи и рекламы."],
-      ["Bing", "Собственный индекс Microsoft и ответы Copilot. Запросы используются для персональной рекламы и привязываются к аккаунту Microsoft, если вы вошли."],
-      ["Brave Search", "Свой независимый индекс, не заимствованный у Google или Bing. Не строит профили пользователей; в выдаче анонимная реклама."],
-      ["Startpage", "Результаты Google, но запрос уходит туда без вашего IP-адреса и cookie. Принадлежит рекламной компании System1."],
-      ["Ecosia", "Результаты Bing и Google, прибыль идёт на посадку деревьев. По их словам, обезличивает запросы в течение недели и не строит постоянных профилей."],
-      ["Яндекс", "Силён в русскоязычных запросах и сервисах по России. Хранит данные поиска для персонализации и рекламы; как российская компания обязан передавать данные властям по требованию."],
+      ["DuckDuckGo", "Приватен по умолчанию: без профиля и истории поиска.", "Не ведёт профиль пользователя и не хранит историю поиска. Результаты в основном от Bing; реклама зависит только от самого запроса."],
+      ["Google", "Самые полные результаты. Запросы идут в рекламный профиль.", "Самый большой индекс и чаще всего самые полные результаты. Запросы связываются с аккаунтом Google и вашей активностью и используются для персональной выдачи и рекламы."],
+      ["Bing", "Индекс Microsoft и ответы Copilot. Персональная реклама.", "Собственный индекс Microsoft и ответы Copilot. Запросы используются для персональной рекламы и привязываются к аккаунту Microsoft, если вы вошли."],
+      ["Brave Search", "Собственный независимый индекс. Без профилей.", "Свой независимый индекс, не заимствованный у Google или Bing. Не строит профили пользователей; в выдаче анонимная реклама."],
+      ["Startpage", "Результаты Google, но без слежки.", "Результаты Google, но запрос уходит туда без вашего IP-адреса и cookie. Принадлежит рекламной компании System1."],
+      ["Ecosia", "Прибыль идёт на посадку деревьев. Результаты Bing и Google.", "Результаты Bing и Google, прибыль идёт на посадку деревьев. По их словам, обезличивает запросы в течение недели и не строит постоянных профилей."],
+      ["Яндекс", "Лучший для русскоязычного поиска. Хранит ваши данные.", "Силён в русскоязычных запросах и сервисах по России. Хранит данные поиска для персонализации и рекламы; как российская компания обязан передавать данные властям по требованию."],
     ],
     t3: "Перенесём ваши закладки?", l3: "Lyra нашла на этом компьютере такие браузеры.",
     l3none: "Других браузеров не нашлось - начнём с чистого листа.",
@@ -418,6 +442,42 @@ function renderSeg(boxId, labels, pressed, onPick) {
     box.appendChild(b);
   });
 }
+// Each search engine's own site icon from Lyra's icon cache; Lyra fetches a missing one once
+// (lyra://favicons), until then the coloured letter stays.
+const ICONS = q.get("icons") || "";
+const iconKey = (url) => { try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; } };
+let iconAsk = [], iconAskTimer = 0;
+function engineIcon(box, url, attempt) {
+  const key = ICONS && iconKey(url);
+  if (!key) return;
+  const img = new Image();
+  img.onload = () => { if (!box.isConnected) return; box.appendChild(img); requestAnimationFrame(() => box.classList.add("has")); setTimeout(() => box.classList.add("has"), 60); };
+  img.onerror = () => {
+    if (attempt === 0) {
+      iconAsk.push(url);
+      clearTimeout(iconAskTimer);
+      iconAskTimer = setTimeout(() => {
+        const qs = iconAsk.map((u) => "u=" + encodeURIComponent(u)).join("&");
+        iconAsk = [];
+        if (qs) location.href = "lyra://favicons?" + qs;
+      }, 150);
+    }
+    if (attempt < 3 && box.isConnected) setTimeout(() => engineIcon(box, url, attempt + 1), attempt === 0 ? 1500 : 4000);
+  };
+  img.src = ICONS + key + ".png" + (attempt ? "?r=" + attempt : "");
+}
+// A soft fade at the bottom while there is more of the list below (short windows).
+function edgeFade() {
+  const box = $("engines");
+  const more = () => box.classList.toggle("more-below", box.scrollHeight - box.clientHeight - box.scrollTop > 14);
+  if (!box.dataset.fade) {
+    box.dataset.fade = "1";
+    box.addEventListener("scroll", more);
+    addEventListener("resize", more);
+    box.addEventListener("transitionend", more);
+  }
+  setTimeout(more, 50);
+}
 const lightNow = () => state.theme === 1 || (state.theme === 0 && !systemDark);
 
 function render() {
@@ -434,21 +494,49 @@ function render() {
               (i) => { state.layout = i; render(); setup("&live=1"); });
   // Search engine: the same order as in Settings, each with a plain description
   const engBox = $("engines");
+  const openNow = new Set([...engBox.querySelectorAll(".eng.open")].map((e) => +e.dataset.i));
   engBox.textContent = "";
   const COLORS = ["#DE5833", "#4285F4", "#0C8484", "#FB542B", "#6573FF", "#2E9E5B", "#FC3F1D"];
-  t.engines.forEach(([name, desc], i) => {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "eng";
-    b.setAttribute("aria-pressed", String(state.engine === i));
-    b.innerHTML = '<span class="mono" style="background:' + COLORS[i] + '"></span><span class="txt"><span class="nm"><span></span>' +
-                  '<span class="tick">&#10003;</span></span><span class="ds"></span></span>';
-    b.querySelector(".mono").textContent = name[0];
-    b.querySelector(".nm span").textContent = name;
-    b.querySelector(".ds").textContent = desc;
-    b.addEventListener("click", () => { state.engine = i; render(); setup("&live=1"); });
-    engBox.appendChild(b);
+  const SITES = ["https://duckduckgo.com/", "https://www.google.com/", "https://www.bing.com/", "https://search.brave.com/",
+                 "https://www.startpage.com/", "https://www.ecosia.org/", "https://yandex.com/"];
+  const CHEVRON = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l3 3 3-3"/></svg>';
+  t.engines.forEach(([name, short, full], i) => {
+    const c = document.createElement("div");
+    c.className = "eng" + (openNow.has(i) ? " open" : ""); c.tabIndex = 0; c.dataset.i = i;
+    c.setAttribute("role", "button");
+    c.setAttribute("aria-pressed", String(state.engine === i));
+    c.style.setProperty("--i", i);
+    c.innerHTML = '<span class="mono" style="background:' + COLORS[i] + '"><b></b></span><span class="txt"><span class="nm"><span></span>' +
+                  '<span class="tick">&#10003;</span></span><span class="sh"></span>' +
+                  '<button type="button" class="more"><span></span>' + CHEVRON + '</button>' +
+                  '<span class="fold"><div><div class="ds"></div></div></span></span>';
+    c.querySelector(".mono b").textContent = name[0];
+    c.querySelector(".nm span").textContent = name;
+    c.querySelector(".sh").textContent = short;
+    c.querySelector(".ds").textContent = full;
+    const more = c.querySelector(".more");
+    const label = () => (more.firstChild.textContent = c.classList.contains("open") ? t.less : t.more);
+    label();
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = !c.classList.contains("open");
+      engBox.querySelectorAll(".eng.open").forEach((o) => { if (o !== c) { o.classList.remove("open"); o.querySelector(".more span").textContent = t.more; } });
+      c.classList.toggle("open", opening);
+      label();
+      if (opening) setTimeout(() => c.scrollIntoView({ block: "nearest", behavior: "smooth" }), 320);   // a long one stays in view
+    });
+    const pick = () => {
+      if (state.engine === i) return;
+      state.engine = i;
+      engBox.querySelectorAll(".eng").forEach((e) => e.setAttribute("aria-pressed", String(+e.dataset.i === i)));
+      setup("&live=1");
+    };
+    c.addEventListener("click", pick);
+    c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(); } });
+    engineIcon(c.querySelector(".mono"), SITES[i], 0);
+    engBox.appendChild(c);
   });
-  if (t.engines.length % 2) engBox.lastChild.style.gridColumn = "1 / -1";
+  edgeFade();
 
   // Bookmarks import
   $("l3").textContent = importers.length ? t.l3 : t.l3none;
