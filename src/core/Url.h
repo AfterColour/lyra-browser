@@ -9,6 +9,9 @@ std::wstring StartPagePath();
 std::wstring StartPageFileUrl();                    // file:///.../start.html, without parameters
 bool IsStartPageUrl(const std::wstring& url);       // any address of the start page (with parameters)
 constexpr const wchar_t* kStartAlias = L"lyra://start";
+// The first-run welcome: <Lyra.exe folder>\resources\welcome.html.
+std::wstring WelcomePageFileUrl();                  // without parameters
+bool IsWelcomePageUrl(const std::wstring& url);
 // The history page is generated into %LOCALAPPDATA%\Lyra\history.html ("lyra://history").
 std::wstring HistoryPagePath();
 bool IsHistoryPageUrl(const std::wstring& url);
@@ -23,7 +26,7 @@ bool IsDownloadsPageUrl(const std::wstring& url);
 constexpr const wchar_t* kDownloadsAlias = L"lyra://downloads";
 // Lyra's own pages: shown with an empty address field, never bookmarked or recorded.
 inline bool IsInternalPageUrl(const std::wstring& url) {
-    return IsStartPageUrl(url) || IsHistoryPageUrl(url) || IsBookmarksPageUrl(url) || IsDownloadsPageUrl(url);
+    return IsStartPageUrl(url) || IsWelcomePageUrl(url) || IsHistoryPageUrl(url) || IsBookmarksPageUrl(url) || IsDownloadsPageUrl(url);
 }
 
 // Host / address shown to the user ("" for blank pages and the start page)

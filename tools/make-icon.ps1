@@ -125,6 +125,8 @@ New-Item -ItemType Directory -Force (Join-Path $root "art") | Out-Null
 foreach ($n in 256, 512, 1024) {
     $b = [LyraIcon]::Draw($n); $b.Save((Join-Path $root "art\lyra-icon-$n.png"), [Drawing.Imaging.ImageFormat]::Png); $b.Dispose()
 }
+# The welcome screen shows the big icon too
+Copy-Item (Join-Path $root "art\lyra-icon-512.png") (Join-Path $root "resources\lyra-icon.png") -Force
 # Preview sheet: every size side by side on light and dark backgrounds
 New-Item -ItemType Directory -Force (Join-Path $root "dev") | Out-Null
 $sheet = New-Object Drawing.Bitmap 900, 420; $g = [Drawing.Graphics]::FromImage($sheet)

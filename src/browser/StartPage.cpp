@@ -55,8 +55,24 @@ static std::wstring EntriesJson(const std::vector<HistoryEntry>& list, bool with
     return json + L"]";
 }
 
+// Bookmark importers found on this PC as [{"k":key,"n":name}] (the bookmarks page, the welcome).
+static std::wstring ImportersJson() {
+    std::wstring importers = L"[";
+    for (auto& [key, name] : BookmarkImporters()) {
+        if (importers.size() > 1) importers += L",";
+        importers += L"{\"k\":" + JsString(key) + L",\"n\":" + JsString(name) + L"}";
+    }
+    return importers + L"]";
+}
+
+// Lyra is registered as a browser (by the installer): Windows can make it the default.
+static bool RegisteredAsBrowser() {
+    return RegGetValueW(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", L"Lyra", RRF_RT_REG_SZ,
+                        nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+}
+
 std::wstring StartPageUrl(bool welcome) {
-    std::wstring url = StartPageFileUrl();
+    std::wstring url = welcome ? WelcomePageFileUrl() : StartPageFileUrl();
     url += L"?" + LookParams();
     url += L"&layout=" + std::to_wstring(g_prefs.tabLayout);
     url += L"&density=" + std::to_wstring(g_prefs.density);
@@ -74,7 +90,11 @@ std::wstring StartPageUrl(bool welcome) {
         }
         url += L"&favs=" + ToWide(UrlEncode(ToUtf8(favs + L"]")));
     }
-    if (welcome) url += L"&welcome=1";
+    if (welcome) {
+        url += L"&welcome=1&anim=" + std::wstring(g_prefs.animations ? L"1" : L"0");
+        url += L"&canDefault=" + std::wstring(RegisteredAsBrowser() ? L"1" : L"0");
+        url += L"&importers=" + ToWide(UrlEncode(ToUtf8(ImportersJson())));
+    }
     return url;
 }
 
@@ -137,13 +157,7 @@ static std::wstring BookmarksJson() {
 std::wstring BookmarksPageUrl() {
     const std::wstring url = WriteGeneratedPage(L"bookmarks.html", BookmarksPagePath(), BookmarksJson());
     if (url.empty()) return url;
-    std::wstring importers = L"[";
-    for (auto& [key, name] : BookmarkImporters()) {
-        if (importers.size() > 1) importers += L",";
-        importers += L"{\"k\":" + JsString(key) + L",\"n\":" + JsString(name) + L"}";
-    }
-    importers += L"]";
-    return url + L"?" + LookParams() + L"&importers=" + ToWide(UrlEncode(ToUtf8(importers)));
+    return url + L"?" + LookParams() + L"&importers=" + ToWide(UrlEncode(ToUtf8(ImportersJson())));
 }
 
 static void LoadInTab(Tab& t, const std::wstring& url) {
@@ -449,7 +463,18 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         RefreshHistoryPages();
         return;
     }
+    if (command == L"lyra://welcome-import") {        // the welcome's bookmarks step
+        const std::wstring from = UrlDecode(QueryString(query, L"from"));
+        const int n = BookmarkImport(from);
+        int index = -1;
+        if (Tab* t = FindTab(tabId, &index))
+            LoadInTab(*t, StartPageUrl(true) + L"&step=3&imported=" + std::to_wstring(n) +
+                          L"&from=" + ToWide(UrlEncode(ToUtf8(from))));
+        return;
+    }
     if (command != L"lyra://setup") return;
+    if (QueryInt(query, L"defaultBrowser") == 1)    // Windows decides; this opens Lyra's page in Default apps
+        ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps?registeredAppUser=Lyra", nullptr, nullptr, SW_SHOWNORMAL);
 
     auto pick = [&](const wchar_t* key, int& field, int maxValue) {
         const int v = QueryInt(query, key);

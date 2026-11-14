@@ -1,0 +1,443 @@
+<!doctype html>
+<!--
+  Lyra's first-run welcome: a few calm steps on the same night sky as the installer.
+  Lyra opens it as file:///<Lyra folder>/resources/welcome.html?welcome=1&language=..&themeMode=..
+  (browser/StartPage.cpp, StartPageUrl(true)). Every choice is sent to Lyra at once as
+  lyra://setup?...&live=1, so the browser around the page changes while you pick; lyra://setup?..&done=1
+  finishes. lyra://welcome-import?from=<browser> imports bookmarks and reloads this page with
+  &step=3&imported=<count>.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyra</title>
+<style>
+  :root {
+    --a1: #9E80FF; --a2: #6A4CE0; --gold: #FFD68C;
+    --text: #F4F2FF; --text2: rgba(236, 232, 255, .62); --text3: rgba(236, 232, 255, .40);
+    --card: rgba(255, 255, 255, .055); --card2: rgba(255, 255, 255, .09); --line: rgba(255, 255, 255, .10);
+    --ease: cubic-bezier(.2, .8, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  html { background: #141032 linear-gradient(135deg, #141032, #2C1A58) fixed; }
+  body {
+    color: var(--text); font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; outline: none;
+           -webkit-appearance: none; appearance: none; }
+  button:focus-visible { box-shadow: 0 0 0 2px var(--a1); }
+  #sky { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+  #sky .neb { position: absolute; border-radius: 50%; transition: transform 1.6s var(--ease); }
+  #sky .neb.a { left: 50%; top: 46%; width: 120vmax; height: 90vmax; margin: -45vmax 0 0 -60vmax;
+                background: radial-gradient(closest-side, rgba(120, 90, 230, .28), transparent); }
+  #sky .neb.b { left: 86%; top: 92%; width: 80vmax; height: 70vmax; margin: -35vmax 0 0 -40vmax;
+                background: radial-gradient(closest-side, rgba(255, 190, 120, .08), transparent); }
+  #stars { position: absolute; inset: 0 -200px; transition: transform 1.6s var(--ease); }
+  #stars i { position: absolute; border-radius: 50%; background: #fff; opacity: 0; animation: twinkle var(--d) ease-in-out var(--w) infinite; }
+  #stars i.big { box-shadow: 0 0 6px 2px rgba(255, 255, 255, .22); }
+  @keyframes twinkle { 0%, 100% { opacity: calc(var(--a) * .35); } 50% { opacity: var(--a); } }
+  .shoot { position: absolute; width: 120px; height: 1.5px; border-radius: 1px; transform-origin: right center;
+           background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.85));
+           animation: shoot 1s cubic-bezier(.2, .7, .3, 1) forwards; }
+  @keyframes shoot { 0% { opacity: 0; transform: rotate(-21deg) translateX(0); } 15% { opacity: 1; }
+                     100% { opacity: 0; transform: rotate(-21deg) translateX(-300px); } }
+
+  /* ---- language, top right ---- */
+  .lang { position: fixed; top: 18px; right: 22px; display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+          background: var(--card); box-shadow: inset 0 0 0 1px var(--line); z-index: 3;
+          opacity: 0; animation: fade .8s var(--ease) 1.1s forwards; }
+  .lang button { height: 26px; padding: 0 12px; border-radius: 999px; font-size: 12px; color: var(--text2);
+                 transition: background .25s, color .25s; }
+  .lang button:hover { color: var(--text); }
+  .lang button[aria-pressed="true"] { background: rgba(255, 255, 255, .12); color: var(--text); }
+
+  /* ---- steps ---- */
+  /* absolute, not fixed: a full-window fixed layer shows a thin line where its tiles meet */
+  main { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 2; }
+  .step { position: absolute; width: 760px; max-width: calc(100% - 48px); display: flex; flex-direction: column;
+          align-items: center; text-align: center; opacity: 0; pointer-events: none;
+          transform: translateX(40px); visibility: hidden;
+          transition: opacity .55s var(--ease), transform .7s var(--ease), visibility 0s linear .7s; }
+  /* hidden steps are not drawn at all (and their buttons cannot be reached with Tab) */
+  .step.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+  .step.past { transform: translateX(-40px); }
+  .step > * { opacity: 0; transform: translateY(12px); transition: opacity .6s var(--ease), transform .8s var(--ease); }
+  .step.on > * { opacity: 1; transform: none; }
+  .step.on > *:nth-child(2) { transition-delay: .07s; }
+  .step.on > *:nth-child(3) { transition-delay: .14s; }
+  .step.on > *:nth-child(4) { transition-delay: .21s; }
+  .step.on > *:nth-child(5) { transition-delay: .28s; }
+  .step.on > *:nth-child(6) { transition-delay: .35s; }
+  h1 { margin: 0; font: 300 44px/1.15 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; letter-spacing: -.01em; }
+  h2 { margin: 0; font: 300 32px/1.2 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; }
+  .lead { margin: 12px 0 0; color: var(--text2); font-size: 15px; max-width: 520px; }
+
+  .logo { width: 132px; height: 132px; margin-bottom: 28px; position: relative; }
+  .logo img { width: 100%; height: 100%; display: block; animation: float 6s ease-in-out infinite;
+              filter: drop-shadow(0 18px 40px rgba(120, 90, 255, .45)); }
+  .logo::before { content: ""; position: absolute; inset: -40px; border-radius: 50%;
+                  background: radial-gradient(closest-side, rgba(140, 110, 255, .35), transparent); animation: breathe 6s ease-in-out infinite; }
+  @keyframes float { 50% { transform: translateY(-6px); } }
+  @keyframes breathe { 50% { opacity: .6; transform: scale(1.06); } }
+  @keyframes fade { to { opacity: 1; } }
+
+  .primary { height: 46px; min-width: 200px; padding: 0 30px; border-radius: 999px; font-size: 15px; font-weight: 600; color: #fff;
+             background: linear-gradient(135deg, var(--a1), var(--a2)); position: relative;
+             box-shadow: 0 10px 30px -10px rgba(106, 76, 224, .9); transition: transform .2s var(--ease), box-shadow .3s, filter .3s; }
+  .primary:hover { filter: brightness(1.08); box-shadow: 0 14px 38px -10px rgba(130, 100, 255, 1); transform: translateY(-1px); }
+  .primary:active { transform: scale(.98); }
+  .ghost { height: 46px; padding: 0 22px; border-radius: 999px; color: var(--text2); transition: color .2s, background .2s; }
+  .ghost:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+  .actions { margin-top: 40px; display: flex; gap: 10px; align-items: center; justify-content: center; }
+
+  /* segmented control */
+  .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); margin-top: 26px; }
+  .seg button { height: 32px; padding: 0 16px; border-radius: 999px; color: var(--text2); font-size: 13px; transition: background .3s, color .3s; }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: linear-gradient(135deg, rgba(158, 128, 255, .35), rgba(106, 76, 224, .35)); color: var(--text);
+                                     box-shadow: inset 0 0 0 1px rgba(170, 145, 255, .45); }
+  .label { margin-top: 30px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text3); }
+  .label + .seg { margin-top: 10px; }
+
+  /* choice cards with a small picture of the browser */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; margin-top: 32px; }
+  .card { padding: 12px 12px 14px; border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line);
+          display: flex; flex-direction: column; gap: 12px; transition: transform .35s var(--ease), box-shadow .35s, background .35s; }
+  .card:hover { transform: translateY(-3px); background: var(--card2); }
+  .card[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--a1), 0 16px 40px -18px rgba(140, 110, 255, .9); background: var(--card2); }
+  .card .name { font-size: 13px; color: var(--text2); transition: color .3s; }
+  .card[aria-pressed="true"] .name { color: var(--text); }
+
+  .mock { height: 120px; border-radius: 10px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+          --chrome: #2A2C31; --page: #1E1F23; --tab: #3A3D44; --bar: #34363C; --ink: rgba(255,255,255,.18); }
+  .mock.light { --chrome: #E9EBEF; --page: #FFFFFF; --tab: #FFFFFF; --bar: #F6F7F9; --ink: rgba(0,0,0,.12); }
+  .mock .top { height: 26px; background: var(--chrome); display: flex; align-items: center; gap: 4px; padding: 0 6px; flex: none; }
+  .mock .tab { height: 16px; width: 34px; border-radius: 5px; background: var(--tab); opacity: .75; }
+  .mock .tab.cur { opacity: 1; width: 42px; }
+  .mock .addr { height: 14px; flex: 1; border-radius: 7px; background: var(--bar); box-shadow: inset 0 0 0 1px var(--ink); }
+  .mock .row2 { height: 22px; background: var(--chrome); display: flex; align-items: center; padding: 0 6px; flex: none; }
+  .mock .body { flex: 1; background: var(--page); display: flex; min-height: 0; }
+  .mock .side { width: 44px; background: var(--chrome); padding: 6px 5px; display: flex; flex-direction: column; gap: 4px; }
+  .mock .side .tab { width: 100%; height: 10px; }
+  .mock .lines { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .mock .lines i { display: block; height: 6px; border-radius: 3px; background: var(--ink); }
+  .mock .lines i:nth-child(1) { width: 55%; height: 9px; }
+  .mock .lines i:nth-child(2) { width: 85%; }
+  .mock .lines i:nth-child(3) { width: 70%; }
+  .mock.split .half { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  .mock.split .half.l { clip-path: polygon(0 0, 100% 0, 0 100%); }
+  .mock.split .half.d { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+
+  /* bookmarks import */
+  .list { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 560px; }
+  .chip { height: 44px; padding: 0 20px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line);
+          display: inline-flex; align-items: center; gap: 10px; transition: background .25s, box-shadow .25s, transform .25s var(--ease); }
+  .chip:hover { background: var(--card2); transform: translateY(-2px); }
+  .chip .tick { width: 18px; height: 18px; border-radius: 50%; display: none; align-items: center; justify-content: center;
+                background: var(--gold); color: #3A2A00; font-size: 11px; font-weight: 700; }
+  .chip.done { box-shadow: inset 0 0 0 1px rgba(255, 214, 140, .6); }
+  .chip.done .tick { display: inline-flex; }
+  .note { margin-top: 18px; color: var(--text2); min-height: 20px; transition: opacity .4s; }
+  .default { margin-top: 34px; width: 100%; max-width: 560px; padding: 16px 18px 16px 22px; border-radius: 18px;
+             background: var(--card); box-shadow: inset 0 0 0 1px var(--line); display: flex; align-items: center; gap: 16px; text-align: left; }
+  .default .txt { flex: 1; }
+  .default b { display: block; font-weight: 600; font-size: 14px; }
+  .default span { color: var(--text2); font-size: 13px; }
+  .small { height: 36px; padding: 0 18px; border-radius: 999px; background: rgba(255, 255, 255, .10); font-size: 13px; transition: background .2s; flex: none; }
+  .small:hover { background: rgba(255, 255, 255, .16); }
+
+  /* the finish: the L traced in starlight */
+  .trace { width: 150px; height: 150px; margin-bottom: 20px; overflow: visible; }
+  .trace path { fill: none; stroke: rgba(205, 195, 255, .85); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 600; stroke-dashoffset: 600; }
+  .trace circle { fill: #F5F2FF; opacity: 0; transform-box: fill-box; transform-origin: center; }
+  .trace circle.gold { fill: var(--gold); }
+  .step.on .trace path { animation: draw 1.8s var(--ease) .3s forwards; }
+  .step.on .trace circle { animation: pop .5s var(--ease) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes pop { from { opacity: 0; transform: scale(.2); } to { opacity: 1; transform: none; } }
+  .trace .glow { filter: drop-shadow(0 0 6px rgba(255, 214, 140, .9)); }
+
+  /* progress: the steps as stars joined by a line */
+  .progress { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 3; opacity: 0; animation: fade .8s var(--ease) 1.3s forwards; }
+  .progress svg { display: block; overflow: visible; }
+  .progress .base { stroke: rgba(255, 255, 255, .14); stroke-width: 1.5; }
+  .progress .fill { stroke: url(#pg); stroke-width: 1.5; transition: stroke-dashoffset .8s var(--ease); }
+  .progress circle { fill: rgba(255, 255, 255, .22); transition: fill .5s, r .5s var(--ease); }
+  .progress circle.past { fill: rgba(205, 195, 255, .9); }
+  .progress circle.now { fill: var(--gold); }
+
+  @media (prefers-reduced-motion: reduce) { * { animation-duration: .01s !important; transition-duration: .01s !important; } }
+  .still * { animation-duration: .01s !important; transition-duration: .01s !important; transition-delay: 0s !important; }
+</style>
+</head>
+<body>
+<div id="sky"><div class="neb a" id="nebA"></div><div class="neb b" id="nebB"></div><div id="stars"></div></div>
+<div class="lang" id="lang"></div>
+
+<main>
+  <section class="step" data-step="0">
+    <div class="logo"><img src="lyra-icon.png" alt=""></div>
+    <h1 id="t0"></h1>
+    <p class="lead" id="l0"></p>
+    <div class="actions"><button class="primary" data-next id="b0"></button></div>
+  </section>
+
+  <section class="step" data-step="1">
+    <h2 id="t1"></h2>
+    <p class="lead" id="l1"></p>
+    <div class="cards" id="themes"></div>
+    <div class="label" id="densityLabel"></div>
+    <div class="seg" id="density"></div>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
+  </section>
+
+  <section class="step" data-step="2">
+    <h2 id="t2"></h2>
+    <p class="lead" id="l2"></p>
+    <div class="cards" id="layouts"></div>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
+  </section>
+
+  <section class="step" data-step="3">
+    <h2 id="t3"></h2>
+    <p class="lead" id="l3"></p>
+    <div class="list" id="importers"></div>
+    <div class="note" id="note"></div>
+    <div class="default" id="defaultBox"><div class="txt"><b id="dTitle"></b><span id="dText"></span></div><button class="small" id="dBtn"></button></div>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
+  </section>
+
+  <section class="step" data-step="4">
+    <svg class="trace" viewBox="40 24 180 200" aria-hidden="true">
+      <path d="M134,110 C150,90 166,66 160,44 C156,32 140,28 128,38 C116,50 112,80 106,112 C100,144 94,176 82,200 C74,214 54,222 46,208 C40,196 60,190 82,198 C112,208 140,214 166,210 C182,206 196,200 204,190"/>
+      <circle cx="160" cy="44" r="6" style="animation-delay:.4s"/>
+      <circle cx="100" cy="142" r="4.5" style="animation-delay:.9s"/>
+      <circle cx="46" cy="208" r="4.5" style="animation-delay:1.25s"/>
+      <circle cx="160" cy="211" r="4.5" style="animation-delay:1.6s"/>
+      <circle class="gold glow" cx="204" cy="190" r="6.5" style="animation-delay:1.95s"/>
+    </svg>
+    <h1 id="t4"></h1>
+    <p class="lead" id="l4"></p>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" id="finish"></button></div>
+  </section>
+</main>
+
+<nav class="progress" aria-hidden="true">
+  <svg width="232" height="16" viewBox="0 0 232 16">
+    <defs><linearGradient id="pg" x1="0" x2="1"><stop offset="0" stop-color="#9E80FF"/><stop offset="1" stop-color="#FFD68C"/></linearGradient></defs>
+    <line class="base" x1="8" y1="8" x2="224" y2="8"/>
+    <line class="fill" id="pfill" x1="8" y1="8" x2="224" y2="8" stroke-dasharray="216" stroke-dashoffset="216"/>
+    <g id="pstars"></g>
+  </svg>
+</nav>
+
+<script>
+"use strict";
+const q = new URLSearchParams(location.search);
+const state = {
+  lang: +(q.get("language") || 0),        // 0 as in Windows, 1 English, 2 Russian
+  theme: +(q.get("themeMode") || 0),      // 0 as in Windows, 1 light, 2 dark
+  layout: +(q.get("layout") || 0),        // 0 compact, 1 separate tab bar, 2 vertical
+  density: +(q.get("density") ?? 1),
+  fav: q.get("fav") !== "0",
+  freq: q.get("freq") === "1",
+};
+const systemRu = q.get("sysru") === "1", systemDark = q.get("sysdark") === "1";
+const still = q.get("anim") === "0" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+let importers = [];
+try { importers = JSON.parse(q.get("importers") || "[]"); } catch (e) {}
+const canDefault = q.get("canDefault") === "1";
+const imported = q.has("imported") ? +q.get("imported") : -1;
+const importedFrom = q.get("from") || "";
+if (still) document.documentElement.classList.add("still");
+
+const T = {
+  en: {
+    t0: "Welcome to Lyra", l0: "A few quick choices and the browser is yours. Everything can be changed later in Settings.", b0: "Begin",
+    t1: "How should Lyra look?", l1: "The browser around this page changes as you choose.",
+    themes: ["As in Windows", "Light", "Dark"], densityLabel: "Toolbar size", density: ["Compact", "Normal", "Large"],
+    t2: "Where do the tabs go?", l2: "Try each one - you will see it right away.",
+    layouts: ["Next to the address", "Their own row", "Down the side"],
+    t3: "Bring your bookmarks along?", l3: "Lyra found these browsers on this computer.",
+    l3none: "No other browsers found - a clean start, then.",
+    importedN: (n, b) => n > 0 ? n + " bookmarks came over from " + b + "." : "No bookmarks were found in " + b + ".",
+    dTitle: "Make Lyra your default browser", dText: "Links from other apps will open here.", dBtn: "Choose in Windows",
+    t4: "All set", l4: "Enjoy the journey across the web.", finish: "Open Lyra",
+    back: "Back", next: "Continue", skip: "Skip", lang: ["Auto", "English", "Русский"],
+  },
+  ru: {
+    t0: "Добро пожаловать в Lyra", l0: "Пара коротких шагов - и браузер настроен под вас. Всё это можно поменять позже в настройках.", b0: "Начать",
+    t1: "Как будет выглядеть Lyra?", l1: "Браузер вокруг этой страницы меняется сразу, пока вы выбираете.",
+    themes: ["Как в Windows", "Светлая", "Тёмная"], densityLabel: "Размер панелей", density: ["Компактный", "Обычный", "Крупный"],
+    t2: "Где будут вкладки?", l2: "Попробуйте каждый вариант - он сразу появится вверху.",
+    layouts: ["Рядом с адресом", "Отдельной строкой", "Сбоку"],
+    t3: "Перенесём ваши закладки?", l3: "Lyra нашла на этом компьютере такие браузеры.",
+    l3none: "Других браузеров не нашлось - начнём с чистого листа.",
+    importedN: (n, b) => n > 0 ? "Перенесено закладок из " + b + ": " + n + "." : "В " + b + " закладок не нашлось.",
+    dTitle: "Сделать Lyra браузером по умолчанию", dText: "Ссылки из других программ будут открываться здесь.", dBtn: "Выбрать в Windows",
+    t4: "Всё готово", l4: "Приятного путешествия по сети.", finish: "Открыть Lyra",
+    back: "Назад", next: "Далее", skip: "Пропустить", lang: ["Авто", "English", "Русский"],
+  },
+};
+const ru = () => state.lang === 2 || (state.lang === 0 && systemRu);
+const s = () => (ru() ? T.ru : T.en);
+const $ = (id) => document.getElementById(id);
+
+// ---- talking to Lyra ------------------------------------------------------------
+function setup(extra) {
+  location.href = "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
+                  "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) + (extra || "");
+}
+
+// ---- steps ------------------------------------------------------------------------
+const steps = [...document.querySelectorAll(".step")];
+let cur = -1;
+function go(n) {
+  n = Math.max(0, Math.min(steps.length - 1, n));
+  if (n === cur) return;
+  steps.forEach((el, i) => {
+    el.classList.toggle("on", i === n);
+    el.classList.toggle("past", i < n);
+  });
+  cur = n;
+  sky.target = n;
+  const stars = $("pstars").children;
+  for (let i = 0; i < stars.length; i++) {
+    stars[i].setAttribute("class", i < n ? "past" : i === n ? "now" : "");
+    stars[i].setAttribute("r", i === n ? 5 : 3.5);
+  }
+  $("pfill").setAttribute("stroke-dashoffset", 216 - 216 * n / (steps.length - 1));
+  const focus = steps[n].querySelector(".primary");
+  if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 350);
+}
+for (let i = 0; i < 5; i++) {
+  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  c.setAttribute("cx", 8 + i * 54); c.setAttribute("cy", 8); c.setAttribute("r", 3.5);
+  $("pstars").appendChild(c);
+}
+document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => go(cur + 1)));
+document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => go(cur - 1)));
+$("finish").addEventListener("click", () => setup("&done=1"));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && document.activeElement && document.activeElement.tagName === "BUTTON") return;
+  if (e.key === "Enter" || e.key === "ArrowRight") { cur === steps.length - 1 ? setup("&done=1") : go(cur + 1); }
+  else if (e.key === "ArrowLeft") go(cur - 1);
+});
+
+// ---- choices ----------------------------------------------------------------------
+function mockHtml(kind, light) {
+  const lines = '<div class="lines"><i></i><i></i><i></i></div>';
+  const cls = "mock" + (light ? " light" : "");
+  if (kind === "compact") return '<div class="' + cls + '"><div class="top"><span class="tab cur"></span><span class="tab"></span><span class="addr"></span></div><div class="body">' + lines + '</div></div>';
+  if (kind === "row") return '<div class="' + cls + '"><div class="top"><span class="tab cur"></span><span class="tab"></span><span class="tab"></span></div><div class="row2"><span class="addr"></span></div><div class="body">' + lines + '</div></div>';
+  if (kind === "side") return '<div class="' + cls + '"><div class="top"><span class="addr"></span></div><div class="body"><div class="side"><span class="tab cur"></span><span class="tab"></span><span class="tab"></span></div>' + lines + '</div></div>';
+  return "";
+}
+function themeMock(i) {
+  const kind = ["compact", "row", "side"][state.layout] || "compact";
+  if (i === 0) {
+    return '<div class="mock split"><div class="half l">' + mockHtml(kind, true) + '</div><div class="half d">' + mockHtml(kind, false) + '</div></div>';
+  }
+  return mockHtml(kind, i === 1);
+}
+function renderCards(boxId, count, pressed, picture, labels, onPick) {
+  const box = $(boxId);
+  box.textContent = "";
+  for (let i = 0; i < count; i++) {
+    const b = document.createElement("button");
+    b.className = "card"; b.type = "button";
+    b.setAttribute("aria-pressed", String(pressed === i));
+    b.innerHTML = picture(i) + '<span class="name"></span>';
+    b.querySelector(".name").textContent = labels[i];
+    b.addEventListener("click", () => onPick(i));
+    box.appendChild(b);
+  }
+}
+function renderSeg(boxId, labels, pressed, onPick) {
+  const box = $(boxId);
+  box.textContent = "";
+  labels.forEach((label, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = label;
+    b.setAttribute("aria-pressed", String(pressed === i));
+    b.addEventListener("click", () => onPick(i));
+    box.appendChild(b);
+  });
+}
+const lightNow = () => state.theme === 1 || (state.theme === 0 && !systemDark);
+
+function render() {
+  const t = s();
+  document.documentElement.lang = ru() ? "ru" : "en";
+  for (const id of ["t0", "l0", "b0", "t1", "l1", "densityLabel", "t2", "l2", "t3", "t4", "l4", "finish", "dTitle", "dText", "dBtn"])
+    $(id).textContent = t[id];
+  document.querySelectorAll("[data-back]").forEach((b) => (b.textContent = t.back));
+  document.querySelectorAll("[data-next]:not(#b0)").forEach((b) => (b.textContent = t.next));
+  renderSeg("lang", t.lang, state.lang, (i) => { state.lang = i; render(); setup("&live=1"); });
+  renderCards("themes", 3, state.theme, themeMock, t.themes, (i) => { state.theme = i; render(); setup("&live=1"); });
+  renderSeg("density", t.density, state.density, (i) => { state.density = i; render(); setup("&live=1"); });
+  renderCards("layouts", 3, state.layout, (i) => mockHtml(["compact", "row", "side"][i], lightNow()), t.layouts,
+              (i) => { state.layout = i; render(); setup("&live=1"); });
+  // Bookmarks import
+  $("l3").textContent = importers.length ? t.l3 : t.l3none;
+  const list = $("importers");
+  list.textContent = "";
+  for (const im of importers) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip" + (im.k === importedFrom && imported >= 0 ? " done" : "");
+    b.innerHTML = '<span class="tick">&#10003;</span><span></span>';
+    b.lastChild.textContent = im.n;
+    b.addEventListener("click", () => { location.href = "lyra://welcome-import?from=" + encodeURIComponent(im.k); });
+    list.appendChild(b);
+  }
+  const from = importers.find((im) => im.k === importedFrom);
+  $("note").textContent = imported >= 0 && from ? t.importedN(imported, from.n) : "";
+  $("defaultBox").style.display = canDefault ? "" : "none";
+}
+$("dBtn").addEventListener("click", () => setup("&live=1&defaultBrowser=1"));
+
+// ---- the sky ------------------------------------------------------------------------
+// Twinkling stars that drift a little with every step, a soft nebula, and now and then a
+// shooting star - the same sky as the installer.
+const sky = {
+  set target(n) {
+    $("stars").style.transform = "translateX(" + (-n * 40) + "px)";
+    $("nebA").style.transform = "translateX(" + (-n * 3) + "vw)";
+    $("nebB").style.transform = "translateX(" + (-n * 5) + "vw)";
+  },
+};
+(function () {
+  const box = $("stars"), n = Math.round(innerWidth * innerHeight / 6000);
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    const big = Math.random() < .08, r = ((big ? 1.3 : .5) + Math.random() * .8) * 2;
+    html += '<i class="' + (big ? "big" : "") + '" style="left:' + (Math.random() * 100).toFixed(2) + "%;top:" +
+            (Math.random() * 100).toFixed(2) + "%;width:" + r.toFixed(1) + "px;height:" + r.toFixed(1) + "px;--a:" +
+            (.3 + Math.random() * .6).toFixed(2) + ";--d:" + (2.5 + Math.random() * 5).toFixed(1) + "s;--w:-" +
+            (Math.random() * 6).toFixed(1) + 's"></i>';
+  }
+  box.innerHTML = html;
+  if (still) return;
+  function shoot() {
+    const el = document.createElement("div");
+    el.className = "shoot";
+    el.style.left = (40 + Math.random() * 50) + "%";
+    el.style.top = (6 + Math.random() * 22) + "%";
+    $("sky").appendChild(el);
+    setTimeout(() => el.remove(), 1200);
+    setTimeout(shoot, 7000 + Math.random() * 6000);
+  }
+  setTimeout(shoot, 2500);
+})();
+
+render();
+const startStep = q.has("step") ? +q.get("step") : 0;
+if (startStep) { document.documentElement.classList.add("still"); go(startStep);
+                 requestAnimationFrame(() => requestAnimationFrame(() => { if (!still) document.documentElement.classList.remove("still"); })); }
+else setTimeout(() => go(0), 120);
+</script>
+</body>
+</html>

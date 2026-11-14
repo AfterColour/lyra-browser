@@ -51,6 +51,21 @@ bool IsStartPageUrl(const std::wstring& url) {
     return !mine.empty() && FileUrlTail(url) == mine;
 }
 
+std::wstring WelcomePageFileUrl() {
+    static const std::wstring url = [] {
+        std::wstring path = StartPagePath();
+        path.replace(path.size() - wcslen(L"start.html"), wcslen(L"start.html"), L"welcome.html");
+        return FileUrlOf(path);
+    }();
+    return url;
+}
+
+bool IsWelcomePageUrl(const std::wstring& url) {
+    if (url.compare(0, 5, L"file:") != 0) return false;
+    static const std::wstring mine = FileUrlTail(WelcomePageFileUrl());
+    return !mine.empty() && FileUrlTail(url) == mine;
+}
+
 std::wstring HistoryPagePath() { return g_settingsDir + L"\\history.html"; }
 
 bool IsHistoryPageUrl(const std::wstring& url) {
