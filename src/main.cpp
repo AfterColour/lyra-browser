@@ -14,6 +14,7 @@
 //  LYRA_DISABLE_GPU_RASTER, ...). WebKit reads them under their old MYBROWSER_* names;
 //  ForwardLyraEnvironment() passes them on to the WebKit processes.
 // ============================================================================
+#include <WebKit/WKTextChecker.h>
 #include "common/Platform.h"
 #include <tlhelp32.h>
 #include "browser/AdBlock.h"
@@ -142,6 +143,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     PasswordsInit();                                   // saved passwords: offer to save, fill in
     PipInit();                                         // picture-in-picture
     TabSleepInit();                                    // sleeping tabs (typed-text check)
+    WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck);   // spelling (Windows dictionaries)
     ReaderInit();                                      // reader view
     TranslateInit();                                   // page translation (the DeepL key)
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and

@@ -111,8 +111,21 @@ public:
         WKArrayAppendItem(m_items, WKContextMenuItemSeparatorItem());
         m_lastSeparator = true;
     }
+    // Corrections for the misspelled word under the pointer (WebKit's items: the suggestions as
+    // they are, the rest with Lyra's titles).
     void Spelling() {
-        for (WKContextMenuItemRef item : m_spelling) { WKArrayAppendItem(m_items, item); ++m_count; m_lastSeparator = false; }
+        for (WKContextMenuItemRef item : m_spelling) {
+            const WKContextMenuItemTag tag = WKContextMenuItemGetTag(item);
+            const wchar_t* title = tag == kWKContextMenuItemTagLearnSpelling ? Tr(L"Add to dictionary", L"Добавить в словарь")
+                                 : tag == kWKContextMenuItemTagIgnoreSpelling ? Tr(L"Ignore", L"Пропустить")
+                                 : tag == kWKContextMenuItemTagNoGuessesFound ? Tr(L"No suggestions", L"Нет вариантов")
+                                 : nullptr;
+            if (!title) { WKArrayAppendItem(m_items, item); ++m_count; m_lastSeparator = false; continue; }
+            if (tag == kWKContextMenuItemTagIgnoreSpelling) Separator();   // (after the suggestions)
+            WKStringRef t = WKStringCreateWithUTF8CString(ToUtf8(title).c_str());
+            Append(WKContextMenuItemCreateAsAction(tag, t, WKContextMenuItemGetEnabled(item)));
+            WKRelease(t);
+        }
         Separator();
     }
     // Drops a separator at the end.

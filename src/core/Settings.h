@@ -51,6 +51,7 @@ struct Prefs {
     int  printMargins = 0, printScale = 100;
     // Sleeping tabs (browser/TabSleep.cpp): on/off, after 0 5 / 1 15 / 2 30 / 3 60 / 4 120 minutes
     bool sleepTabs = true;
+    bool spellCheck = true;         // underline misspelled words in text fields (Windows dictionaries)
     int  sleepAfter = 2;
     bool printHeaders = false, printBackground = false;
 };

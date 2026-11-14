@@ -1,5 +1,6 @@
 // Lyra — содержимое разделов настроек и сброс к значениям по умолчанию.
 #include "ui/settings/SettingsPages.h"
+#include <WebKit/WKTextChecker.h>
 #include "browser/Translate.h"
 #include "browser/AdBlock.h"
 #include "browser/ClearData.h"
@@ -231,6 +232,13 @@ void BuildPages() {
                 SettingsLanguageChanged();
                 RefreshStartPages();
             }));
+        p.rows.push_back(RToggle(Tr(L"Check spelling", L"Проверять орфографию"),
+            WKTextCheckerIsContinuousSpellCheckingAllowed()
+                ? Tr(L"Misspelled words in text fields are underlined; right-click one for corrections. Uses the Windows dictionaries (English, Russian and your Windows languages).",
+                     L"Слова с ошибками в полях ввода подчёркиваются, правый клик по слову — варианты исправления. Словари Windows: английский, русский и языки Windows.")
+                : Tr(L"Windows has no spelling dictionaries here (Settings > Time & language > Language).",
+                     L"В Windows не установлены словари (Параметры > Время и язык > Язык)."),
+            &g_prefs.spellCheck, []() { SaveSettings(); WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck); }));
         g_pages.push_back(std::move(p));
     }
     const int appearancePage = (int)g_pages.size();
