@@ -154,6 +154,27 @@ static void MergeSplitTabs(Layout& L) {
 }
 
 constexpr float kPinnedW = 40.f;                         // a pinned tab (96-DPI pixels)
+constexpr float kInsertGap = 16.f;                       // the gap a dragged tab would drop into
+static int s_insertHint = -1;
+
+// The tab list opens a gap where a dragged tab would go (see SetTabInsertHint).
+static void OpenInsertGap(Layout& L) {
+    const int n = (int)L.tabs.size();
+    if (s_insertHint < 0 || s_insertHint > n) return;
+    const bool vertical = L.mode == kLayoutVertical;
+    if (vertical && s_insertHint < n && g_tabs[s_insertHint]->pinned) return;   // (the pinned grid: just the bar)
+    const float gap = std::floor(S(kInsertGap));
+    for (int i = s_insertHint; i < n; ++i) {
+        if (vertical) { if (!g_tabs[i]->pinned) L.tabs[i].Y += gap; }
+        else L.tabs[i].X += gap;
+    }
+    if (vertical) L.newTab.Y += gap;
+    else L.newTab.X += gap;
+    if (L.mode == kLayoutCompact && g_active >= 0 && g_active < n) {
+        L.pill = L.tabs[g_active];
+        PlaceReloadInPill(L);
+    }
+}
 
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
@@ -285,6 +306,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.newTab = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
     }
     MergeSplitTabs(L);
+    OpenInsertGap(L);
 }
 
 // g_L = s_target, with the tab rectangles (and the compact "+" / address field) taken from the
@@ -983,6 +1005,29 @@ static void DrawChrome(Graphics& g, int w, int h) {
         }
     }
 
+    // Where a dragged tab would drop: an accent bar in the gap the tabs opened.
+    if (s_insertHint >= 0 && s_insertHint <= n && n > 0) {
+        const float gap = std::floor(S(kInsertGap)), th = std::max(2.f, std::round(S(3)));
+        int ref = -1;                                    // the visible tab the bar sits next to
+        if (s_insertHint < n) ref = s_insertHint;
+        else for (int i = n - 1; i >= 0 && ref < 0; --i) if (L.tabs[i].Width >= 1.f && L.tabs[i].Height >= 1.f) ref = i;
+        if (ref >= 0) {
+            RectF r = (L.mode == kLayoutCompact && ref == g_active) ? L.pill : L.tabs[ref];
+            const bool rows = vertical && !g_tabs[ref]->pinned;
+            const bool after = s_insertHint >= n;
+            RectF bar;
+            if (rows) {
+                const float cy = after ? r.GetBottom() + (S(1) + gap) / 2 : r.Y - (S(1) + gap) / 2;
+                bar = RectF(r.X + S(6), cy - th / 2, r.Width - S(12), th);
+            } else {
+                const float step = vertical ? S(4) : S(2);
+                const float cx = after ? r.GetRight() + (step + gap) / 2 : r.X - (step + (vertical ? 0.f : gap)) / 2;
+                bar = RectF(cx - th / 2, r.Y + S(3), th, r.Height - S(6));
+            }
+            FillRound(g, T.accent, bar, th / 2);
+        }
+    }
+
     // A tab that has just landed after a drag (ui/TabDrag): a soft ring spreads out of it and fades.
     for (int i = 0; i < n; ++i) {
         const RectF& r = L.tabs[i];
@@ -1239,3 +1284,11 @@ void DrawTabFace(Graphics& g, const Tab& t, const RectF& r) {
         g.DrawString(t.title.c_str(), -1, g_fTab.get(), RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
     }
 }
+
+void SetTabInsertHint(int index) {
+    if (index == s_insertHint) return;
+    s_insertHint = index;
+    RefreshLayout(true);
+}
+
+int TabInsertHint() { return s_insertHint; }

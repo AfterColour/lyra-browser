@@ -53,6 +53,10 @@ Hit HitTest(int px, int py);
 // A split view is one tab in the list: the index of the half's tab under (x, y) when `index`
 // is that tab, else `index`.
 int SplitTabAt(int index, int x, int y);
+// A tab being dragged would go before the tab at `index` (g_tabs.size(): at the end; -1: none): the
+// tabs from there on move aside to open a gap with an accent bar in it.
+void SetTabInsertHint(int index);
+int TabInsertHint();
 struct Tab;
 // A tab as it looks when open (field colour, border, icon, title) in `r`: the dragged tab.
 void DrawTabFace(Graphics& g, const Tab& t, const RectF& r);

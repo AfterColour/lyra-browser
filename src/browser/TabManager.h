@@ -39,6 +39,9 @@ void MoveTab(int from, int to);
 // restart. Pinning moves the tab after the pinned ones, unpinning right after them.
 void SetTabPinned(int index, bool pinned);
 int PinnedTabCount();
+// A tab dragged in the tab list and dropped before the tab at `insertAt` (g_tabs.size(): at the
+// end): it moves there; among the pinned tabs it becomes pinned, past them it is unpinned.
+void DropTabAt(unsigned long long id, int insertAt);
 void CloseTab(int i);
 void CloseAllTabs();
 void HandleTabCrashed(unsigned long long id, int reason);

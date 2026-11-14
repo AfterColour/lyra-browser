@@ -585,6 +585,25 @@ void SetTabPinned(int index, bool pinned) {
     InvalidateChrome();
 }
 
+void DropTabAt(unsigned long long id, int insertAt) {
+    int from = -1;
+    Tab* t = FindTab(id, &from);
+    if (!t) return;
+    const int n = (int)g_tabs.size();
+    insertAt = std::clamp(insertAt, 0, n);
+    const int to = insertAt > from ? insertAt - 1 : insertAt;          // its index once moved
+    const int pinnedOthers = PinnedTabCount() - (t->pinned ? 1 : 0);
+    // Right after the last pinned tab: a pinned tab stays pinned, an ordinary one stays ordinary.
+    const bool pinned = to < pinnedOthers || (t->pinned && to == pinnedOthers);
+    if (to == from && pinned == t->pinned) return;
+    if (pinned && SplitHas(*t)) SplitClose();
+    Log("tab#%llu moved %d -> %d%s", id, from, to, pinned != t->pinned ? (pinned ? " (pinned)" : " (unpinned)") : "");
+    t->pinned = pinned;
+    if (FindTab(id, &from)) MoveTab(from, to);
+    RefreshLayout(true);
+    InvalidateChrome();
+}
+
 void CloseTab(int i) {
     if (g_closing) return;
     if (g_tabOp) { Log("CloseTab(%d) re-entered during a tab operation -> ignored", i); return; }

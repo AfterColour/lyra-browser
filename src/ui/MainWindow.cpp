@@ -80,6 +80,89 @@ static RectF PressedTabRect(int hitIndex, int tabIndex) {
     return r;
 }
 
+// The tab list as it is seen: one item per tab, the split view's two tabs one item.
+struct StripItem { int first, last; RectF r; };
+static std::vector<StripItem> StripItems() {
+    std::vector<StripItem> items;
+    int li = -1, ri = -1;
+    const bool pair = SplitStripPair(&li, &ri);
+    const int n = (int)std::min(g_tabs.size(), g_L.tabs.size());
+    for (int i = 0; i < n; ++i) {
+        if (pair && i == ri) continue;                   // (with the left half)
+        RectF r = (g_L.mode == kLayoutCompact && i == g_active) ? g_L.pill : g_L.tabs[i];
+        if (pair && i == li) {
+            if (g_L.mode == kLayoutCompact && (g_active == li || g_active == ri)) r = g_L.pill;
+            items.push_back({ li, ri, r });
+            continue;
+        }
+        if (r.Width < 1.f || r.Height < 1.f) continue;
+        items.push_back({ i, i, r });
+    }
+    return items;
+}
+
+// Where the dragged tab (index `dragged`) would go with the pointer at (x, y): on the middle of
+// another tab, that tab (split view; `right`: the dragged one goes right); at a tab's edge, in a
+// gap or past the tabs, before the tab at *insertAt. Neither (-1) away from the tab list or where
+// nothing would change.
+static void TabDropAt(int dragged, int x, int y, int* target, bool* right, int* insertAt) {
+    *target = -1;
+    *insertAt = -1;
+    *right = false;
+    const std::vector<StripItem> items = StripItems();
+    if (items.empty() || dragged < 0) return;
+    const bool vertical = g_L.mode == kLayoutVertical;
+    const float px = (float)x, py = (float)y;
+    int li = -1, ri = -1;
+    const bool pair = SplitStripPair(&li, &ri);
+    const bool draggedInPair = pair && (dragged == li || dragged == ri);
+    int insert = -1;
+    for (const StripItem& it : items) {
+        RectF hit = it.r;
+        hit.Inflate(vertical ? 0.f : S(2), vertical ? S(1) : S(6));
+        if (!hit.Contains(px, py)) continue;
+        if (draggedInPair && it.first == li) return;     // over its own split view's tab: it stays
+        if (it.first == dragged && it.last == dragged) return;   // over its own place
+        const bool horiz = !vertical || g_tabs[it.first]->pinned;
+        const float rel = horiz ? (px - it.r.X) / std::max(1.f, it.r.Width) : (py - it.r.Y) / std::max(1.f, it.r.Height);
+        const bool canSplit = it.first == it.last && !g_tabs[it.first]->pinned && !g_tabs[dragged]->pinned;
+        if (canSplit && rel >= 0.28f && rel <= 0.72f) {
+            *target = it.first;
+            *right = rel >= 0.5f;
+            return;
+        }
+        insert = rel < 0.5f ? it.first : it.last + 1;
+        break;
+    }
+    if (insert < 0) {                                    // between the tabs or past them, still in the list
+        const RectF& first = items.front().r;
+        const RectF& last = items.back().r;
+        if (vertical) {
+            if (px < 0 || px > g_L.sideW || py < first.Y - S(4) || py > last.GetBottom() + S(40)) return;
+            for (const StripItem& it : items)
+                if (py < it.r.Y + it.r.Height / 2 && !g_tabs[it.first]->pinned) { insert = it.first; break; }
+            if (insert < 0) insert = (int)g_tabs.size();
+        } else {
+            if (py < first.Y - S(6) || py > first.GetBottom() + S(6)) return;
+            if (px < first.X) insert = items.front().first;
+            else if (px > last.GetRight()) insert = (int)g_tabs.size();
+            else {
+                for (const StripItem& it : items)
+                    if (px < it.r.X + it.r.Width / 2) { insert = it.first; break; }
+                if (insert < 0) insert = (int)g_tabs.size();
+            }
+        }
+    }
+    // Nothing would change: next to its own place (and on the same side of the pinned tabs).
+    if (!draggedInPair && (insert == dragged || insert == dragged + 1)) {
+        const int pinnedOthers = PinnedTabCount() - (g_tabs[dragged]->pinned ? 1 : 0);
+        const int to = insert > dragged ? insert - 1 : insert;
+        const bool pinned = to < pinnedOthers || (g_tabs[dragged]->pinned && to == pinnedOthers);
+        if (pinned == g_tabs[dragged]->pinned) return;
+    }
+    *insertAt = insert;
+}
+
 static void TabDragMove(int x, int y) {
     if (!s_tabPressId) return;
     int pressed = -1;
@@ -94,21 +177,11 @@ static void TabDragMove(int x, int y) {
     }
     TabDragMoveTo({ x, y });
     s_tabLastPt = { x, y };
-    const Hit h = HitTest(x, y);
-    int target = -1;
+    int target = -1, insertAt = -1;
     bool right = false;
-    if ((h.kind == Hit::TabBody || h.kind == Hit::TabClose || h.kind == Hit::TabAudio) &&
-        h.index >= 0 && h.index < (int)g_L.tabs.size()) {
-        target = h.index;
-        int li = -1, ri = -1;
-        if (SplitStripPair(&li, &ri) && (target == li || target == ri)) target = -1;   // already a split view
-        if (target >= 0 && (g_tabs[target]->pinned || g_tabs[pressed]->pinned)) target = -1;   // pinned: no split view
-        if (target >= 0) {
-            const RectF& r = g_L.tabs[target];
-            right = g_L.mode == kLayoutVertical ? (float)y >= r.Y + r.Height / 2 : (float)x >= r.X + r.Width / 2;
-        }
-    }
+    TabDropAt(pressed, x, y, &target, &right, &insertAt);
     SplitTabDragOver(s_tabPressId, target, right);
+    SetTabInsertHint(insertAt);
 }
 
 static bool TabDragEnd(bool drop) {
@@ -122,9 +195,27 @@ static bool TabDragEnd(bool drop) {
     bool onTarget = false;
     for (int i = 0; i < (int)g_tabs.size() && i < (int)g_L.tabs.size(); ++i)
         if (drop && SplitDropHint(i, nullptr)) { into = g_L.tabs[i]; onTarget = true; break; }
-    // A half of the split view's tab dropped away from that tab: pulled out, an ordinary tab again
-    // (the copy then flies to its own place in the list).
-    if (drop && !onTarget) {
+    // Dropped at a place in the tab list: the tab moves there (out of its split view, if it was in one).
+    const int insertAt = TabInsertHint();
+    SetTabInsertHint(-1);
+    bool moved = false;
+    if (drop && !onTarget && insertAt >= 0) {
+        int index = -1;
+        if (Tab* t = FindTab(pressedId, &index)) {
+            int ins = insertAt;
+            if (SplitPartnerOf(*t)) {                    // keep the place once the two are ordinary tabs again
+                const unsigned long long before = ins < (int)g_tabs.size() ? g_tabs[ins]->id : 0;
+                SplitDetach(pressedId);
+                int b = -1;
+                ins = before && FindTab(before, &b) ? b : (int)g_tabs.size();
+            }
+            DropTabAt(pressedId, ins);
+            moved = true;
+        }
+    }
+    // A half of the split view's tab dropped away from that tab (not at a place in the list):
+    // pulled out, an ordinary tab again (the copy then flies to its own place in the list).
+    if (drop && !onTarget && !moved) {
         int li = -1, ri = -1, pressed = -1;
         if (SplitStripPair(&li, &ri) && FindTab(pressedId, &pressed) && (pressed == li || pressed == ri)) {
             const bool compactOpen = g_L.mode == kLayoutCompact && (g_active == li || g_active == ri);
