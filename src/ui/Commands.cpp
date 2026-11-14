@@ -1,5 +1,6 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
 #include "ui/Commands.h"
+#include "ui/FullScreen.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/PictureInPicture.h"
@@ -186,6 +187,10 @@ bool HandleShortcut(const MSG& m) {
     const bool alt   = (GetKeyState(VK_MENU) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     const WPARAM k = m.wParam;
+
+    // Esc leaves element fullscreen (video players). WebKit leaves this to the app: on Windows
+    // nothing else does it, and the page never sees the key as a way out.
+    if (!ctrl && !alt && !shift && k == VK_ESCAPE && g_fullScreenView) { ExitFullScreenForTabSwitch(); return true; }
 
     if (!ctrl && !alt && !shift && k == VK_F9) { RunCommand(CMD_READER); return true; }
     if (ctrl && shift && !alt) {
