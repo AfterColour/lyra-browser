@@ -31,6 +31,7 @@
 #include "ui/Dialogs.h"
 #include "core/Localization.h"
 #include "ui/FullScreen.h"
+#include "ui/Crossfade.h"
 #include "browser/TabSleep.h"
 #include "browser/ContextMenu.h"
 #include "browser/SplitView.h"
@@ -267,6 +268,7 @@ void FocusWebView() {
 // Re-reads the toolbar size / tab layout settings: fonts, layout and a full repaint.
 void ApplyChromeSettings() {
     if (!g_hWnd) return;
+    CrossfadeBegin();                     // the old look dissolves over the new one (ui/Crossfade.cpp)
     RebuildResources();
     RefreshLayout();
     InvalidateRect(g_hWnd, nullptr, FALSE);

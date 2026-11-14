@@ -1,5 +1,6 @@
 // Lyra — цвета интерфейса, акцент, светлая/тёмная тема, оформление заголовка окна (DWM).
 #include "ui/Theme.h"
+#include "ui/Crossfade.h"
 #include "ui/Chrome.h"
 #include "browser/StartPage.h"
 #include "core/Settings.h"
@@ -173,6 +174,7 @@ void ApplyDwm(HWND hwnd) {
 }
 
 void ApplyTheme(bool dark) {
+    if (g_hWnd) CrossfadeBegin();         // light/dark and accent changes dissolve too
     g_dark = dark;
     g_th = MakeTheme(dark);
     Color accent = WindowsAccentColor();
