@@ -7,7 +7,7 @@ builds, .pdb files and test libraries stay out.
 
     python tools\\package.py
 """
-import os, re, shutil, struct, sys
+import glob, os, re, shutil, struct, subprocess, sys
 
 LYRA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN = os.path.join(LYRA, "run")
@@ -26,6 +26,20 @@ def cmake_cache(name):
         if line.startswith(name + ":"):
             return line.split("=", 1)[1].strip()
     fail(name + " not in build\\CMakeCache.txt - run build.bat first")
+
+
+def crt_dir():
+    """The Visual C++ runtime DLLs (vcruntime140.dll, msvcp140.dll...) from the Visual Studio
+    redistributable folder: shipped next to Lyra.exe so a PC without the VC++ Redistributable
+    can run it (Microsoft allows this "app-local" copy)."""
+    vswhere = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                           "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    vs = subprocess.run([vswhere, "-latest", "-products", "*", "-property", "installationPath"],
+                        capture_output=True, text=True).stdout.strip()
+    dirs = sorted(glob.glob(os.path.join(vs, "VC", "Redist", "MSVC", "*", "x64", "Microsoft.VC*.CRT")))
+    if not dirs:
+        fail("Visual C++ runtime not found in " + vs + "\\VC\\Redist")
+    return dirs[-1]
 
 
 def version():
@@ -93,16 +107,20 @@ def main():
 
     # Programs + every DLL reachable from them and from the GStreamer plugins.
     run_files = {f.lower(): f for f in os.listdir(RUN) if os.path.isfile(os.path.join(RUN, f))}
+    source = {f: os.path.join(RUN, n) for f, n in run_files.items()}
+    crt = crt_dir()
+    for f in os.listdir(crt):
+        source.setdefault(f.lower(), os.path.join(crt, f))
     plugins = sorted(f for f in os.listdir(os.path.join(vcpkg, "plugins", "gstreamer")) if f.endswith(".dll"))
     todo = [os.path.join(RUN, p) for p in PROGRAMS] + [os.path.join(RUN, "gstreamer-1.0", p) for p in plugins]
     files = set(p.lower() for p in PROGRAMS)
     while todo:
         for dll in pe_imports(todo.pop()):
-            if dll in run_files and dll not in files:
+            if dll in source and dll not in files:
                 files.add(dll)
-                todo.append(os.path.join(RUN, run_files[dll]))
+                todo.append(source[dll])
     for f in sorted(files):
-        shutil.copy2(os.path.join(RUN, run_files[f]), out)
+        shutil.copy2(source[f], out)
     os.makedirs(os.path.join(out, "gstreamer-1.0"))
     for p in plugins:
         shutil.copy2(os.path.join(RUN, "gstreamer-1.0", p), os.path.join(out, "gstreamer-1.0"))

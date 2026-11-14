@@ -802,6 +802,25 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         HandleTabCrashed((unsigned long long)wParam, (int)lParam);
         return 0;
 
+    case WM_COPYDATA: {                  // a second Lyra.exe started: open its URL here (main.cpp)
+        const auto* cds = (const COPYDATASTRUCT*)lParam;
+        if (!cds || cds->dwData != kOpenUrlCopyData) break;
+        std::wstring url;
+        if (cds->lpData && cds->cbData >= sizeof(wchar_t))
+            url.assign((const wchar_t*)cds->lpData, cds->cbData / sizeof(wchar_t));
+        while (!url.empty() && url.back() == L'\0') url.pop_back();
+        if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+        SetForegroundWindow(hWnd);
+        // Not inside the other process's SendMessage: the tab is created on our own turn.
+        if (!url.empty() && !g_closing) PostMessageW(hWnd, WM_APP_OPEN_URL, 0, (LPARAM)new std::wstring(url));
+        return TRUE;
+    }
+    case WM_APP_OPEN_URL: {
+        std::unique_ptr<std::wstring> url((std::wstring*)lParam);
+        if (url && !url->empty() && !g_closing) CreateTab(*url);
+        return 0;
+    }
+
     case WM_CLOSE:
         if (g_closing) return 0;         // repeated Ctrl+W / extra WM_CLOSE must not run teardown twice
         if (g_tabOp) {                   // arrived from a nested message loop inside a tab operation

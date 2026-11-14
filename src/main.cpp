@@ -73,6 +73,21 @@ static void WaitForChildProcesses(DWORD timeoutMs) {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
     // Must happen before any window is created.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    // One Lyra at a time: a second Lyra.exe (a link opened from another app, a shortcut, the
+    // installer's "Launch") hands its URL to the running one, which opens it in a new tab and
+    // comes to the front, and exits before touching the profile.
+    if (HWND running = FindWindowW(L"LyraWindowClass", nullptr)) {
+        std::wstring arg = lpCmdLine ? TrimWs(lpCmdLine) : std::wstring();
+        if (arg.size() >= 2 && arg.front() == L'"' && arg.back() == L'"') arg = arg.substr(1, arg.size() - 2);
+        COPYDATASTRUCT cds = { kOpenUrlCopyData, (DWORD)((arg.size() + 1) * sizeof(wchar_t)), (void*)arg.c_str() };
+        DWORD pid = 0;
+        GetWindowThreadProcessId(running, &pid);
+        AllowSetForegroundWindow(pid);                // so it may bring itself to the front
+        DWORD_PTR handled = 0;
+        if (SendMessageTimeoutW(running, WM_COPYDATA, 0, (LPARAM)&cds, SMTO_ABORTIFHUNG, 5000, &handled) && handled)
+            return 0;
+    }
     // COM/OLE on the UI thread: needed by the file chooser, drag & drop and the
     // clipboard (MiniBrowser does the same).
     OleInitialize(nullptr);

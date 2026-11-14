@@ -100,6 +100,33 @@ target_link_libraries(Lyra PRIVATE
 )
 
 # ----------------------------------------------------------------------------
+#  LyraSetup.exe - the installer (installer/, see installer/Setup.h)
+# ----------------------------------------------------------------------------
+# Built here without the files to install; tools/make-installer.py adds them as a resource
+# and writes dist/LyraSetup.exe. The same exe without files is Lyra's Uninstall.exe.
+add_executable(LyraSetup WIN32
+    installer/main.cpp installer/Payload.cpp installer/Install.cpp installer/Ui.cpp
+    installer/Setup.h installer/Setup.rc
+    installer/Setup.manifest  # never asks for administrator rights; DPI aware
+)
+set_source_files_properties(installer/Setup.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Lyra.ico;${CMAKE_CURRENT_SOURCE_DIR}/art/lyra-icon-512.png")
+target_include_directories(LyraSetup PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"      # LyraVersion.h
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"            # Lyra.ico
+    "${CMAKE_CURRENT_SOURCE_DIR}/art"            # lyra-icon-512.png
+)
+target_compile_definitions(LyraSetup PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(LyraSetup PRIVATE /utf-8 /W3)
+# The C runtime linked in: the installer must run on a PC that has nothing installed yet.
+set_target_properties(LyraSetup PROPERTIES
+    MSVC_RUNTIME_LIBRARY "MultiThreaded"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installer$<0:>"
+)
+target_link_libraries(LyraSetup PRIVATE
+    cabinet gdiplus dwmapi user32 gdi32 shell32 shlwapi ole32 oleaut32 uuid advapi32)
+
+# ----------------------------------------------------------------------------
 #  WebKit runtime -> run/
 # ----------------------------------------------------------------------------
 file(GLOB WEBKIT_RUNTIME_FILES CONFIGURE_DEPENDS
