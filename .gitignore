@@ -4,6 +4,10 @@
 /run/
 /run-gst/
 /run-old/
+# Packages made by tools/package.py
+/dist/
+# Test pages, debug scripts, old notes (not part of the project)
+/dev/
 # Old copies of files made before edits
 *.before-fixes
 *.backup

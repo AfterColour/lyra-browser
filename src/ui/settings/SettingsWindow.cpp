@@ -1265,6 +1265,8 @@ void ShowSettingsWindow() {
         wc.lpszClassName = kSetClass;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
+        wc.hIcon = (HICON)SendMessageW(g_hWnd, WM_GETICON, ICON_BIG, 0);     // Lyra's icon
+        wc.hIconSm = (HICON)SendMessageW(g_hWnd, WM_GETICON, ICON_SMALL, 0);
         if (!RegisterClassExW(&wc)) return;
         registered = true;
     }

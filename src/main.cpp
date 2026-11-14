@@ -102,6 +102,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;                      // we paint everything ourselves
+    wc.hIcon = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,       // Lyra.rc
+                                 GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+    wc.hIconSm = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                   GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     if (!RegisterClassExW(&wc)) {
         MessageBoxW(nullptr, L"Failed to register window class", L"Error", MB_ICONERROR);
         return -1;
@@ -117,6 +121,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     if (!hwnd) {
         MessageBoxW(nullptr, L"Failed to create window", L"Error", MB_ICONERROR);
         return -1;
+    }
+    // The icon at this screen's size (the class icons above are for 100 %); other windows
+    // (picture-in-picture, print preview, notifications) take it from here with WM_GETICON.
+    {
+        auto icon = [&](int metric) {
+            const int px = GetSystemMetricsForDpi(metric, sysDpi);
+            return (LPARAM)LoadImageW(hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, px, px, 0);
+        };
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, icon(SM_CXICON));
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, icon(SM_CXSMICON));
     }
     // Apply the custom frame (WM_NCCALCSIZE drops the system title bar) before the window shows.
     FrameApply(hwnd);

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.26)   # copy_directory_if_different
-project(Lyra LANGUAGES CXX)
+# The one place the version lives: Lyra.exe's version info, Settings > About and the
+# installer all take it from here (see cmake/LyraVersion.h.in).
+project(Lyra VERSION 0.1.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,10 +52,15 @@ file(GLOB_RECURSE LYRA_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
 
+configure_file(cmake/LyraVersion.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/LyraVersion.h" @ONLY)
+
 add_executable(Lyra WIN32
     ${LYRA_SOURCES}
     src/Lyra.exe.manifest     # DPI awareness, Common Controls v6, Windows 10/11
+    src/Lyra.rc               # version info (Explorer > Properties > Details)
 )
+# Rebuild the resources when the icon changes (the resource compiler does not track it).
+set_source_files_properties(src/Lyra.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/Lyra.ico")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${LYRA_SOURCES})
 
 # Windows, GDI+ and WebKit headers are compiled once and reused by every source file.
@@ -61,6 +68,7 @@ target_precompile_headers(Lyra PRIVATE src/common/Platform.h)
 
 target_include_directories(Lyra PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"     # LyraVersion.h
     "${WEBKIT_BUILD_DIR}/WebKit/Headers"
     "${WEBKIT_BUILD_DIR}/JavaScriptCore/Headers"
     "${WEBKIT_BUILD_DIR}/WTF/Headers"

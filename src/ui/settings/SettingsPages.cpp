@@ -23,6 +23,7 @@
 #include "ui/Theme.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
+#include "LyraVersion.h"
 
 // Icon background colours in the sidebar
 static const Color kTintGray(122, 128, 138), kTintPurple(107, 91, 214), kTintBlue(31, 122, 224),
@@ -484,7 +485,7 @@ void BuildPages() {
         SPage p; p.name = Tr(L"About", L"О программе"); p.icon = L"\uE946"; p.tint = kTintGraphite;
         p.rows.push_back(RHeader(kAppName));
         p.rows.push_back(RInfo(Tr(L"Engine", L"Движок"), L"WebKit"));
-        p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), L"1.0"));
+        p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), LYRA_VERSION_WSTR));
         p.rows.push_back(RInfo(Tr(L"Settings file", L"Файл настроек"), g_settingsFile));
         p.rows.push_back(RButton(Tr(L"Settings folder", L"Папка настроек"), L"", Tr(L"Open", L"Открыть"),
             []() { ShellExecuteW(nullptr, L"open", g_settingsDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }));

@@ -1,0 +1,29 @@
+Lyra {VERSION} - third-party software notices
+==============================================
+
+Lyra itself is licensed under the PolyForm Shield License 1.0.0 (see LICENSE.md).
+Lyra is built on the open-source software listed below. Each component keeps its
+own license; the full license texts follow this list.
+
+LGPL components (WebKit, GStreamer, FFmpeg, GLib, gettext/libintl, libiconv)
+----------------------------------------------------------------------------
+These are used as separate DLLs. You are free to replace any of them with your own
+(modified) build of the same library, and Lyra's license does not forbid
+modifying or reverse-engineering Lyra to debug such a replacement.
+
+The complete source code of the WebKit engine as used in Lyra, including Lyra's
+changes and the vcpkg manifest that pins the exact versions of the libraries
+below, is published at:
+
+    https://github.com/AfterColour/lyra-webkit   (branch lyra-gstreamer)
+
+The source code of the exact versions of the other libraries is published with
+every Lyra release at https://github.com/AfterColour/lyra-browser/releases.
+FFmpeg is built as LGPL (without any GPL-only parts).
+
+Components
+----------
+{COMPONENTS}
+
+Full license texts
+==================
