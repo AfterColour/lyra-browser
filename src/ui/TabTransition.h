@@ -16,7 +16,8 @@ void TransitionBegin(Tab* from, Tab* to);
 // A new tab with one of Lyra's own pages: CreateTab covers the page area with the tab being
 // left (before the new view exists), TransitionWaitLoad names the new tab once it does; the
 // cover goes when that page has finished loading and drawn (TransitionLoaded from didFinish).
-bool TransitionCoverFrom(Tab* from);
+bool TransitionCoverFrom(Tab* from, bool startPage);   // startPage: covered by the start page's picture
+void TransitionNewTab(unsigned long long tabId);       // not pictured until it has loaded
 void TransitionWaitLoad(Tab* to);
 void TransitionLoaded(unsigned long long tabId);
 void TransitionPainted(unsigned long long tabId);   // WM_APP_TAB_PAINTED

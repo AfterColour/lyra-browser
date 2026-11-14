@@ -1,13 +1,28 @@
-// Lyra — переключение вкладок без пустого экрана: последний кадр вкладки и плавный переход.
+// Lyra - tab switches, new tabs and closing tabs without an empty page area.
+//
+// WebKit draws a page that comes into view only with its next rendering update, and a new tab
+// only once its page has loaded: on their own both show the bare window background for a moment.
+// So the page area is covered by a picture of what is about to appear, and the cover dissolves
+// once WebKit has drawn the real thing underneath:
+//   switching to a tab   its own last picture (taken when it was left);
+//   a new start page     the last picture of the start page (it looks the same in every tab);
+//   closing a tab        the last picture of the tab that comes forward.
+// Only when there is no such picture does the cover show the tab being left (or closed).
+// Pictures are taken only of a tab that has been drawn, never while a cover is up, and from the
+// window itself (PrintWindow), so neither an empty frame nor an overlapping window gets in. One
+// change after another keeps the cover up and only swaps its picture: there is no gap between.
 #include "ui/TabTransition.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
+#include "core/Url.h"
 #include "ui/Chrome.h"
 #include "ui/FullScreen.h"
 #include "ui/MainWindow.h"
+
+#include <set>
 
 namespace {
 
@@ -18,7 +33,9 @@ struct Picture {
 };
 
 std::map<unsigned long long, Picture> s_pictures;     // tab id -> its last picture
+Picture s_startPicture;                                // the start page, for new tabs
 constexpr size_t kMaxPictures = 6;
+std::set<unsigned long long> s_fresh;                  // new tabs not drawn yet: never pictured
 
 HWND s_cover = nullptr;              // layered popup over the page area
 HDC s_coverDC = nullptr;             // memory DC with the picture shown
@@ -32,7 +49,7 @@ int s_repaints = 0;                  // rendering updates still to wait for (see
 // After WebKit reports the page drawn, its tiles can still be arriving for a few frames: the
 // cover waits a little longer before it fades - longer for a tab that was hidden (its page has
 // to wake up) than for a ready one.
-constexpr DWORD kFadeMs = 180;
+DWORD s_fadeMs = 160;                // a picture of the same page dissolves quickly
 DWORD s_timeoutMs = 900, s_settleMs = 90;
 bool s_waitLoad = false;             // the cover waits for didFinish first (a new tab)
 
@@ -40,6 +57,8 @@ void FreePicture(Picture& p) {
     if (p.bmp) DeleteObject(p.bmp);
     p = Picture();
 }
+
+bool CoverUp() { return s_cover && IsWindowVisible(s_cover); }
 
 // The page area in client coordinates.
 RECT PageArea() {
@@ -60,33 +79,77 @@ HBITMAP NewDib(HDC ref, int w, int h) {
     return CreateDIBSection(ref, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
 }
 
-// What is on screen in the page area right now (DWM's composed picture, so GPU-drawn pages
-// come out right).
-void Capture(unsigned long long tabId) {
-    const RECT pa = PageArea();
-    const int w = pa.right - pa.left, h = pa.bottom - pa.top;
-    if (w <= 0 || h <= 0 || IsIconic(g_hWnd)) return;
+// The page area as the window shows it now, into `p`. While Lyra is the active window nothing
+// lies over it and the screen is copied (fast); otherwise the window itself is asked for its
+// picture (PrintWindow with PW_RENDERFULLCONTENT: DWM's picture, GPU-drawn pages included), so
+// another window over Lyra never ends up in the picture.
+bool CaptureFromScreen(Picture& p, const RECT& pa, int w, int h) {
     POINT tl = { pa.left, pa.top };
     ClientToScreen(g_hWnd, &tl);
     HDC screen = GetDC(nullptr);
     HDC mem = CreateCompatibleDC(screen);
-    Picture& p = s_pictures[tabId];
     if (!p.bmp || p.w != w || p.h != h) {
         FreePicture(p);
         p.bmp = NewDib(screen, w, h);
         p.w = w;
         p.h = h;
     }
-    if (p.bmp) {
+    bool ok = false;
+    if (p.bmp && mem) {
         HGDIOBJ old = SelectObject(mem, p.bmp);
-        BitBlt(mem, 0, 0, w, h, screen, tl.x, tl.y, SRCCOPY);
+        ok = BitBlt(mem, 0, 0, w, h, screen, tl.x, tl.y, SRCCOPY) != 0;
         SelectObject(mem, old);
-        p.used = GetTickCount();
+        if (ok) p.used = GetTickCount();
     }
-    DeleteDC(mem);
+    if (mem) DeleteDC(mem);
     ReleaseDC(nullptr, screen);
-    // Keep only the newest few.
-    while (s_pictures.size() > kMaxPictures) {
+    return ok;
+}
+
+bool CaptureInto(Picture& p) {
+    const RECT pa = PageArea();
+    const int w = pa.right - pa.left, h = pa.bottom - pa.top;
+    if (w <= 0 || h <= 0 || IsIconic(g_hWnd) || !IsWindowVisible(g_hWnd)) return false;
+    if (GetForegroundWindow() == g_hWnd) return CaptureFromScreen(p, pa, w, h);
+    RECT cr;
+    GetClientRect(g_hWnd, &cr);
+    HDC screen = GetDC(nullptr);
+    HDC whole = CreateCompatibleDC(screen), mem = CreateCompatibleDC(screen);
+    HBITMAP all = NewDib(screen, cr.right, cr.bottom);
+    bool ok = false;
+    if (all && whole && mem) {
+        HGDIOBJ oldAll = SelectObject(whole, all);
+        if (PrintWindow(g_hWnd, whole, 0x1 | 0x2)) {          // PW_CLIENTONLY | PW_RENDERFULLCONTENT
+            if (!p.bmp || p.w != w || p.h != h) {
+                FreePicture(p);
+                p.bmp = NewDib(screen, w, h);
+                p.w = w;
+                p.h = h;
+            }
+            if (p.bmp) {
+                HGDIOBJ old = SelectObject(mem, p.bmp);
+                BitBlt(mem, 0, 0, w, h, whole, pa.left, pa.top, SRCCOPY);
+                SelectObject(mem, old);
+                p.used = GetTickCount();
+                ok = true;
+            }
+        }
+        SelectObject(whole, oldAll);
+    }
+    if (all) DeleteObject(all);
+    if (whole) DeleteDC(whole);
+    if (mem) DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    return ok;
+}
+
+// A picture of tab `t` if what is on screen really is that tab, drawn (not under a cover, not a
+// new tab still loading). The start page's picture is kept apart for new tabs.
+void Capture(const Tab& t) {
+    if (CoverUp() || s_fresh.count(t.id) || !t.hwnd || !IsWindowVisible(t.hwnd)) return;
+    if (!CaptureInto(s_pictures[t.id])) { s_pictures.erase(t.id); return; }
+    if (IsStartPageUrl(t.url)) CaptureInto(s_startPicture);
+    while (s_pictures.size() > kMaxPictures) {         // keep only the newest few
         auto oldest = s_pictures.begin();
         for (auto it = s_pictures.begin(); it != s_pictures.end(); ++it)
             if (it->second.used < oldest->second.used) oldest = it;
@@ -102,14 +165,18 @@ void UpdateCover(BYTE alpha) {
     UpdateLayeredWindow(s_cover, nullptr, &s_coverPos, &s_coverSize, s_coverDC, &src, 0, &bf, ULW_ALPHA);
 }
 
-void HideCover() {
-    if (s_cover) ShowWindow(s_cover, SW_HIDE);
+void FreeCoverPicture() {
     if (s_coverDC) {
         SelectObject(s_coverDC, s_coverOld);
         DeleteDC(s_coverDC);
         s_coverDC = nullptr;
     }
     if (s_coverBmp) { DeleteObject(s_coverBmp); s_coverBmp = nullptr; }
+}
+
+void HideCover() {
+    if (s_cover) ShowWindow(s_cover, SW_HIDE);
+    FreeCoverPicture();
     s_waitTab = 0;
     s_waitLoad = false;
     s_shownAt = s_fadeAt = s_paintedAt = 0;
@@ -148,13 +215,24 @@ void PaintedCallback(WKErrorRef, void* context) {
     if (g_hWnd) PostMessageW(g_hWnd, WM_APP_TAB_PAINTED, (WPARAM)(uintptr_t)context, 0);
 }
 
-}  // namespace
+const Picture* Fitting(const Picture* p) {
+    if (!p || !p->bmp) return nullptr;
+    const RECT pa = PageArea();
+    return p->w == pa.right - pa.left && p->h == pa.bottom - pa.top ? p : nullptr;
+}
 
-// Shows `pic` over the page area. False if it could not.
-static bool ShowCover(const Picture* pic) {
+const Picture* PictureOf(unsigned long long id) {
+    auto it = s_pictures.find(id);
+    return it == s_pictures.end() ? nullptr : Fitting(&it->second);
+}
+
+// Shows `pic` over the page area, fully opaque. A cover already up only changes its picture:
+// it never goes away in between.
+bool ShowCover(const Picture* pic) {
     const RECT pa = PageArea();
     const int w = pa.right - pa.left, h = pa.bottom - pa.top;
     if (!pic || !EnsureCoverWindow()) return false;
+    FreeCoverPicture();
     HDC screen = GetDC(nullptr);
     s_coverBmp = NewDib(screen, w, h);
     s_coverDC = CreateCompatibleDC(screen);
@@ -177,46 +255,65 @@ static bool ShowCover(const Picture* pic) {
     s_coverSize = { w, h };
     UpdateCover(255);
     SetWindowPos(s_cover, HWND_TOP, tl.x, tl.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    s_shownAt = GetTickCount();
     return true;
 }
 
-static const Picture* FittingPicture(unsigned long long id) {
-    const RECT pa = PageArea();
-    auto it = s_pictures.find(id);
-    if (it == s_pictures.end() || !it->second.bmp) return nullptr;
-    if (it->second.w != pa.right - pa.left || it->second.h != pa.bottom - pa.top) return nullptr;
-    return &it->second;
-}
-
-void TransitionBegin(Tab* from, Tab* to) {
-    if (!g_hWnd || !to || from == to || g_closing || g_fullScreenView || IsIconic(g_hWnd)) return;
-    HideCover();
-    if (from && from->hwnd && IsWindowVisible(from->hwnd)) Capture(from->id);
-    // The tab's own last picture if it still fits the page area, else the tab being left.
-    const Picture* pic = FittingPicture(to->id);
-    if (!pic && from) pic = FittingPicture(from->id);
-    if (!to->page || !ShowCover(pic)) return;
-    // A hidden tab's page wakes up first; a ready (parked) one only draws.
+// The cover (shown or kept) now waits for `to` to draw.
+void WaitFor(Tab* to, bool samePage) {
+    const DWORD now = GetTickCount();
+    s_shownAt = now;
+    s_fadeAt = s_paintedAt = 0;
+    s_fadeMs = samePage ? 160 : 220;
+    // A hidden tab's page wakes up first; a ready (parked) one only draws. A page that was hidden
+    // draws its first update while it is still waking up (tiles keep arriving): wait for a second
+    // full update before the cover goes.
     const bool ready = to->hwnd && IsWindowVisible(to->hwnd);
-    // A page that was hidden draws its first update while it is still waking up (tiles keep
-    // arriving): wait for a second full update before the cover goes.
     s_settleMs = ready ? 90 : 160;
     s_timeoutMs = ready ? 900 : 2000;
     s_repaints = ready ? 1 : 2;
     s_waitTab = to->id;
+    s_waitLoad = false;
     WKPageForceRepaint(to->page, (void*)(uintptr_t)to->id, PaintedCallback);
     SetTimer(g_hWnd, TIMER_TRANSITION, 15, nullptr);
 }
 
-bool TransitionCoverFrom(Tab* from) {
-    if (!g_hWnd || !from || g_closing || g_fullScreenView || IsIconic(g_hWnd)) return false;
-    HideCover();
-    if (from->hwnd && IsWindowVisible(from->hwnd)) Capture(from->id);
-    if (!ShowCover(FittingPicture(from->id))) return false;
+}  // namespace
+
+void TransitionNewTab(unsigned long long tabId) { s_fresh.insert(tabId); }
+
+void TransitionBegin(Tab* from, Tab* to) {
+    if (!g_hWnd || !to || from == to || g_closing || g_fullScreenView || IsIconic(g_hWnd)) {
+        if (CoverUp()) HideCover();
+        return;
+    }
+    if (from) Capture(*from);                       // (not while a cover is up, nor a fresh tab)
+    // What is about to appear: the tab's own last picture, the start page's for a start page,
+    // and only failing those the tab being left.
+    const Picture* pic = PictureOf(to->id);
+    bool samePage = pic != nullptr;
+    if (!pic && IsStartPageUrl(to->url)) { pic = Fitting(&s_startPicture); samePage = pic != nullptr; }
+    if (!pic && from && !CoverUp()) pic = PictureOf(from->id);
+    if (!to->page) { if (CoverUp()) HideCover(); return; }
+    if (pic) { if (!ShowCover(pic)) return; }
+    else if (!CoverUp()) return;                    // nothing to show: no cover (as before)
+    WaitFor(to, samePage);
+}
+
+bool TransitionCoverFrom(Tab* from, bool startPage) {
+    if (!g_hWnd || g_closing || g_fullScreenView || IsIconic(g_hWnd)) return false;
+    if (from) Capture(*from);
+    const Picture* pic = startPage ? Fitting(&s_startPicture) : nullptr;
+    const bool samePage = pic != nullptr;
+    if (!pic && from && !CoverUp()) pic = PictureOf(from->id);
+    if (pic) { if (!ShowCover(pic)) return false; }
+    else if (!CoverUp()) return false;
+    s_shownAt = GetTickCount();
+    s_fadeAt = s_paintedAt = 0;
+    s_fadeMs = samePage ? 160 : 220;
     s_settleMs = 60;
     s_timeoutMs = 1500;
     s_waitLoad = true;
+    s_repaints = 0;
     s_waitTab = (unsigned long long)-1;          // named by TransitionWaitLoad
     SetTimer(g_hWnd, TIMER_TRANSITION, 15, nullptr);
     return true;
@@ -229,10 +326,11 @@ void TransitionWaitLoad(Tab* to) {
 }
 
 void TransitionLoaded(unsigned long long tabId) {
-    if (!s_waitLoad || tabId != s_waitTab) return;
+    if (!s_waitLoad || tabId != s_waitTab) { s_fresh.erase(tabId); return; }
     s_waitLoad = false;
     if (Tab* t = FindTab(tabId))
-        if (t->page) { WKPageForceRepaint(t->page, (void*)(uintptr_t)tabId, PaintedCallback); return; }
+        if (t->page) { s_repaints = 1; WKPageForceRepaint(t->page, (void*)(uintptr_t)tabId, PaintedCallback); return; }
+    s_fresh.erase(tabId);
     s_paintedAt = GetTickCount();
 }
 
@@ -242,6 +340,7 @@ void TransitionPainted(unsigned long long tabId) {
         if (Tab* t = FindTab(tabId))
             if (t->page) { WKPageForceRepaint(t->page, (void*)(uintptr_t)tabId, PaintedCallback); return; }
     }
+    s_fresh.erase(tabId);
     s_paintedAt = GetTickCount();
 }
 
@@ -250,7 +349,7 @@ void TransitionTick() {
     const DWORD now = GetTickCount();
     const Tab* active = ActiveTab();
     if (s_waitTab != (unsigned long long)-1 && (!active || active->id != s_waitTab)) { HideCover(); return; }
-    if (s_waitTab == (unsigned long long)-1 && GetTickCount() - s_shownAt > 300) { HideCover(); return; }
+    if (s_waitTab == (unsigned long long)-1 && now - s_shownAt > 300) { HideCover(); return; }
     if (!s_fadeAt) {
         // Fade once the page has drawn (and one more frame has reached the screen), or give up.
         const bool ready = s_paintedAt && now - s_paintedAt >= s_settleMs;
@@ -258,19 +357,27 @@ void TransitionTick() {
         if (!g_prefs.animations) { HideCover(); return; }
         s_fadeAt = now;
     }
-    const float t = std::min(1.f, (float)(now - s_fadeAt) / (float)kFadeMs);
-    if (t >= 1.f) { HideCover(); return; }
+    const float t = std::min(1.f, (float)(now - s_fadeAt) / (float)s_fadeMs);
+    if (t >= 1.f) {
+        HideCover();
+        // What is on screen now is the tab itself, drawn: its picture for the next time (and the
+        // start page's for new tabs).
+        if (Tab* a = ActiveTab()) if (!s_fresh.count(a->id)) Capture(*a);
+        return;
+    }
     UpdateCover((BYTE)std::lround(255.f * (1.f - t) * (1.f - t)));
 }
 
 void TransitionCancel() {
-    if (s_waitTab || (s_cover && IsWindowVisible(s_cover))) HideCover();
+    if (s_waitTab || CoverUp()) HideCover();
 }
 
 void TransitionForget(unsigned long long tabId) {
+    s_fresh.erase(tabId);
     auto it = s_pictures.find(tabId);
-    if (it == s_pictures.end()) return;
-    FreePicture(it->second);
-    s_pictures.erase(it);
+    if (it != s_pictures.end()) {
+        FreePicture(it->second);
+        s_pictures.erase(it);
+    }
     if (s_waitTab == tabId) HideCover();
 }

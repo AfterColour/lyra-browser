@@ -450,10 +450,11 @@ static bool IsLyraPageInput(const std::wstring& input) {
 
 void CreateTab(const std::wstring& input) {
     if (IsStartInput(input) && AdoptSpareTab()) return;
-    const bool covered = IsLyraPageInput(input) && TransitionCoverFrom(ActiveTab());
+    const bool covered = IsLyraPageInput(input) && TransitionCoverFrom(ActiveTab(), IsStartInput(input));
     WKPageConfigurationRef conf = CreatePageConfiguration();
     Tab* t = CreateTabWithConfiguration(conf, false);
     WKRelease(conf);
+    if (t) TransitionNewTab(t->id);
     if (covered) TransitionWaitLoad(t);
     if (t) Navigate(t->page, ResolveNavigation(input));
 }
@@ -616,6 +617,7 @@ void CloseTab(int i) {
         return;
     }
     TabOpGuard guard;
+    const bool wasActive = g_active == i;
 
     Log("CloseTab: begin index=%d tab#%llu loading=%d active=%d tabs=%d", i, g_tabs[i]->id,
         (int)g_tabs[i]->loading, g_active, (int)g_tabs.size());
@@ -627,7 +629,6 @@ void CloseTab(int i) {
     g_tabs.erase(g_tabs.begin() + i);
     s_mru.erase(std::remove(s_mru.begin(), s_mru.end(), dead->id), s_mru.end());
     s_parkedAt.erase(dead->id);
-    TransitionForget(dead->id);
     const unsigned long long otherHalf = SplitTabClosed(dead->id);
     DetachTab(*dead);
     if (g_active > i) --g_active;
@@ -636,6 +637,10 @@ void CloseTab(int i) {
         if (otherHalf && FindTab(otherHalf, &half)) g_active = half;
         else g_active = std::min(i, (int)g_tabs.size() - 1);
     }
+    // The tab that comes forward is covered by its last picture until it has drawn (no empty
+    // page area); the closing tab's own picture goes with it.
+    if (wasActive && g_active >= 0 && g_active < (int)g_tabs.size()) TransitionBegin(dead.get(), g_tabs[g_active].get());
+    TransitionForget(dead->id);
     g_hover = Hit();
     g_down  = Hit();
     RefreshLayout(true);                 // g_L.tabs must match g_tabs before any repaint
