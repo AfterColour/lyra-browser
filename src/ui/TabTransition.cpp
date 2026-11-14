@@ -46,11 +46,14 @@ POINT s_coverPos = {};
 unsigned long long s_waitTab = 0;    // the tab whose drawing ends the cover
 DWORD s_shownAt = 0, s_fadeAt = 0, s_paintedAt = 0;
 int s_repaints = 0;                  // rendering updates still to wait for (see TransitionBegin)
-// After WebKit reports the page drawn, its tiles can still be arriving for a few frames: the
-// cover waits a little longer before it fades - longer for a tab that was hidden (its page has
-// to wake up) than for a ready one.
+// When WebKit reports the page drawn its tiles are painted, but the compositor still fades new
+// tiles in (TextureMapperSparseBackingStore: 160 ms over the empty background). A tab coming
+// forward always gets new tiles - a "ready" (parked) view lies outside the window and keeps none
+// - so the cover waits for two full updates and then that fade-in before it dissolves. The cover
+// shows the same page, so the wait is not seen.
+constexpr DWORD kTileFadeInMs = 160, kSettleMs = kTileFadeInMs + 70;
 DWORD s_fadeMs = 160;                // a picture of the same page dissolves quickly
-DWORD s_timeoutMs = 900, s_settleMs = 90;
+DWORD s_timeoutMs = 2000, s_settleMs = kSettleMs;
 bool s_waitLoad = false;             // the cover waits for didFinish first (a new tab)
 
 void FreePicture(Picture& p) {
@@ -264,13 +267,10 @@ void WaitFor(Tab* to, bool samePage) {
     s_shownAt = now;
     s_fadeAt = s_paintedAt = 0;
     s_fadeMs = samePage ? 160 : 220;
-    // A hidden tab's page wakes up first; a ready (parked) one only draws. A page that was hidden
-    // draws its first update while it is still waking up (tiles keep arriving): wait for a second
-    // full update before the cover goes.
-    const bool ready = to->hwnd && IsWindowVisible(to->hwnd);
-    s_settleMs = ready ? 90 : 160;
-    s_timeoutMs = ready ? 900 : 2000;
-    s_repaints = ready ? 1 : 2;
+    // The first update may come while the page is still waking up: wait for a second one too.
+    s_settleMs = kSettleMs;
+    s_timeoutMs = 2000;
+    s_repaints = 2;
     s_waitTab = to->id;
     s_waitLoad = false;
     WKPageForceRepaint(to->page, (void*)(uintptr_t)to->id, PaintedCallback);
@@ -296,6 +296,7 @@ void TransitionBegin(Tab* from, Tab* to) {
     if (!to->page) { if (CoverUp()) HideCover(); return; }
     if (pic) { if (!ShowCover(pic)) return; }
     else if (!CoverUp()) return;                    // nothing to show: no cover (as before)
+    else UpdateCover(255);                          // kept: it may have begun to fade
     WaitFor(to, samePage);
 }
 
@@ -307,11 +308,12 @@ bool TransitionCoverFrom(Tab* from, bool startPage) {
     if (!pic && from && !CoverUp()) pic = PictureOf(from->id);
     if (pic) { if (!ShowCover(pic)) return false; }
     else if (!CoverUp()) return false;
+    else UpdateCover(255);
     s_shownAt = GetTickCount();
     s_fadeAt = s_paintedAt = 0;
     s_fadeMs = samePage ? 160 : 220;
-    s_settleMs = 60;
-    s_timeoutMs = 1500;
+    s_settleMs = kSettleMs;
+    s_timeoutMs = 2000;
     s_waitLoad = true;
     s_repaints = 0;
     s_waitTab = (unsigned long long)-1;          // named by TransitionWaitLoad
@@ -329,7 +331,7 @@ void TransitionLoaded(unsigned long long tabId) {
     if (!s_waitLoad || tabId != s_waitTab) { s_fresh.erase(tabId); return; }
     s_waitLoad = false;
     if (Tab* t = FindTab(tabId))
-        if (t->page) { s_repaints = 1; WKPageForceRepaint(t->page, (void*)(uintptr_t)tabId, PaintedCallback); return; }
+        if (t->page) { s_repaints = 2; WKPageForceRepaint(t->page, (void*)(uintptr_t)tabId, PaintedCallback); return; }
     s_fresh.erase(tabId);
     s_paintedAt = GetTickCount();
 }
