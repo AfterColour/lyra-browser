@@ -1,0 +1,247 @@
+<!doctype html>
+<!--
+  Lyra's website (GitHub Pages, served from this docs/ folder of the main branch).
+  update.json next to it is the update manifest installed copies of Lyra read; this page
+  reads it too, to show the current version. Plain HTML/CSS, no build step.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyra — a calm browser for Windows</title>
+<meta name="description" content="Lyra is a fast, quiet web browser for Windows on its own WebKit engine.">
+<link rel="icon" href="icon.png">
+<meta property="og:title" content="Lyra">
+<meta property="og:description" content="A fast, quiet web browser for Windows on its own WebKit engine.">
+<meta property="og:image" content="https://aftercolour.github.io/lyra-browser/icon.png">
+<style>
+  :root {
+    --a1: #9E80FF; --a2: #6A4CE0; --gold: #FFD68C;
+    --text: #F4F2FF; --text2: rgba(236, 232, 255, .64); --text3: rgba(236, 232, 255, .42);
+    --card: rgba(255, 255, 255, .05); --line: rgba(255, 255, 255, .09);
+    --ease: cubic-bezier(.2, .8, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html { background: #141032 linear-gradient(160deg, #141032 0%, #22174A 55%, #2C1A58 100%) fixed; color: var(--text); }
+  body { margin: 0; font: 16px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif; overflow-x: hidden; }
+  a { color: inherit; }
+  #sky { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  #sky i { position: absolute; border-radius: 50%; background: #fff; opacity: 0; animation: tw var(--d) ease-in-out var(--w) infinite; }
+  #sky i.big { box-shadow: 0 0 6px 2px rgba(255, 255, 255, .2); }
+  @keyframes tw { 0%, 100% { opacity: calc(var(--a) * .35); } 50% { opacity: var(--a); } }
+  .shoot { position: absolute; width: 120px; height: 1.5px; transform-origin: right center;
+           background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.85)); animation: shoot 1s cubic-bezier(.2,.7,.3,1) forwards; }
+  @keyframes shoot { 0% { opacity: 0; transform: rotate(-21deg) translateX(0); } 15% { opacity: 1; } 100% { opacity: 0; transform: rotate(-21deg) translateX(-300px); } }
+  .glow { position: absolute; left: 50%; top: 0; width: 1100px; height: 800px; margin-left: -550px;
+          background: radial-gradient(closest-side, rgba(120, 90, 230, .30), transparent); pointer-events: none; }
+
+  header, main, footer { position: relative; z-index: 1; }
+  nav { max-width: 1080px; margin: 0 auto; padding: 22px 28px; display: flex; align-items: center; gap: 12px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; }
+  nav .brand img { width: 28px; height: 28px; }
+  nav .sp { flex: 1; }
+  nav a.link { color: var(--text2); text-decoration: none; font-size: 14px; padding: 6px 10px; border-radius: 8px; transition: color .2s, background .2s; }
+  nav a.link:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+  .lang { display: flex; padding: 3px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
+  .lang button { font: inherit; font-size: 12px; color: var(--text2); background: none; border: 0; height: 26px; padding: 0 11px; border-radius: 999px; cursor: pointer; }
+  .lang button[aria-pressed="true"] { background: rgba(255, 255, 255, .12); color: var(--text); }
+
+  .hero { position: relative; max-width: 900px; margin: 0 auto; padding: 70px 28px 40px; text-align: center; }
+  .hero .icon { width: 150px; height: 150px; margin: 0 auto 30px; position: relative; }
+  .hero .icon img { width: 100%; height: 100%; animation: float 6s ease-in-out infinite; filter: drop-shadow(0 20px 46px rgba(120, 90, 255, .5)); }
+  @keyframes float { 50% { transform: translateY(-7px); } }
+  h1 { margin: 0; font: 300 64px/1.05 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; letter-spacing: -.02em; }
+  .tag { margin: 18px auto 0; max-width: 600px; font-size: 19px; color: var(--text2); }
+  .cta { margin-top: 38px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .dl { display: inline-flex; align-items: center; gap: 12px; height: 54px; padding: 0 34px; border-radius: 999px; color: #fff; text-decoration: none;
+        font-weight: 600; font-size: 17px; background: linear-gradient(135deg, var(--a1), var(--a2));
+        box-shadow: 0 14px 40px -12px rgba(110, 80, 240, .95); transition: transform .25s var(--ease), box-shadow .3s, filter .3s; }
+  .dl:hover { transform: translateY(-2px); filter: brightness(1.08); box-shadow: 0 18px 48px -12px rgba(140, 110, 255, 1); }
+  .dl svg { width: 20px; height: 20px; }
+  .meta { color: var(--text3); font-size: 13px; }
+  .meta a { color: var(--text2); }
+
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity .8s var(--ease), transform 1s var(--ease); }
+  .reveal.in { opacity: 1; transform: none; }
+
+  section.features { max-width: 1080px; margin: 0 auto; padding: 60px 28px 30px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card { padding: 26px 24px; border-radius: 20px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line);
+          transition: transform .35s var(--ease), background .35s; }
+  .card:hover { transform: translateY(-4px); background: rgba(255, 255, 255, .075); }
+  .card svg { width: 30px; height: 30px; color: var(--a1); margin-bottom: 14px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  .card p { margin: 0; color: var(--text2); font-size: 14.5px; }
+
+  section.open { max-width: 760px; margin: 0 auto; padding: 50px 28px 20px; text-align: center; }
+  section.open h2 { margin: 0 0 12px; font: 300 34px/1.2 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; }
+  section.open p { margin: 0 auto; color: var(--text2); max-width: 600px; }
+  .links { margin-top: 22px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; height: 40px; padding: 0 18px; border-radius: 999px; text-decoration: none; font-size: 14px;
+          background: var(--card); box-shadow: inset 0 0 0 1px var(--line); transition: background .25s, transform .25s var(--ease); }
+  .chip:hover { background: rgba(255, 255, 255, .09); transform: translateY(-2px); }
+
+  footer { max-width: 1080px; margin: 0 auto; padding: 60px 28px 40px; color: var(--text3); font-size: 13px; display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  footer a { color: var(--text2); text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } h1 { font-size: 50px; } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } nav a.link { display: none; } h1 { font-size: 42px; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } .reveal { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<div id="sky"></div>
+<header>
+  <nav>
+    <a class="brand" href="#"><img src="icon.png" alt=""><span>Lyra</span></a>
+    <span class="sp"></span>
+    <a class="link" href="https://github.com/AfterColour/lyra-browser/releases" data-t="releases"></a>
+    <a class="link" href="https://github.com/AfterColour/lyra-browser" data-t="source"></a>
+    <div class="lang" id="lang"><button data-l="en">EN</button><button data-l="ru">RU</button></div>
+  </nav>
+  <div class="glow"></div>
+  <div class="hero">
+    <div class="icon reveal"><img src="icon.png" alt="Lyra"></div>
+    <h1 class="reveal" data-t="title"></h1>
+    <p class="tag reveal" data-t="tag"></p>
+    <div class="cta reveal">
+      <a class="dl" href="https://github.com/AfterColour/lyra-browser/releases/latest/download/LyraSetup.exe">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+        <span data-t="download"></span>
+      </a>
+      <div class="meta" id="meta"></div>
+      <div class="meta" data-t="smartscreen"></div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="features">
+    <div class="grid" id="grid"></div>
+  </section>
+  <section class="open reveal">
+    <h2 data-t="openTitle"></h2>
+    <p data-t="openText"></p>
+    <div class="links">
+      <a class="chip" href="https://github.com/AfterColour/lyra-browser" data-t="chipLyra"></a>
+      <a class="chip" href="https://github.com/AfterColour/lyra-webkit" data-t="chipEngine"></a>
+      <a class="chip" href="https://github.com/AfterColour/lyra-browser/blob/main/LICENSE.md" data-t="chipLicense"></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>&copy; 2026 AfterColour</span>
+  <a href="https://github.com/AfterColour/lyra-browser/releases" data-t="releases"></a>
+  <a href="https://github.com/AfterColour/lyra-browser/issues" data-t="feedback"></a>
+</footer>
+
+<script>
+"use strict";
+const ICON = {
+  tabs: '<path d="M3 7h6l2-3h10v16H3z"/><path d="M3 11h18"/>',
+  split: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
+  palette: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 10 3 2-3 2"/><path d="M12 15h5"/>',
+  video: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+  quiet: '<path d="M12 3 5 6v6c0 4 3 7.5 7 9 4-1.5 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  update: '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
+};
+const T = {
+  en: {
+    title: "A calm browser for Windows", tag: "Fast, quiet and made with care \u2014 on its own WebKit engine.",
+    download: "Download for Windows", smartscreen: "Windows may ask about an unknown publisher the first time: More info → Run anyway.",
+    meta: (v, mb) => "Version " + v + " · Windows 10 and 11, 64-bit · " + mb + " MB",
+    metaNone: "Windows 10 and 11, 64-bit",
+    releases: "Releases", source: "Source", feedback: "Feedback",
+    features: [
+      ["tabs", "Tabs your way", "Next to the address, in their own row or down the side. Pin the ones you keep."],
+      ["split", "Split view", "Two pages side by side \u2014 drop one tab onto another."],
+      ["palette", "Command palette", "Ctrl+K finds tabs, bookmarks, history and every command."],
+      ["video", "Smooth video", "GStreamer with Direct3D 11 hardware decoding for YouTube and the rest."],
+      ["quiet", "Quiet by default", "A built-in ad blocker, private tabs, reader view and translation."],
+      ["update", "Updates itself", "New versions arrive in the background, signed and checked."],
+    ],
+    openTitle: "Open where it matters", openText: "The engine is open source. Lyra's own code is public to read, so you can see what runs on your computer.",
+    chipLyra: "Lyra on GitHub", chipEngine: "The WebKit engine", chipLicense: "License",
+  },
+  ru: {
+    title: "Спокойный браузер для Windows", tag: "Быстрый, тихий и сделанный с любовью \u2014 на собственном движке WebKit.",
+    download: "Скачать для Windows", smartscreen: "При первом запуске Windows может спросить о неизвестном издателе: «Подробнее» → «Выполнить в любом случае».",
+    meta: (v, mb) => "Версия " + v + " · Windows 10 и 11, 64-бит · " + mb + " МБ",
+    metaNone: "Windows 10 и 11, 64-бит",
+    releases: "Версии", source: "Исходники", feedback: "Обратная связь",
+    features: [
+      ["tabs", "Вкладки как удобно", "Рядом с адресом, отдельной строкой или сбоку. Нужные можно закрепить."],
+      ["split", "Разделённый экран", "Две страницы рядом \u2014 просто перетащите вкладку на вкладку."],
+      ["palette", "Палитра команд", "Ctrl+K находит вкладки, закладки, историю и любые команды."],
+      ["video", "Плавное видео", "GStreamer и аппаратное декодирование через Direct3D 11 \u2014 для YouTube и не только."],
+      ["quiet", "Тихий с самого начала", "Встроенный блокировщик рекламы, приватные вкладки, режим чтения и перевод."],
+      ["update", "Обновляется сам", "Новые версии приходят в фоне \u2014 подписанные и проверенные."],
+    ],
+    openTitle: "Открыт там, где это важно", openText: "Движок \u2014 с открытым исходным кодом. Код самой Lyra открыт для чтения: видно, что работает на вашем компьютере.",
+    chipLyra: "Lyra на GitHub", chipEngine: "Движок WebKit", chipLicense: "Лицензия",
+  },
+};
+let lang = localStorage.getItem("lyra.lang") || ((navigator.language || "").toLowerCase().startsWith("ru") ? "ru" : "en");
+let manifest = null;
+function render() {
+  const t = T[lang];
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t[el.dataset.t]; });
+  document.querySelectorAll("#lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.l === lang)));
+  $("meta").textContent = manifest ? t.meta(manifest.version, Math.round(manifest.size / 1048576)) : t.metaNone;
+  const grid = $("grid");
+  grid.textContent = "";
+  t.features.forEach(([icon, h, p], i) => {
+    const c = document.createElement("div");
+    c.className = "card reveal";
+    c.style.transitionDelay = (i % 3) * 0.08 + "s";
+    c.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + ICON[icon] + '</svg><h3></h3><p></p>';
+    c.querySelector("h3").textContent = h;
+    c.querySelector("p").textContent = p;
+    grid.appendChild(c);
+  });
+  observe();
+}
+function $(id) { return document.getElementById(id); }
+document.querySelectorAll("#lang button").forEach((b) => b.addEventListener("click", () => {
+  lang = b.dataset.l;
+  try { localStorage.setItem("lyra.lang", lang); } catch (e) {}
+  render();
+}));
+
+// Things fade in as they scroll into view
+const io = "IntersectionObserver" in window ? new IntersectionObserver((es) => es.forEach((e) => {
+  if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+}), { threshold: .12 }) : null;
+function observe() { document.querySelectorAll(".reveal:not(.in)").forEach((el) => io ? io.observe(el) : el.classList.add("in")); }
+
+// The sky: twinkling stars and now and then a shooting star
+(function () {
+  const sky = $("sky"), n = Math.round(innerWidth * innerHeight / 5500);
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    const big = Math.random() < .08, r = ((big ? 1.3 : .5) + Math.random() * .8) * 2;
+    html += '<i class="' + (big ? "big" : "") + '" style="left:' + (Math.random() * 100).toFixed(2) + "%;top:" + (Math.random() * 100).toFixed(2) +
+            "%;width:" + r.toFixed(1) + "px;height:" + r.toFixed(1) + "px;--a:" + (.3 + Math.random() * .6).toFixed(2) + ";--d:" +
+            (2.5 + Math.random() * 5).toFixed(1) + "s;--w:-" + (Math.random() * 6).toFixed(1) + 's"></i>';
+  }
+  sky.innerHTML = html;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  (function shoot() {
+    const el = document.createElement("div");
+    el.className = "shoot";
+    el.style.left = (40 + Math.random() * 50) + "%";
+    el.style.top = (5 + Math.random() * 25) + "%";
+    sky.appendChild(el);
+    setTimeout(() => el.remove(), 1200);
+    setTimeout(shoot, 6000 + Math.random() * 6000);
+  })();
+})();
+
+render();
+fetch("update.json", { cache: "no-cache" }).then((r) => r.ok ? r.json() : null).then((m) => { if (m && m.version) { manifest = m; render(); } }).catch(() => {});
+</script>
+</body>
+</html>

@@ -29,11 +29,30 @@ static std::wstring LowerCopy(std::wstring s) {
     return s;
 }
 
-// WebKit may spell a file URL slightly differently (case, file:/// vs file://): compare the part
-// after the scheme, ignoring case and the parameters.
+// %D0%A1 -> the character it stands for (the bytes are UTF-8).
+static std::wstring UnescapeUrl(const std::wstring& u) {
+    const std::string in = ToUtf8(u);
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size() && isxdigit((unsigned char)in[i + 1]) && isxdigit((unsigned char)in[i + 2])) {
+            out += (char)strtol(in.substr(i + 1, 2).c_str(), nullptr, 16);
+            i += 2;
+        } else {
+            out += in[i];
+        }
+    }
+    return ToWide(out);
+}
+
+// WebKit may spell a file URL slightly differently (case, file:/// vs file://, and a folder
+// with non-Latin letters - C:\Users\Саша - as %D0%A1...): compare the part after the scheme,
+// unescaped, ignoring case and the parameters.
 static std::wstring FileUrlTail(std::wstring u) {
     size_t q = u.find_first_of(L"?#");
     if (q != std::wstring::npos) u.resize(q);
+    u = UnescapeUrl(u);
+    for (wchar_t& c : u) if (c == L'\\') c = L'/';
     size_t p = 5;
     while (p < u.size() && u[p] == L'/') ++p;
     return LowerCopy(u.substr(std::min(p, u.size())));
