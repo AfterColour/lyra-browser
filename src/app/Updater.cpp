@@ -288,7 +288,7 @@ void UpdaterTimer() {
 void UpdaterCheckNow() { Start(true); }
 
 void UpdaterChanged() {
-    if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
+    SettingsRefresh();
     if (g_hWnd) InvalidateRect(g_hWnd, nullptr, FALSE);
 }
 

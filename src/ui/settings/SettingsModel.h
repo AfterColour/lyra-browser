@@ -13,7 +13,8 @@ struct SRow {
         Segmented,   // a few options side by side
         Cards,       // full-width picture cards (theme / tab layout)
         Swatches,    // colour circles
-        Slider, Text, Button, Info
+        Slider, Text, Button, Info,
+        Custom       // drawn by settings.html itself; `right` names it ("start-wallpaper", "start-layout")
     };
     Type type = Info;
     std::wstring label, desc, right;
@@ -33,15 +34,9 @@ struct SPage {
     std::wstring name;
     const wchar_t* icon = L"";
     Color tint;                           // background of the icon in the sidebar
+    int group = 0;                        // sidebar section: a gap is left between groups
     int parent = -1;                      // >= 0: a detail page reached from a row of that page (not in the sidebar)
     std::vector<SRow> rows;
-};
-struct SView {
-    SRow* row = nullptr;          // null => synthetic heading (search results)
-    std::wstring heading;
-    float y = 0, h = 0;
-    int group = -1;
-    bool first = false, last = false;
 };
 
 SRow RHeader(const wchar_t* t);
@@ -55,3 +50,4 @@ SRow RSlider(const wchar_t* label, const wchar_t* desc, int mn, int mx, int step
 SRow RText(const wchar_t* label, const wchar_t* desc, std::function<std::wstring()> get, std::function<void(const std::wstring&)> set);
 SRow RButton(const wchar_t* label, const wchar_t* desc, const wchar_t* caption, std::function<void()> action);
 SRow RInfo(const wchar_t* label, const std::wstring& right, bool kbd = false);
+SRow RCustom(const wchar_t* kind, const wchar_t* label);

@@ -27,6 +27,7 @@
 #include "app/Updater.h"
 
 // Icon background colours in the sidebar
+static const Color kTintPink(214, 69, 126);
 static const Color kTintGray(122, 128, 138), kTintPurple(107, 91, 214), kTintBlue(31, 122, 224),
                    kTintOrange(217, 120, 11), kTintGreen(46, 143, 71), kTintTeal(29, 147, 168),
                    kTintGraphite(94, 99, 107);
@@ -45,7 +46,7 @@ static void ResetAllSettings() {
     ApplyChromeSettings();
     SaveSettings();
     if (oldLanguage != g_prefs.language) SettingsLanguageChanged();
-    if (g_setHwnd) InvalidateRect(g_setHwnd, nullptr, FALSE);
+    SettingsRefresh();
 }
 
 static int s_passwordsPageIndex = -1;
@@ -136,12 +137,10 @@ void BuildPages() {
     const std::function<void()> theme   = []() { ApplyTheme(ResolveDark()); SaveSettings(); };
     const std::function<void()> layout  = []() { ApplyChromeSettings(); SaveSettings(); };
     const std::function<void()> repaint = []() { InvalidateChrome(); SaveSettings(); };
-    // Index of the "Animations" detail page; it is added after the sidebar pages.
     static int s_animationsPage = -1;
-    static int s_passwordsPage = -1;     // "Saved passwords", from Privacy
-
+    static int s_passwordsPage = -1;
     {   // General
-        SPage p; p.name = Tr(L"General", L"Основные"); p.icon = L"\uE713"; p.tint = kTintGray;
+        SPage p; p.name = Tr(L"General", L"Основные"); p.icon = L"\uE713"; p.tint = kTintGray; p.group = 0;
         p.rows.push_back(RHeader(Tr(L"Startup", L"Запуск")));
         p.rows.push_back(RToggle(Tr(L"Restore tabs", L"Восстанавливать вкладки"),
             Tr(L"Opens the tabs of the last session. After a crash they always come back.",
@@ -161,19 +160,108 @@ void BuildPages() {
                 g_homePage = IsStartPageUrl(t->url) ? std::wstring(kStartAlias) : t->url;
                 SaveSettings();
             }));
-
-        p.rows.push_back(RHeader(Tr(L"Start page", L"Стартовая страница")));
-        p.rows.push_back(RToggle(Tr(L"Favorites", L"Избранное"),
-            Tr(L"Sites on the start page. Add them with the + tile.", L"Сайты на стартовой странице. Добавляются плиткой «+»."),
-            &g_prefs.startFavorites, []() { SaveSettings(); RefreshStartPages(); }));
-        p.rows.push_back(RToggle(Tr(L"Frequently visited", L"Часто посещаемые"),
-            Tr(L"The sites you open most, from your history.", L"Сайты, которые вы открываете чаще всего, — по истории."),
-            &g_prefs.startFrequent, []() { SaveSettings(); RefreshStartPages(); }));
+        p.rows.push_back(RHeader(Tr(L"Language", L"Язык")));
+        p.rows.push_back(RChoice(Tr(L"Interface language", L"Язык интерфейса"), L"",
+            { Tr(L"As in Windows", L"Как в Windows"), L"English", L"Русский" },
+            []() { return g_prefs.language; },
+            [](int i) {
+                g_prefs.language = i;
+                SaveSettings();
+                if (g_hWnd) InvalidateRect(g_hWnd, nullptr, FALSE);
+                SettingsLanguageChanged();
+                RefreshStartPages();
+            }));
+        g_pages.push_back(std::move(p));
+    }
+    const int appearancePage = (int)g_pages.size();
+    {   // Appearance
+        SPage p; p.name = Tr(L"Appearance", L"Внешний вид"); p.icon = L"\uE790"; p.tint = kTintPurple; p.group = 1;
+        p.rows.push_back(RHeader(Tr(L"Theme", L"Тема")));
+        p.rows.push_back(RCards(Tr(L"Theme", L"Тема"), 0,
+            { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Light", L"Светлая"), Tr(L"Dark", L"Тёмная") },
+            []() { return g_prefs.themeMode; },
+            [theme](int i) { g_prefs.themeMode = i; theme(); }));
+        p.rows.push_back(RHeader(Tr(L"Accent color", L"Акцентный цвет")));
+        std::vector<Color> colors;
+        colors.push_back(WindowsAccentColor());
+        for (int i = 1; i < kAccentCount; ++i) colors.push_back(Color(kAccents[i].r, kAccents[i].g, kAccents[i].b));
+        p.rows.push_back(RSwatches(Tr(L"Color", L"Цвет"), colors,
+            { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Blue", L"Синий"), Tr(L"Purple", L"Фиолетовый"),
+              Tr(L"Pink", L"Розовый"), Tr(L"Red", L"Красный"), Tr(L"Orange", L"Оранжевый"),
+              Tr(L"Yellow", L"Жёлтый"), Tr(L"Green", L"Зелёный"), Tr(L"Graphite", L"Графит") },
+            []() { return g_prefs.accent; },
+            [theme](int i) { g_prefs.accent = i; theme(); }));
+        p.rows.push_back(RHeader(Tr(L"Toolbar", L"Панели")));
+        p.rows.push_back(RSegmented(Tr(L"Toolbar size", L"Размер панелей"),
+            Tr(L"Compact leaves the most room for pages.", L"Компактный оставляет больше места страницам."),
+            { Tr(L"Compact", L"Компактный"), Tr(L"Normal", L"Обычный"), Tr(L"Large", L"Крупный") },
+            []() { return g_prefs.density; },
+            [layout](int i) { g_prefs.density = i; layout(); }));
+        if (MicaSupported())
+            p.rows.push_back(RToggle(Tr(L"Mica", L"Эффект Mica"),
+                Tr(L"The desktop shows through the tab strip and toolbar, softly blurred.",
+                   L"Фон рабочего стола мягко просвечивает сквозь панели вкладок и инструментов."),
+                &g_prefs.mica, theme));
+        else
+            p.rows.push_back(RInfo(Tr(L"Mica", L"Эффект Mica"), Tr(L"Needs Windows 11 22H2", L"Нужна Windows 11 22H2")));
+        p.rows.push_back(RToggleGear(Tr(L"Animations", L"Анимации"),
+            Tr(L"Tabs glide, highlights fade. The gear opens the details.",
+               L"Вкладки плавно двигаются, подсветка плавно гаснет. Шестерёнка — подробные настройки."),
+            &g_prefs.animations, repaint,
+            []() { SettingsOpenPage(s_animationsPage); }));
+        g_pages.push_back(std::move(p));
+    }
+    {   // Start Page
+        SPage p; p.name = Tr(L"Start Page", L"Стартовая страница"); p.icon = L"\uE80F"; p.tint = kTintPink; p.group = 1;
+        p.rows.push_back(RHeader(Tr(L"Wallpaper", L"Обои")));
+        p.rows.push_back(RCustom(L"start-wallpaper", Tr(L"Wallpaper", L"Обои")));
+        p.rows.push_back(RHeader(Tr(L"Widgets", L"Виджеты")));
+        p.rows.push_back(RCustom(L"start-layout", Tr(L"Widget layout", L"Расположение виджетов")));
+        p.rows.push_back(RButton(Tr(L"Widgets", L"Виджеты"),
+            Tr(L"Add, move and resize them right on the start page.", L"Добавляйте, двигайте и меняйте размер прямо на стартовой странице."),
+            Tr(L"Customize\x2026", L"Настроить\x2026"),
+            []() { CreateTab(StartPageUrl() + L"&edit=1"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
+        p.rows.push_back(RHeader(Tr(L"First run", L"Первый запуск")));
         p.rows.push_back(RButton(Tr(L"Welcome screen", L"Экран приветствия"),
             Tr(L"The first-run setup: language, theme, tabs.", L"Первоначальная настройка: язык, тема, вкладки."),
             Tr(L"Show", L"Показать"),
             []() { CreateTab(StartPageUrl(true)); }));
-
+        g_pages.push_back(std::move(p));
+    }
+    {   // Tabs
+        SPage p; p.name = Tr(L"Tabs", L"Вкладки"); p.icon = L"\uE7C4"; p.tint = kTintBlue; p.group = 1;
+        p.rows.push_back(RHeader(Tr(L"Tab layout", L"Расположение вкладок")));
+        p.rows.push_back(RCards(Tr(L"Tab layout", L"Расположение вкладок"), 1,
+            { Tr(L"Compact", L"Компактно"), Tr(L"Separate tab bar", L"Отдельной строкой"), Tr(L"Vertical", L"Вертикально") },
+            []() { return g_prefs.tabLayout; },
+            [layout](int i) { g_prefs.tabLayout = i; layout(); }));
+        p.rows.push_back(RHeader(Tr(L"Tabs", L"Вкладки")));
+        p.rows.push_back(RChoice(Tr(L"New tab opens", L"Новая вкладка открывает"),
+            Tr(L"What Ctrl+T and the + button show.", L"Что показывают Ctrl+T и кнопка +."),
+            { Tr(L"Start page", L"Стартовую страницу"), Tr(L"Blank page", L"Пустую страницу"),
+              Tr(L"Home page", L"Домашнюю страницу") },
+            []() { return g_prefs.newTabMode; },
+            [save](int i) { g_prefs.newTabMode = i; save(); }));
+        p.rows.push_back(RToggle(Tr(L"Close button on every tab", L"Кнопка закрытия на всех вкладках"),
+            Tr(L"Otherwise it appears on the tab under the pointer.", L"Иначе она появляется на вкладке под курсором."),
+            &g_prefs.closeAlways, repaint));
+        g_pages.push_back(std::move(p));
+    }
+    {   // Address Bar
+        SPage p; p.name = Tr(L"Address Bar", L"Адресная строка"); p.icon = L"\uE71B"; p.tint = kTintTeal; p.group = 1;
+        p.rows.push_back(RHeader(Tr(L"Address field", L"Адресное поле")));
+        p.rows.push_back(RToggle(Tr(L"Show full address", L"Показывать полный адрес"),
+            Tr(L"Otherwise the address field shows only the site name.", L"Иначе в адресной строке видно только имя сайта."),
+            &g_prefs.showFullUrl, repaint));
+        p.rows.push_back(RSegmented(Tr(L"Page loading", L"Загрузка страницы"),
+            Tr(L"How the address field shows that a page is loading.", L"Как адресная строка показывает загрузку страницы."),
+            { Tr(L"Glowing line", L"Светящаяся линия"), Tr(L"Fill", L"Заливка") },
+            []() { return g_prefs.loadIndicator; },
+            [repaint](int i) { g_prefs.loadIndicator = i; repaint(); }));
+        g_pages.push_back(std::move(p));
+    }
+    {   // Search
+        SPage p; p.name = Tr(L"Search", L"Поиск"); p.icon = L"\uE721"; p.tint = kTintBlue; p.group = 1;
         p.rows.push_back(RHeader(Tr(L"Search", L"Поиск")));
         std::vector<std::wstring> names;
         for (int i = 0; i < kEngineCount; ++i) names.push_back(kEngines[i].name);
@@ -188,184 +276,45 @@ void BuildPages() {
             Tr(L"The query is added to the end of this address.", L"Запрос добавляется в конец этого адреса."),
             []() { return g_searchEngine; },
             [](const std::wstring& s) { std::wstring t = TrimWs(s); if (!t.empty()) { g_searchEngine = t; SaveSettings(); } }));
-        p.rows.push_back(RToggle(Tr(L"Show full address", L"Показывать полный адрес"),
-            Tr(L"Otherwise the address field shows only the site name.", L"Иначе в адресной строке видно только имя сайта."),
-            &g_prefs.showFullUrl, repaint));
-        p.rows.push_back(RHeader(Tr(L"Translation", L"Перевод")));
-        {
-            std::vector<std::wstring> langs;
-            for (const auto& l : TranslateLanguages()) langs.push_back(l.name);
-            langs[0] = Tr(L"Lyra's language", L"Язык Lyra");
-            p.rows.push_back(RChoice(Tr(L"Translate into", L"Переводить на"),
-                Tr(L"Pages in other languages show a translate icon in the address field.",
-                   L"На страницах на других языках в адресной строке появляется значок перевода."),
-                langs,
-                []() { return g_prefs.translateTarget; },
-                [save](int i) { g_prefs.translateTarget = i; save(); }));
-        }
-        p.rows.push_back(RChoice(Tr(L"Service", L"Сервис"),
-            Tr(L"Google needs nothing; DeepL needs your own API key (DeepL API Free: 500,000 characters a month).",
-               L"Google работает сразу; DeepL — со своим ключом API (DeepL API Free: 500 000 символов в месяц)."),
-            { Tr(L"Google (no key)", L"Google (без ключа)"), Tr(L"DeepL (API key)", L"DeepL (ключ API)") },
-            []() { return g_prefs.translateService; },
-            [save](int i) { g_prefs.translateService = i; save(); }));
-        p.rows.push_back(RText(Tr(L"DeepL API key", L"Ключ DeepL API"),
-            Tr(L"Kept encrypted for your Windows account. Free keys end with :fx.",
-               L"Хранится зашифрованным для вашей учётной записи Windows. Бесплатные ключи заканчиваются на :fx."),
-            []() { return TranslateGetDeepLKey(); },
-            [](const std::wstring& s) { TranslateSetDeepLKey(s); }));
-
-        p.rows.push_back(RHeader(Tr(L"Page zoom", L"Масштаб страниц")));
-        p.rows.push_back(RSlider(Tr(L"Default zoom", L"Масштаб по умолчанию"),
-            Tr(L"Ctrl +, Ctrl - and Ctrl 0 change it too.", L"Также меняется сочетаниями Ctrl +, Ctrl - и Ctrl 0."),
-            25, 300, 5,
-            []() { return (int)std::lround(g_zoom * 100.0); },
-            [](int v) { SetZoom(v / 100.0); },
-            [](int v) { return std::to_wstring(v) + L"%"; }));
-
-        p.rows.push_back(RHeader(Tr(L"Language", L"Язык")));
-        p.rows.push_back(RChoice(Tr(L"Interface language", L"Язык интерфейса"), L"",
-            { Tr(L"As in Windows", L"Как в Windows"), L"English", L"Русский" },
-            []() { return g_prefs.language; },
-            [](int i) {
-                g_prefs.language = i;
-                SaveSettings();
-                if (g_hWnd) InvalidateRect(g_hWnd, nullptr, FALSE);
-                SettingsLanguageChanged();
-                RefreshStartPages();
-            }));
-        p.rows.push_back(RToggle(Tr(L"Check spelling", L"Проверять орфографию"),
-            WKTextCheckerIsContinuousSpellCheckingAllowed()
-                ? Tr(L"Misspelled words in text fields are underlined; right-click one for corrections. Uses the Windows dictionaries (English, Russian and your Windows languages).",
-                     L"Слова с ошибками в полях ввода подчёркиваются, правый клик по слову — варианты исправления. Словари Windows: английский, русский и языки Windows.")
-                : Tr(L"Windows has no spelling dictionaries here (Settings > Time & language > Language).",
-                     L"В Windows не установлены словари (Параметры > Время и язык > Язык)."),
-            &g_prefs.spellCheck, []() { SaveSettings(); WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck); }));
         g_pages.push_back(std::move(p));
     }
-    const int appearancePage = (int)g_pages.size();
-    {   // Appearance
-        SPage p; p.name = Tr(L"Appearance", L"Внешний вид"); p.icon = L"\uE790"; p.tint = kTintPurple;
-        p.rows.push_back(RHeader(Tr(L"Theme", L"Тема")));
-        p.rows.push_back(RCards(Tr(L"Theme", L"Тема"), 0,
-            { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Light", L"Светлая"), Tr(L"Dark", L"Тёмная") },
-            []() { return g_prefs.themeMode; },
-            [theme](int i) { g_prefs.themeMode = i; theme(); }));
-
-        p.rows.push_back(RHeader(Tr(L"Accent color", L"Акцентный цвет")));
-        std::vector<Color> colors;
-        colors.push_back(WindowsAccentColor());
-        for (int i = 1; i < kAccentCount; ++i) colors.push_back(Color(kAccents[i].r, kAccents[i].g, kAccents[i].b));
-        p.rows.push_back(RSwatches(Tr(L"Color", L"Цвет"), colors,
-            { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Blue", L"Синий"), Tr(L"Purple", L"Фиолетовый"),
-              Tr(L"Pink", L"Розовый"), Tr(L"Red", L"Красный"), Tr(L"Orange", L"Оранжевый"),
-              Tr(L"Yellow", L"Жёлтый"), Tr(L"Green", L"Зелёный"), Tr(L"Graphite", L"Графит") },
-            []() { return g_prefs.accent; },
-            [theme](int i) { g_prefs.accent = i; theme(); }));
-
-        p.rows.push_back(RHeader(Tr(L"Toolbar", L"Панели")));
-        p.rows.push_back(RSegmented(Tr(L"Toolbar size", L"Размер панелей"),
-            Tr(L"Compact leaves the most room for pages.", L"Компактный оставляет больше места страницам."),
-            { Tr(L"Compact", L"Компактный"), Tr(L"Normal", L"Обычный"), Tr(L"Large", L"Крупный") },
-            []() { return g_prefs.density; },
-            [layout](int i) { g_prefs.density = i; layout(); }));
-        if (MicaSupported())
-            p.rows.push_back(RToggle(Tr(L"Mica", L"Эффект Mica"),
-                Tr(L"The desktop shows through the tab strip and toolbar, softly blurred.",
-                   L"Фон рабочего стола мягко просвечивает сквозь панели вкладок и инструментов."),
-                &g_prefs.mica, theme));
-        else
-            p.rows.push_back(RInfo(Tr(L"Mica", L"Эффект Mica"), Tr(L"Needs Windows 11 22H2", L"Нужна Windows 11 22H2")));
-        p.rows.push_back(RSegmented(Tr(L"Page loading", L"Загрузка страницы"),
-            Tr(L"How the address field shows that a page is loading.", L"Как адресная строка показывает загрузку страницы."),
-            { Tr(L"Glowing line", L"Светящаяся линия"), Tr(L"Fill", L"Заливка") },
-            []() { return g_prefs.loadIndicator; },
-            [repaint](int i) { g_prefs.loadIndicator = i; repaint(); }));
-        p.rows.push_back(RToggleGear(Tr(L"Animations", L"Анимации"),
-            Tr(L"Tabs glide, highlights fade. The gear opens the details.",
-               L"Вкладки плавно двигаются, подсветка плавно гаснет. Шестерёнка — подробные настройки."),
-            &g_prefs.animations, repaint,
-            []() { SettingsOpenPage(s_animationsPage); }));
-        g_pages.push_back(std::move(p));
-    }
-    {   // Tabs
-        SPage p; p.name = Tr(L"Tabs", L"Вкладки"); p.icon = L"\uE7C4"; p.tint = kTintBlue;
-        p.rows.push_back(RHeader(Tr(L"Tab layout", L"Расположение вкладок")));
-        p.rows.push_back(RCards(Tr(L"Tab layout", L"Расположение вкладок"), 1,
-            { Tr(L"Compact", L"Компактно"), Tr(L"Separate tab bar", L"Отдельной строкой"), Tr(L"Vertical", L"Вертикально") },
-            []() { return g_prefs.tabLayout; },
-            [layout](int i) { g_prefs.tabLayout = i; layout(); }));
-
+    {   // Keyboard
+        SPage p; p.group = 2;
+        p.name = Tr(L"Keyboard", L"Клавиатура");
+        p.icon = L"\uE765";
+        p.tint = kTintTeal;
         p.rows.push_back(RHeader(Tr(L"Tabs", L"Вкладки")));
-        p.rows.push_back(RChoice(Tr(L"New tab opens", L"Новая вкладка открывает"),
-            Tr(L"What Ctrl+T and the + button show.", L"Что показывают Ctrl+T и кнопка +."),
-            { Tr(L"Start page", L"Стартовую страницу"), Tr(L"Blank page", L"Пустую страницу"),
-              Tr(L"Home page", L"Домашнюю страницу") },
-            []() { return g_prefs.newTabMode; },
-            [save](int i) { g_prefs.newTabMode = i; save(); }));
-        p.rows.push_back(RToggle(Tr(L"Close button on every tab", L"Кнопка закрытия на всех вкладках"),
-            Tr(L"Otherwise it appears on the tab under the pointer.", L"Иначе она появляется на вкладке под курсором."),
-            &g_prefs.closeAlways, repaint));
-        p.rows.push_back(RHeader(Tr(L"Speed", L"Скорость")));
-        p.rows.push_back(RSegmented(Tr(L"Ready tabs", L"Готовые вкладки"),
-            Tr(L"The tabs used last stay drawn, so switching back to them is instant. More uses more memory.",
-               L"Последние открытые вкладки остаются отрисованными — переключение на них мгновенное. Больше — больше памяти."),
-            { Tr(L"Off", L"Выкл."), L"1", L"2", L"4" },
-            []() { return g_prefs.warmTabs >= 4 ? 3 : g_prefs.warmTabs; },
-            [save](int i) { g_prefs.warmTabs = i == 3 ? 4 : i; RefreshLayout(); save(); }));
-        p.rows.push_back(RToggle(Tr(L"Put unused tabs to sleep", L"Усыплять неиспользуемые вкладки"),
-            Tr(L"Tabs not opened for a while are unloaded from memory and load again when you open them.",
-               L"Вкладки, которые давно не открывали, выгружаются из памяти и загружаются снова, когда вы на них переходите."),
-            &g_prefs.sleepTabs, save));
-        p.rows.push_back(RChoice(Tr(L"Sleep after", L"Усыплять через"),
-            Tr(L"Sooner when Windows is short of memory. Never tabs that play sound or have typed text.",
-               L"Раньше, если Windows не хватает памяти. Вкладки со звуком или введённым текстом не усыпляются."),
-            { Tr(L"5 minutes", L"5 минут"), Tr(L"15 minutes", L"15 минут"), Tr(L"30 minutes", L"30 минут"),
-              Tr(L"1 hour", L"1 час"), Tr(L"2 hours", L"2 часа") },
-            []() { return g_prefs.sleepAfter; }, [save](int i) { g_prefs.sleepAfter = i; save(); }));
-        p.rows.push_back(RToggle(Tr(L"Prepare the new tab", L"Готовить новую вкладку заранее"),
-            Tr(L"A start page waits in the background, so a new tab appears at once.",
-               L"Стартовая страница ждёт в фоне, и новая вкладка появляется сразу."),
-            &g_prefs.spareTab, [save]() { if (g_prefs.spareTab) ScheduleSpareTab(300); else DiscardSpareTab(); save(); }));
-        p.rows.push_back(RInfo(Tr(L"Most tabs at once", L"Наибольшее число вкладок"), std::to_wstring(metrics::kMaxTabs)));
-        p.rows.push_back(RInfo(Tr(L"Closing the last tab", L"Закрытие последней вкладки"),
-                               Tr(L"Closes the window", L"Закрывает окно")));
-        g_pages.push_back(std::move(p));
-    }
-    {   // Webpages
-        SPage p; p.name = Tr(L"Webpages", L"Веб-страницы"); p.icon = L"\uE774"; p.tint = kTintOrange;
-        p.rows.push_back(RHeader(Tr(L"Content", L"Содержимое")));
-        p.rows.push_back(RToggle(Tr(L"JavaScript", L"JavaScript"),
-            Tr(L"Turning it off breaks most modern websites.", L"Без него не работает большинство современных сайтов."),
-            &g_prefs.js, web));
-        p.rows.push_back(RToggle(Tr(L"Load images", L"Загружать изображения"),
-            Tr(L"Turn off to save data on a slow connection.", L"Отключите, чтобы экономить трафик."), &g_prefs.images, web));
-        p.rows.push_back(RToggle(Tr(L"Allow full screen", L"Разрешить полноэкранный режим"),
-            Tr(L"Lets pages such as video players use the whole screen.", L"Например, для видеоплееров."),
-            &g_prefs.fullscreen, web));
-        p.rows.push_back(RToggle(Tr(L"Web Audio", L"Web Audio"),
-            Tr(L"Has no effect yet: Web Audio is off in this WebKit build.", L"Пока ни на что не влияет: в этой сборке WebKit Web Audio выключен."),
-            &g_prefs.webAudio, web));
-        p.rows.push_back(RHeader(Tr(L"Fonts", L"Шрифты")));
-        p.rows.push_back(RSlider(Tr(L"Default font size", L"Размер шрифта по умолчанию"),
-            Tr(L"For pages that do not set their own.", L"Для страниц, которые не задают свой."), 9, 32, 1,
-            []() { return g_prefs.defaultFont; },
-            [web](int v) { g_prefs.defaultFont = v; web(); },
-            [](int v) { return std::to_wstring(v) + L" px"; }));
-        p.rows.push_back(RSlider(Tr(L"Minimum font size", L"Наименьший размер шрифта"),
-            Tr(L"Smaller text is enlarged. 0 turns it off.", L"Более мелкий текст увеличивается. 0 — выключено."), 0, 24, 1,
-            []() { return g_prefs.minFont; },
-            [web](int v) { g_prefs.minFont = v; web(); },
-            [](int v) { return v == 0 ? std::wstring(Tr(L"Off", L"Выкл.")) : std::to_wstring(v) + L" px"; }));
-        p.rows.push_back(RHeader(Tr(L"Developer", L"Для разработчиков")));
-        p.rows.push_back(RToggle(Tr(L"Developer tools", L"Инструменты разработчика"),
-            Tr(L"F12 and Inspect Element in the page menu.", L"F12 и «Просмотреть код» в меню страницы."),
-            &g_prefs.devExtras, web));
+        p.rows.push_back(RInfo(Tr(L"New tab", L"Новая вкладка"), L"Ctrl+T", true));
+        p.rows.push_back(RInfo(Tr(L"Close tab", L"Закрыть вкладку"), L"Ctrl+W", true));
+        p.rows.push_back(RInfo(Tr(L"Next tab", L"Следующая вкладка"), L"Ctrl+Tab", true));
+        p.rows.push_back(RInfo(Tr(L"Previous tab", L"Предыдущая вкладка"), L"Ctrl+Shift+Tab", true));
+        p.rows.push_back(RInfo(Tr(L"Go to tab 1-8", L"Перейти к вкладке 1–8"), L"Ctrl+1 … 8", true));
+        p.rows.push_back(RInfo(Tr(L"Go to last tab", L"Последняя вкладка"), L"Ctrl+9", true));
+        p.rows.push_back(RInfo(Tr(L"Reopen closed tab", L"Вернуть закрытую вкладку"), L"Ctrl+Shift+T", true));
+        p.rows.push_back(RInfo(Tr(L"Command palette", L"Палитра команд"), L"Ctrl+K", true));
+        p.rows.push_back(RInfo(Tr(L"History", L"История"), L"Ctrl+H", true));
+        p.rows.push_back(RInfo(Tr(L"Bookmarks", L"Закладки"), L"Ctrl+Shift+O", true));
+        p.rows.push_back(RInfo(Tr(L"Bookmark this page", L"Добавить в закладки"), L"Ctrl+D", true));
+        p.rows.push_back(RInfo(Tr(L"Downloads", L"Загрузки"), L"Ctrl+J", true));
+        p.rows.push_back(RInfo(Tr(L"Clear browsing data", L"Очистить данные браузера"), L"Ctrl+Shift+Del", true));
+        p.rows.push_back(RHeader(Tr(L"Navigation", L"Навигация")));
+        p.rows.push_back(RInfo(Tr(L"Address bar", L"Адресная строка"), L"Ctrl+L", true));
+        p.rows.push_back(RInfo(Tr(L"Reload", L"Обновить"), L"Ctrl+R  /  F5", true));
+        p.rows.push_back(RInfo(Tr(L"Back", L"Назад"), L"Alt+←", true));
+        p.rows.push_back(RInfo(Tr(L"Forward", L"Вперёд"), L"Alt+→", true));
+        p.rows.push_back(RHeader(Tr(L"View", L"Вид")));
+        p.rows.push_back(RInfo(Tr(L"Zoom in", L"Увеличить"), L"Ctrl++", true));
+        p.rows.push_back(RInfo(Tr(L"Zoom out", L"Уменьшить"), L"Ctrl+-", true));
+        p.rows.push_back(RInfo(Tr(L"Actual size", L"Исходный размер"), L"Ctrl+0", true));
+        p.rows.push_back(RInfo(Tr(L"Leave full screen", L"Выйти из полноэкранного режима"), L"Esc", true));
+        p.rows.push_back(RHeader(Tr(L"Browser", L"Браузер")));
+        p.rows.push_back(RInfo(Tr(L"Settings", L"Настройки"), L"Ctrl+,", true));
+        p.rows.push_back(RInfo(Tr(L"Developer tools", L"Инструменты разработчика"), L"F12  /  Ctrl+Shift+I", true));
         g_pages.push_back(std::move(p));
     }
     const int privacyPage = (int)g_pages.size();
-    {   // Privacy
-        SPage p; p.name = Tr(L"Privacy", L"Конфиденциальность"); p.icon = L"\uE72E"; p.tint = kTintGreen;
+    {   // Privacy and Security
+        SPage p; p.name = Tr(L"Privacy and Security", L"Конфиденциальность и безопасность"); p.icon = L"\uE72E"; p.tint = kTintGreen; p.group = 3;
         p.rows.push_back(RHeader(Tr(L"Website data", L"Данные сайтов")));
         p.rows.push_back(RToggle(Tr(L"Local storage", L"Локальное хранилище"),
             Tr(L"Lets sites remember settings and sign-ins.", L"Сайты могут запоминать настройки и входы."),
@@ -428,10 +377,41 @@ void BuildPages() {
                                Tr(L"pages loaded afterwards", L"страниц, открытых после них")));
         g_pages.push_back(std::move(p));
     }
+    {   // Performance
+        SPage p; p.name = Tr(L"Performance", L"Производительность"); p.icon = L"\uEC4A"; p.tint = kTintOrange; p.group = 3;
+        p.rows.push_back(RHeader(Tr(L"Speed", L"Скорость")));
+        p.rows.push_back(RSegmented(Tr(L"Ready tabs", L"Готовые вкладки"),
+            Tr(L"The tabs used last stay drawn, so switching back to them is instant. More uses more memory.",
+               L"Последние открытые вкладки остаются отрисованными — переключение на них мгновенное. Больше — больше памяти."),
+            { Tr(L"Off", L"Выкл."), L"1", L"2", L"4" },
+            []() { return g_prefs.warmTabs >= 4 ? 3 : g_prefs.warmTabs; },
+            [save](int i) { g_prefs.warmTabs = i == 3 ? 4 : i; RefreshLayout(); save(); }));
+        p.rows.push_back(RToggle(Tr(L"Put unused tabs to sleep", L"Усыплять неиспользуемые вкладки"),
+            Tr(L"Tabs not opened for a while are unloaded from memory and load again when you open them.",
+               L"Вкладки, которые давно не открывали, выгружаются из памяти и загружаются снова, когда вы на них переходите."),
+            &g_prefs.sleepTabs, save));
+        p.rows.push_back(RChoice(Tr(L"Sleep after", L"Усыплять через"),
+            Tr(L"Sooner when Windows is short of memory. Never tabs that play sound or have typed text.",
+               L"Раньше, если Windows не хватает памяти. Вкладки со звуком или введённым текстом не усыпляются."),
+            { Tr(L"5 minutes", L"5 минут"), Tr(L"15 minutes", L"15 минут"), Tr(L"30 minutes", L"30 минут"),
+              Tr(L"1 hour", L"1 час"), Tr(L"2 hours", L"2 часа") },
+            []() { return g_prefs.sleepAfter; }, [save](int i) { g_prefs.sleepAfter = i; save(); }));
+        p.rows.push_back(RToggle(Tr(L"Prepare the new tab", L"Готовить новую вкладку заранее"),
+            Tr(L"A start page waits in the background, so a new tab appears at once.",
+               L"Стартовая страница ждёт в фоне, и новая вкладка появляется сразу."),
+            &g_prefs.spareTab, [save]() { if (g_prefs.spareTab) ScheduleSpareTab(300); else DiscardSpareTab(); save(); }));
+        p.rows.push_back(RInfo(Tr(L"Most tabs at once", L"Наибольшее число вкладок"), std::to_wstring(metrics::kMaxTabs)));
+        p.rows.push_back(RInfo(Tr(L"Closing the last tab", L"Закрытие последней вкладки"),
+                               Tr(L"Closes the window", L"Закрывает окно")));
+        g_pages.push_back(std::move(p));
+    }
     {   // Downloads
-        SPage p; p.name = Tr(L"Downloads", L"Загрузки"); p.icon = L"\uE896"; p.tint = kTintBlue;
+        SPage p; p.group = 3;
+        p.name = Tr(L"Downloads", L"Загрузки");
+        p.icon = L"\uE896";
+        p.tint = kTintBlue;
         p.rows.push_back(RHeader(Tr(L"Save files to", L"Куда сохранять")));
-        static std::wstring folder;                      // the row label must outlive the page build
+        static std::wstring folder;
         folder = DownloadsFolder();
         p.rows.push_back(RButton(folder.c_str(),
             g_downloadDir.empty() ? Tr(L"The Windows Downloads folder.", L"Папка «Загрузки» Windows.")
@@ -452,38 +432,80 @@ void BuildPages() {
             []() { OpenDownloads(); }));
         g_pages.push_back(std::move(p));
     }
-    {   // Keyboard
-        SPage p; p.name = Tr(L"Keyboard", L"Клавиатура"); p.icon = L"\uE765"; p.tint = kTintTeal;
-        p.rows.push_back(RHeader(Tr(L"Tabs", L"Вкладки")));
-        p.rows.push_back(RInfo(Tr(L"New tab", L"Новая вкладка"), L"Ctrl+T", true));
-        p.rows.push_back(RInfo(Tr(L"Close tab", L"Закрыть вкладку"), L"Ctrl+W", true));
-        p.rows.push_back(RInfo(Tr(L"Next tab", L"Следующая вкладка"), L"Ctrl+Tab", true));
-        p.rows.push_back(RInfo(Tr(L"Previous tab", L"Предыдущая вкладка"), L"Ctrl+Shift+Tab", true));
-        p.rows.push_back(RInfo(Tr(L"Go to tab 1-8", L"Перейти к вкладке 1–8"), L"Ctrl+1 … 8", true));
-        p.rows.push_back(RInfo(Tr(L"Go to last tab", L"Последняя вкладка"), L"Ctrl+9", true));
-        p.rows.push_back(RInfo(Tr(L"Reopen closed tab", L"Вернуть закрытую вкладку"), L"Ctrl+Shift+T", true));
-        p.rows.push_back(RInfo(Tr(L"Command palette", L"Палитра команд"), L"Ctrl+K", true));
-        p.rows.push_back(RInfo(Tr(L"History", L"История"), L"Ctrl+H", true));
-        p.rows.push_back(RInfo(Tr(L"Bookmarks", L"Закладки"), L"Ctrl+Shift+O", true));
-        p.rows.push_back(RInfo(Tr(L"Bookmark this page", L"Добавить в закладки"), L"Ctrl+D", true));
-        p.rows.push_back(RInfo(Tr(L"Downloads", L"Загрузки"), L"Ctrl+J", true));
-        p.rows.push_back(RInfo(Tr(L"Clear browsing data", L"Очистить данные браузера"), L"Ctrl+Shift+Del", true));
-        p.rows.push_back(RHeader(Tr(L"Navigation", L"Навигация")));
-        p.rows.push_back(RInfo(Tr(L"Address bar", L"Адресная строка"), L"Ctrl+L", true));
-        p.rows.push_back(RInfo(Tr(L"Reload", L"Обновить"), L"Ctrl+R  /  F5", true));
-        p.rows.push_back(RInfo(Tr(L"Back", L"Назад"), L"Alt+←", true));
-        p.rows.push_back(RInfo(Tr(L"Forward", L"Вперёд"), L"Alt+→", true));
-        p.rows.push_back(RHeader(Tr(L"View", L"Вид")));
-        p.rows.push_back(RInfo(Tr(L"Zoom in", L"Увеличить"), L"Ctrl++", true));
-        p.rows.push_back(RInfo(Tr(L"Zoom out", L"Уменьшить"), L"Ctrl+-", true));
-        p.rows.push_back(RInfo(Tr(L"Actual size", L"Исходный размер"), L"Ctrl+0", true));
-        p.rows.push_back(RHeader(Tr(L"Browser", L"Браузер")));
-        p.rows.push_back(RInfo(Tr(L"Settings", L"Настройки"), L"Ctrl+,", true));
-        p.rows.push_back(RInfo(Tr(L"Developer tools", L"Инструменты разработчика"), L"F12  /  Ctrl+Shift+I", true));
+    {   // Webpages
+        SPage p; p.name = Tr(L"Webpages", L"Веб-страницы"); p.icon = L"\uE774"; p.tint = kTintOrange; p.group = 3;
+        p.rows.push_back(RHeader(Tr(L"Content", L"Содержимое")));
+        p.rows.push_back(RToggle(Tr(L"JavaScript", L"JavaScript"),
+            Tr(L"Turning it off breaks most modern websites.", L"Без него не работает большинство современных сайтов."),
+            &g_prefs.js, web));
+        p.rows.push_back(RToggle(Tr(L"Load images", L"Загружать изображения"),
+            Tr(L"Turn off to save data on a slow connection.", L"Отключите, чтобы экономить трафик."), &g_prefs.images, web));
+        p.rows.push_back(RToggle(Tr(L"Allow full screen", L"Разрешить полноэкранный режим"),
+            Tr(L"Lets pages such as video players use the whole screen.", L"Например, для видеоплееров."),
+            &g_prefs.fullscreen, web));
+        p.rows.push_back(RToggle(Tr(L"Web Audio", L"Web Audio"),
+            Tr(L"Has no effect yet: Web Audio is off in this WebKit build.", L"Пока ни на что не влияет: в этой сборке WebKit Web Audio выключен."),
+            &g_prefs.webAudio, web));
+        p.rows.push_back(RHeader(Tr(L"Page zoom", L"Масштаб страниц")));
+        p.rows.push_back(RSlider(Tr(L"Default zoom", L"Масштаб по умолчанию"),
+            Tr(L"Ctrl +, Ctrl - and Ctrl 0 change it too.", L"Также меняется сочетаниями Ctrl +, Ctrl - и Ctrl 0."),
+            25, 300, 5,
+            []() { return (int)std::lround(g_zoom * 100.0); },
+            [](int v) { SetZoom(v / 100.0); },
+            [](int v) { return std::to_wstring(v) + L"%"; }));
+        p.rows.push_back(RHeader(Tr(L"Fonts", L"Шрифты")));
+        p.rows.push_back(RSlider(Tr(L"Default font size", L"Размер шрифта по умолчанию"),
+            Tr(L"For pages that do not set their own.", L"Для страниц, которые не задают свой."), 9, 32, 1,
+            []() { return g_prefs.defaultFont; },
+            [web](int v) { g_prefs.defaultFont = v; web(); },
+            [](int v) { return std::to_wstring(v) + L" px"; }));
+        p.rows.push_back(RSlider(Tr(L"Minimum font size", L"Наименьший размер шрифта"),
+            Tr(L"Smaller text is enlarged. 0 turns it off.", L"Более мелкий текст увеличивается. 0 — выключено."), 0, 24, 1,
+            []() { return g_prefs.minFont; },
+            [web](int v) { g_prefs.minFont = v; web(); },
+            [](int v) { return v == 0 ? std::wstring(Tr(L"Off", L"Выкл.")) : std::to_wstring(v) + L" px"; }));
+        p.rows.push_back(RHeader(Tr(L"Spelling", L"Орфография")));
+        p.rows.push_back(RToggle(Tr(L"Check spelling", L"Проверять орфографию"),
+            WKTextCheckerIsContinuousSpellCheckingAllowed()
+                ? Tr(L"Misspelled words in text fields are underlined; right-click one for corrections. Uses the Windows dictionaries (English, Russian and your Windows languages).",
+                     L"Слова с ошибками в полях ввода подчёркиваются, правый клик по слову — варианты исправления. Словари Windows: английский, русский и языки Windows.")
+                : Tr(L"Windows has no spelling dictionaries here (Settings > Time & language > Language).",
+                     L"В Windows не установлены словари (Параметры > Время и язык > Язык)."),
+            &g_prefs.spellCheck, []() { SaveSettings(); WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck); }));
+        p.rows.push_back(RHeader(Tr(L"Translation", L"Перевод")));
+        {
+            std::vector<std::wstring> langs;
+            for (const auto& l : TranslateLanguages()) langs.push_back(l.name);
+            langs[0] = Tr(L"Lyra's language", L"Язык Lyra");
+            p.rows.push_back(RChoice(Tr(L"Translate into", L"Переводить на"),
+                Tr(L"Pages in other languages show a translate icon in the address field.",
+                   L"На страницах на других языках в адресной строке появляется значок перевода."),
+                langs,
+                []() { return g_prefs.translateTarget; },
+                [save](int i) { g_prefs.translateTarget = i; save(); }));
+        }
+        p.rows.push_back(RChoice(Tr(L"Service", L"Сервис"),
+            Tr(L"Google needs nothing; DeepL needs your own API key (DeepL API Free: 500,000 characters a month).",
+               L"Google работает сразу; DeepL — со своим ключом API (DeepL API Free: 500 000 символов в месяц)."),
+            { Tr(L"Google (no key)", L"Google (без ключа)"), Tr(L"DeepL (API key)", L"DeepL (ключ API)") },
+            []() { return g_prefs.translateService; },
+            [save](int i) { g_prefs.translateService = i; save(); }));
+        p.rows.push_back(RText(Tr(L"DeepL API key", L"Ключ DeepL API"),
+            Tr(L"Kept encrypted for your Windows account. Free keys end with :fx.",
+               L"Хранится зашифрованным для вашей учётной записи Windows. Бесплатные ключи заканчиваются на :fx."),
+            []() { return TranslateGetDeepLKey(); },
+            [](const std::wstring& s) { TranslateSetDeepLKey(s); }));
+        p.rows.push_back(RHeader(Tr(L"Developer", L"Для разработчиков")));
+        p.rows.push_back(RToggle(Tr(L"Developer tools", L"Инструменты разработчика"),
+            Tr(L"F12 and Inspect Element in the page menu.", L"F12 и «Просмотреть код» в меню страницы."),
+            &g_prefs.devExtras, web));
         g_pages.push_back(std::move(p));
     }
     {   // About
-        SPage p; p.name = Tr(L"About", L"О программе"); p.icon = L"\uE946"; p.tint = kTintGraphite;
+        SPage p; p.group = 4;
+        p.name = Tr(L"About", L"О программе");
+        p.icon = L"\uE946";
+        p.tint = kTintGraphite;
         p.rows.push_back(RHeader(kAppName));
         p.rows.push_back(RInfo(Tr(L"Engine", L"Движок"), L"WebKit"));
         p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), LYRA_VERSION_WSTR));

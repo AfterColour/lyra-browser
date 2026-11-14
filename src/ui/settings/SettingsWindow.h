@@ -1,23 +1,19 @@
-// Lyra — окно настроек: отрисовка, прокрутка, мышь и клавиатура.
+// Lyra - the settings window: resources/settings.html showing the pages of SettingsPages.cpp.
 #pragma once
 
 #include "common/Platform.h"
 #include "ui/settings/SettingsModel.h"
 
-extern HWND g_setHwnd;
+extern HWND g_setHwnd;                // the window while it is open
+extern std::vector<SPage> g_pages;    // built by BuildPages() (SettingsPages.cpp)
 
-// ---- state -----------------------------------------------------------------
-constexpr int SET_ID_SEARCH = 2001;
-constexpr int SET_ID_EDIT   = 2002;
-static const wchar_t kSetClass[] = L"LyraSettingsWindow";
-
-extern std::vector<SPage> g_pages;
-
-struct SGeo { float W, H, sideW, headerH, vpY, vpH, colX, colW; };
-
-void SettingsThemeChanged();
 void ShowSettingsWindow();
-// Shows page `index` (also a detail page, see SPage::parent).
+// Shows page `index` (also a detail page, see SPage::parent), opening the window if needed.
 void SettingsOpenPage(int index);
-// The interface language changed: rebuild the pages with the new strings.
+// The pages must be built again (language changed, a list changed): rebuilt and re-sent shortly,
+// never inside the caller (it may be a row of the pages being rebuilt).
 void SettingsLanguageChanged();
+// A value changed outside the window (updater status...): the page is sent the current values.
+void SettingsRefresh();
+// Light/dark or the accent colour changed.
+void SettingsThemeChanged();

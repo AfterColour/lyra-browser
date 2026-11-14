@@ -1,0 +1,795 @@
+<!doctype html>
+<!--
+  Lyra's settings window (ui/settings/SettingsWindow.cpp). Lyra loads this page as
+  file:///<Lyra folder>/resources/settings.html?dark=..&ru=.. into a window of its own and then
+  calls lyraSettings(<model>) with every page and row (ui/settings/SettingsPages.cpp) and their
+  current values, again after every change. The page answers with lyra://settings-... addresses,
+  sent through short-lived hidden frames so quick changes never cancel each other:
+    settings-ready, settings-set?p=&r=&v=, settings-text?p=&r=&s=, settings-press?p=&r=,
+    settings-page?i=, settings-start?cfg=, settings-start-file, settings-close.
+  lyraOpenPage(i) shows a page (Lyra's menu items such as "Saved passwords" use it).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<script>
+// Colours before the first paint, so the window never flashes.
+(function () {
+  var q = new URLSearchParams(location.search), d = q.get("dark") === "1";
+  document.documentElement.dataset.theme = d ? "dark" : "light";
+  document.documentElement.style.background = d ? "#1C1C1F" : "#F4F4F6";
+  document.documentElement.style.colorScheme = d ? "dark" : "light";
+})();
+</script>
+<title>Settings</title>
+<style>
+  :root {
+    --bg: #F4F4F6; --side: #EBEBEF; --card: #FFFFFF; --line: rgba(0,0,0,.075); --line2: rgba(0,0,0,.12);
+    --text: #1D1D1F; --text2: #6E6E73; --text3: #9A9AA1; --field: #E8E8ED; --field2: #DCDCE2; --hover: rgba(0,0,0,.045);
+    --knob: #FFFFFF; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 0 0 .5px rgba(0,0,0,.04);
+    --accent: #7B61FF; --accent-text: #FFFFFF;
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.3, 1.35, .5, 1);
+  }
+  :root[data-theme="dark"] {
+    --bg: #1C1C1F; --side: #232327; --card: #2A2A2F; --line: rgba(255,255,255,.07); --line2: rgba(255,255,255,.12);
+    --text: #F2F2F5; --text2: rgba(235,235,245,.6); --text3: rgba(235,235,245,.38); --field: #3A3A40; --field2: #47474E;
+    --hover: rgba(255,255,255,.06); --knob: #F4F4F6; --shadow: 0 0 0 .5px rgba(255,255,255,.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { display: flex; background: var(--bg); color: var(--text); -webkit-user-select: none; user-select: none;
+         font: 13.5px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; -webkit-appearance: none; appearance: none; }
+  input { font: inherit; color: inherit; }
+  .ico { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-style: normal; line-height: 1; }
+  .noanim *, .noanim *::before, .noanim *::after { transition: none !important; animation: none !important; }
+
+  /* ---- sidebar ----------------------------------------------------------------------------- */
+  #side { width: 264px; flex: none; display: flex; flex-direction: column; background: var(--side);
+          box-shadow: inset -1px 0 0 var(--line); }
+  .search { position: relative; margin: 14px 14px 10px; }
+  .search .ico { position: absolute; left: 11px; top: 50%; margin-top: -7px; font-size: 13px; color: var(--text3); pointer-events: none; }
+  .search input { width: 100%; height: 34px; border: 0; outline: none; border-radius: 10px; padding: 0 30px 0 33px;
+                  background: var(--field); transition: box-shadow .2s var(--ease), background .2s; }
+  .search input::placeholder { color: var(--text3); }
+  .search input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); background: var(--card); }
+  .search .clear { position: absolute; right: 7px; top: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--text3);
+                   color: var(--bg); font-size: 9px; display: none; align-items: center; justify-content: center; }
+  .search.has .clear { display: flex; }
+  #nav { position: relative; flex: 1; overflow-y: auto; padding: 4px 10px 16px; }
+  #nav .pill { position: absolute; left: 10px; right: 10px; height: 36px; border-radius: 9px; background: var(--accent);
+               box-shadow: 0 4px 14px -6px var(--accent); opacity: 0;
+               transition: top .42s var(--spring), opacity .2s; }
+  #nav .gap { height: 14px; }
+  .item { position: relative; z-index: 1; display: flex; align-items: center; gap: 11px; width: 100%; height: 36px; padding: 0 9px;
+          border-radius: 9px; text-align: left; transition: background .18s, color .25s, opacity .25s; }
+  .item:hover { background: var(--hover); }
+  .item.on { color: var(--accent-text); background: transparent; }
+  .item .tile { width: 24px; height: 24px; border-radius: 7px; flex: none; display: flex; align-items: center; justify-content: center;
+                color: #fff; font-size: 13px; box-shadow: inset 0 -1px 0 rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.22); }
+  .item.on .tile { box-shadow: 0 0 0 1.5px rgba(255,255,255,.55); }
+  .item span.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .item.dim { opacity: .32; }
+  .item .count { margin-left: auto; font-size: 11.5px; color: var(--text3); }
+  .item.on .count { color: rgba(255,255,255,.8); }
+
+  /* ---- main ----------------------------------------------------------------------------------- */
+  #main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+  #scroll::-webkit-scrollbar, #nav::-webkit-scrollbar { width: 10px; }
+  #scroll::-webkit-scrollbar-thumb, #nav::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+  #content { max-width: 720px; margin: 0 auto; padding: 26px 36px 60px; }
+  #content.in { animation: pageIn .38s var(--ease); }
+  #content.in-right { animation: pageRight .4s var(--ease); }
+  #content.in-left { animation: pageLeft .4s var(--ease); }
+  @keyframes pageIn { from { opacity: 0; transform: translateY(8px); } }
+  @keyframes pageRight { from { opacity: 0; transform: translateX(28px); } }
+  @keyframes pageLeft { from { opacity: 0; transform: translateX(-28px); } }
+  .title { display: flex; align-items: center; gap: 12px; margin: 0 0 22px; }
+  .title h1 { margin: 0; font: 600 26px/1.15 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: -.01em; }
+  .title .tile { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: #fff;
+                 font-size: 18px; box-shadow: inset 0 -1px 0 rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.22); }
+  .back { height: 30px; padding: 0 10px 0 6px; margin-left: -8px; border-radius: 8px; display: flex; align-items: center; gap: 2px;
+          color: var(--accent); font-weight: 500; transition: background .15s; }
+  .back:hover { background: var(--hover); }
+  .back svg { width: 18px; height: 18px; }
+  .crumb { color: var(--text3); font-weight: 400; }
+
+  .grp { margin: 0 0 6px 4px; font-size: 12.5px; font-weight: 600; color: var(--text2); }
+  .card { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 22px; overflow: hidden; }
+  .row { position: relative; display: flex; align-items: center; gap: 18px; min-height: 50px; padding: 11px 16px; }
+  .row + .row::before { content: ""; position: absolute; left: 16px; right: 0; top: 0; height: 1px; background: var(--line); }
+  .row.flash { animation: flash 1.6s var(--ease); }
+  @keyframes flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 16%, transparent); } }
+  .row .txt { flex: 1; min-width: 0; }
+  .row .l { font-weight: 500; }
+  .row .d { margin-top: 2px; font-size: 12.3px; color: var(--text2); line-height: 1.38; }
+  .row.wide { flex-direction: column; align-items: stretch; gap: 12px; }
+  .row.wide .head { display: flex; align-items: baseline; gap: 10px; }
+  .row.wide .head .sel { margin-left: auto; color: var(--text2); font-size: 12.5px; }
+  mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+  /* toggle */
+  .tog { position: relative; width: 40px; height: 24px; flex: none; border-radius: 12px; background: var(--field2);
+         transition: background .28s var(--ease); }
+  .tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--knob);
+                box-shadow: 0 1px 3px rgba(0,0,0,.28), 0 0 0 .5px rgba(0,0,0,.04); transition: left .36s var(--spring), width .2s var(--ease); }
+  .tog.on { background: var(--accent); }
+  .tog.on::after { left: 18px; }
+  .tog:active::after { width: 24px; }
+  .tog.on:active::after { left: 14px; }
+  .gearbtn { height: 28px; padding: 0 10px; border-radius: 8px; color: var(--text2); display: flex; align-items: center; gap: 6px;
+             font-size: 12.5px; transition: background .15s, color .15s; }
+  .gearbtn:hover { background: var(--hover); color: var(--text); }
+  .gearbtn .ico { font-size: 12px; }
+
+  /* segmented */
+  .seg { position: relative; display: flex; flex: none; padding: 2px; border-radius: 9px; background: var(--field); }
+  .seg .thumb { position: absolute; top: 2px; bottom: 2px; border-radius: 7px; background: var(--card);
+                box-shadow: 0 1px 3px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.05); transition: left .38s var(--spring), width .38s var(--spring); }
+  :root[data-theme="dark"] .seg .thumb { background: #5A5A62; }
+  .seg button { position: relative; z-index: 1; height: 28px; padding: 0 14px; border-radius: 7px; font-size: 12.8px; white-space: nowrap;
+                color: var(--text2); transition: color .2s; }
+  .seg button.on { color: var(--text); font-weight: 500; }
+
+  /* pop-up button + menu */
+  .pop { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px 0 12px; border-radius: 8px; flex: none;
+         background: var(--field); max-width: 280px; transition: background .15s; }
+  .pop:hover { background: var(--field2); }
+  .pop span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pop svg { width: 10px; height: 14px; flex: none; color: var(--text2); }
+  #menu { position: fixed; z-index: 20; min-width: 180px; max-height: 340px; overflow-y: auto; padding: 5px; border-radius: 11px;
+          background: var(--card); box-shadow: 0 0 0 .5px var(--line2), 0 18px 50px -12px rgba(0,0,0,.45);
+          opacity: 0; transform: scale(.96) translateY(-4px); transform-origin: top; pointer-events: none;
+          transition: opacity .16s var(--ease), transform .22s var(--spring); }
+  #menu.open { opacity: 1; transform: none; pointer-events: auto; }
+  #menu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 10px 0 6px; border-radius: 7px; text-align: left; white-space: nowrap; }
+  #menu button .ck { width: 16px; font-size: 11px; color: var(--accent); }
+  #menu button:hover, #menu button.kb { background: var(--accent); color: var(--accent-text); }
+  #menu button:hover .ck, #menu button.kb .ck { color: var(--accent-text); }
+
+  /* slider */
+  .sld { display: flex; align-items: center; gap: 12px; flex: none; width: 260px; }
+  .sld .tr { position: relative; flex: 1; height: 22px; cursor: default; touch-action: none; }
+  .sld .tr::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 2px; background: var(--field2); }
+  .sld .fill { position: absolute; left: 0; top: 9px; height: 4px; border-radius: 2px; background: var(--accent); }
+  .sld .th { position: absolute; top: 1px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: var(--knob);
+             box-shadow: 0 1px 4px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.06); transition: width .15s, height .15s, top .15s, margin .15s; }
+  .sld .tr.drag .th { width: 24px; height: 24px; top: -1px; margin-left: -12px; }
+  .sld .tr.glide .fill { transition: width .3s var(--ease); }
+  .sld .tr.glide .th { transition: left .3s var(--ease); }
+  .sld .val { width: 64px; text-align: right; color: var(--text2); font-variant-numeric: tabular-nums; font-size: 12.8px; }
+
+  /* text */
+  .txtin { width: 300px; flex: none; height: 30px; border: 0; outline: none; border-radius: 8px; padding: 0 10px; background: var(--field);
+           -webkit-user-select: text; user-select: text; transition: box-shadow .2s var(--ease), background .2s; }
+  .txtin:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); background: var(--card); }
+
+  /* buttons, info */
+  .btn { flex: none; height: 30px; padding: 0 14px; border-radius: 8px; background: var(--field); font-weight: 500; white-space: nowrap;
+         transition: background .15s, box-shadow .15s; }
+  .btn:hover { background: var(--field2); }
+  .btn:active { box-shadow: inset 0 0 0 100px rgba(0,0,0,.08); }
+  .btn.danger { color: #E5484D; }
+  .info { flex: none; max-width: 60%; color: var(--text2); text-align: right; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+  .keys { display: flex; align-items: center; gap: 4px; flex: none; color: var(--text3); font-size: 12px; }
+  kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 6px;
+        font: 500 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); background: var(--field);
+        box-shadow: inset 0 -1.5px 0 var(--line2); }
+
+  /* picture cards (theme, tab layout) */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .cardopt { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .cardopt .pv { position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden;
+                 box-shadow: 0 0 0 1px var(--line2); transition: box-shadow .25s var(--ease); }
+  .cardopt:hover .pv { box-shadow: 0 0 0 1px var(--line2), 0 8px 20px -10px rgba(0,0,0,.35); }
+  .cardopt.on .pv { box-shadow: 0 0 0 2.5px var(--accent), 0 8px 22px -10px var(--accent); }
+  .cardopt .cap { font-size: 12.5px; color: var(--text2); transition: color .2s; }
+  .cardopt.on .cap { color: var(--text); font-weight: 600; }
+  /* mini windows */
+  .mw { position: absolute; inset: 0; }
+  .mw .bar { position: absolute; left: 0; right: 0; top: 0; height: 26%; }
+  .mw .tabs { position: absolute; display: flex; gap: 3px; }
+  .mw .tabs i { display: block; border-radius: 3px; }
+  .mw .addr { position: absolute; border-radius: 4px; }
+  .mw .pg { position: absolute; border-radius: 3px; }
+
+  /* swatches */
+  .sw { display: flex; flex-wrap: wrap; gap: 12px; }
+  .sw button { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+               transition: box-shadow .3s var(--spring); }
+  .sw button.on { box-shadow: 0 0 0 2.5px var(--card), 0 0 0 4.5px currentColor; }
+  .sw button.win { background-image: conic-gradient(from 0deg, #E5484D, #F5A524, #46A758, #3E63DD, #8E4EC6, #E5484D) !important; }
+
+  /* wallpapers (Start Page) */
+  .walls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .wall { position: relative; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; background-size: cover; background-position: center;
+          box-shadow: 0 0 0 1px var(--line2); transition: box-shadow .25s var(--ease); }
+  .wall:hover { box-shadow: 0 0 0 1px var(--line2), 0 8px 20px -10px rgba(0,0,0,.4); }
+  .wall.on { box-shadow: 0 0 0 2.5px var(--accent), 0 8px 22px -10px var(--accent); }
+  .wall span { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .wall.light span { color: #2a2440; text-shadow: none; }
+  .wall.empty { background: var(--field); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 20px; }
+  .wall.empty span { color: var(--text2); text-shadow: none; }
+  .wp-night   { background-image: radial-gradient(ellipse 70% 55% at 50% 40%, rgba(120,90,230,.30), transparent 70%), linear-gradient(160deg, #141032, #2C1A58); }
+  .wp-aurora  { background-image: radial-gradient(ellipse 60% 45% at 18% 0%, rgba(60,220,160,.42), transparent 70%), radial-gradient(ellipse 55% 50% at 85% 15%, rgba(120,90,255,.45), transparent 70%), linear-gradient(180deg, #071a24, #0b0f2a); }
+  .wp-dusk    { background-image: linear-gradient(180deg, #2b1b4f 0%, #5d2b68 42%, #c45f62 78%, #f0a874 100%); }
+  .wp-ocean   { background-image: radial-gradient(ellipse 80% 50% at 50% 115%, rgba(40,140,200,.75), transparent 70%), linear-gradient(180deg, #04121f, #0a2a45); }
+  .wp-morning { background-image: radial-gradient(ellipse 60% 50% at 80% 0%, rgba(255,214,170,.7), transparent 70%), linear-gradient(160deg, #fdf6ec, #f3e3f1 50%, #dfe9fb); }
+  .wp-plain   { background-color: #18191C; }
+  :root:not([data-theme="dark"]) .wp-plain { background-color: #F2F3F5; }
+
+  .empty-res { text-align: center; color: var(--text2); margin-top: 90px; }
+  .empty-res .ico { display: block; font-size: 34px; color: var(--text3); margin-bottom: 14px; }
+  .res-page { display: flex; align-items: center; gap: 9px; margin: 0 0 8px 2px; font-weight: 600; font-size: 13px; }
+  .res-page .tile { width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+  .res-page button { color: var(--accent); font-weight: 500; font-size: 12.5px; margin-left: 4px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="search" id="searchBox"><i class="ico">&#xE721;</i><input id="q" spellcheck="false" autocomplete="off"><button class="clear" id="clear"><i class="ico">&#xE711;</i></button></div>
+  <nav id="nav"><div class="pill" id="pill"></div></nav>
+</aside>
+<main id="main">
+  <div id="scroll"><div id="content"></div></div>
+</main>
+<div id="menu"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const q0 = new URLSearchParams(location.search);
+
+const STR = {
+  en: { search: "Search settings", results: "Search results", none: "Nothing matches", noneHint: "Try other words.", back: "Back", open: "Open",
+        night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture",
+        dim: "Darken", dimD: "Makes the wallpaper darker so the widgets stand out.", auto: "Automatic", free: "Free",
+        autoD: "Widgets line up by themselves and close the gaps.", freeD: "Widgets stay exactly where you put them.", details: "Details" },
+  ru: { search: "Поиск настроек", results: "Результаты поиска", none: "Ничего не найдено", noneHint: "Попробуйте другие слова.", back: "Назад", open: "Открыть",
+        night: "Ночное небо", aurora: "Сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка",
+        dim: "Затемнение", dimD: "Делает обои темнее, чтобы виджеты были заметнее.", auto: "Автоматически", free: "Свободно",
+        autoD: "Виджеты выстраиваются сами и закрывают пустоты.", freeD: "Виджеты остаются ровно там, где вы их оставили.", details: "Подробнее" }
+};
+let model = null, cur = -1, query = "", sig = "", sideSig = "", startCfg = null;
+const s = () => (model && model.ru) || q0.get("ru") === "1" ? STR.ru : STR.en;
+
+// ---- talking to Lyra: one hidden frame per message (a new location.href could cancel the last one)
+function send(cmd, params) {
+  const f = document.createElement("iframe");
+  f.style.display = "none";
+  f.src = "lyra://settings-" + cmd + (params ? "?" + params : "");
+  document.body.appendChild(f);
+  setTimeout(() => f.remove(), 1500);
+}
+const setRow = (p, r, v) => { if (p >= 0) send("set", "p=" + p + "&r=" + r + "&v=" + v); };   // p < 0: a row of the page itself
+
+// ---- icons ---------------------------------------------------------------------------------------
+const CHEV = '<svg viewBox="0 0 10 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l3-3 3 3M2 9l3 3 3-3"/></svg>';
+const BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>';
+const tileHtml = (pg, cls) => '<span class="' + (cls || "tile") + '" style="background:linear-gradient(160deg,' + lighten(pg.c, 18) + ',' + pg.c + ')"><i class="ico">' + esc(pg.i) + "</i></span>";
+function lighten(hex, amt) {
+  const n = parseInt(hex.slice(1), 16), f = (c) => Math.min(255, c + amt);
+  return "rgb(" + f(n >> 16) + "," + f((n >> 8) & 255) + "," + f(n & 255) + ")";
+}
+
+// ---- the sidebar ---------------------------------------------------------------------------------
+function sidePageOf(i) { let p = i; while (p >= 0 && model.pages[p].p >= 0) p = model.pages[p].p; return p; }
+function buildSide() {
+  const nav = $("nav"), pill = $("pill");
+  nav.textContent = ""; nav.appendChild(pill);
+  let lastGroup = null;
+  model.pages.forEach((pg, i) => {
+    if (pg.p >= 0) return;
+    if (lastGroup !== null && pg.g !== lastGroup) nav.appendChild(el("div", "gap"));
+    lastGroup = pg.g;
+    const b = el("button", "item", tileHtml(pg) + '<span class="n">' + esc(pg.n) + '</span><span class="count"></span>');
+    b.dataset.i = i;
+    b.addEventListener("click", () => { if (query) clearSearch(); openPage(i); });
+    nav.appendChild(b);
+  });
+}
+function markSide(animate) {
+  const sp = query ? -1 : sidePageOf(cur), pill = $("pill");
+  let on = null;
+  document.querySelectorAll("#nav .item").forEach((b) => { const yes = +b.dataset.i === sp; b.classList.toggle("on", yes); if (yes) on = b; });
+  if (on) {
+    if (!animate) { pill.style.transition = "none"; requestFrame(() => (pill.style.transition = "")); }
+    pill.style.top = on.offsetTop + "px";
+    pill.style.opacity = "1";
+  } else pill.style.opacity = "0";
+}
+const requestFrame = (f) => setTimeout(f, 30);
+
+// ---- rows ----------------------------------------------------------------------------------------
+// Every control knows how to show a new value (update) so a fresh model never rebuilds the page.
+function rowText(r, hl) {
+  const mk = (t) => hl ? highlight(t, hl) : esc(t);
+  return '<div class="txt"><div class="l">' + mk(r.l) + "</div>" + (r.d ? '<div class="d">' + mk(r.d) + "</div>" : "") + "</div>";
+}
+function highlight(text, q) {
+  const low = text.toLocaleLowerCase(), i = low.indexOf(q);
+  if (i < 0) return esc(text);
+  return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + q.length)) + "</mark>" + esc(text.slice(i + q.length));
+}
+
+function makeRow(p, ri, r, hl) {
+  const row = el("div", "row", rowText(r, hl));
+  row.dataset.key = p + ":" + ri;
+  let update = () => {};
+  const setDesc = (d) => {
+    let dn = row.querySelector(".d");
+    if (!d) { if (dn) dn.remove(); return; }
+    if (!dn) { dn = el("div", "d"); row.querySelector(".txt").appendChild(dn); }
+    if (dn.textContent !== d) dn.textContent = d;
+  };
+  switch (r.t) {
+  case "toggle": case "gear": {
+    if (r.t === "gear") {
+      const g = el("button", "gearbtn", '<i class="ico">&#xE713;</i>' + esc(s().details));
+      g.addEventListener("click", () => send("press", "p=" + p + "&r=" + ri));
+      row.appendChild(g);
+    }
+    const t = el("button", "tog" + (r.v ? " on" : ""));
+    let v = r.v;
+    t.addEventListener("click", () => { v = v ? 0 : 1; t.classList.toggle("on", !!v); setRow(p, ri, v); });
+    row.appendChild(t);
+    update = (n) => { v = n.v; t.classList.toggle("on", !!v); };
+    break;
+  }
+  case "seg": {
+    const box = el("div", "seg"), thumb = el("div", "thumb");
+    box.appendChild(thumb);
+    const btns = r.o.map((o, i) => {
+      const b = el("button", "", esc(o));
+      b.addEventListener("click", () => { place(i, true); setRow(p, ri, i); });
+      box.appendChild(b); return b;
+    });
+    let at = r.v;
+    const place = (i, anim) => {
+      at = i;
+      btns.forEach((b, k) => b.classList.toggle("on", k === i));
+      const b = btns[i]; if (!b) return;
+      if (!anim) { thumb.style.transition = "none"; requestFrame(() => (thumb.style.transition = "")); }
+      thumb.style.left = b.offsetLeft + "px"; thumb.style.width = b.offsetWidth + "px";
+    };
+    row.appendChild(box);
+    requestFrame(() => place(at, false));
+    update = (n) => place(n.v, true);
+    break;
+  }
+  case "choice": {
+    const b = el("button", "pop", "<span></span>" + CHEV);
+    let v = r.v;
+    const show = () => (b.firstChild.textContent = r.o[v] != null ? r.o[v] : "");
+    show();
+    b.addEventListener("click", () => openMenu(b, r.o, v, (i) => { v = i; show(); setRow(p, ri, i); }));
+    row.appendChild(b);
+    update = (n) => { v = n.v; r = n; show(); };
+    break;
+  }
+  case "slider": {
+    const box = el("div", "sld", '<div class="tr"><div class="fill"></div><div class="th"></div></div><div class="val"></div>');
+    const tr = box.querySelector(".tr"), fill = box.querySelector(".fill"), th = box.querySelector(".th"), val = box.querySelector(".val");
+    let v = r.v, timer = 0;
+    const show = (x) => {
+      const f = (x - r.min) / (r.max - r.min) * 100;
+      fill.style.width = f + "%"; th.style.left = f + "%";
+      val.textContent = r.f[Math.round((x - r.min) / r.step)] || "";
+    };
+    const at = (ev) => {
+      const rc = tr.getBoundingClientRect();
+      const f = Math.max(0, Math.min(1, (ev.clientX - rc.left) / rc.width));
+      return Math.round((r.min + f * (r.max - r.min)) / r.step) * r.step;
+    };
+    tr.addEventListener("pointerdown", (ev) => {
+      tr.setPointerCapture(ev.pointerId); tr.classList.add("drag", "glide");
+      v = at(ev); show(v);
+      setTimeout(() => tr.classList.remove("glide"), 300);
+      const move = (e) => {
+        const n = at(e); if (n === v) return; v = n; show(v);
+        clearTimeout(timer); timer = setTimeout(() => setRow(p, ri, v), 120);
+      };
+      const up = () => {
+        tr.removeEventListener("pointermove", move); tr.removeEventListener("pointerup", up);
+        tr.classList.remove("drag"); clearTimeout(timer); setRow(p, ri, v);
+      };
+      tr.addEventListener("pointermove", move); tr.addEventListener("pointerup", up);
+    });
+    show(v);
+    row.appendChild(box);
+    update = (n) => { if (!tr.classList.contains("drag")) { if (n.f) r = n; v = n.v; show(v); } };
+    break;
+  }
+  case "text": {
+    const inp = el("input", "txtin");
+    inp.value = r.s; inp.spellcheck = false;
+    let last = r.s;
+    const commit = () => { if (inp.value !== last) { last = inp.value; send("text", "p=" + p + "&r=" + ri + "&s=" + encodeURIComponent(inp.value)); } };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { commit(); inp.blur(); }
+      else if (e.key === "Escape") { inp.value = last; inp.blur(); e.stopPropagation(); }
+    });
+    inp.addEventListener("blur", commit);
+    row.appendChild(inp);
+    update = (n) => { if (document.activeElement !== inp) { inp.value = n.s; last = n.s; } };
+    break;
+  }
+  case "button": {
+    const b = el("button", "btn");
+    const show = (n) => { b.textContent = n.b; b.style.display = n.b ? "" : "none"; b.classList.toggle("danger", /^(Reset all|Сбросить все|Clear the chosen)/.test(n.l) || n.l.indexOf("выбранные данные") >= 0); };
+    show(r);
+    b.addEventListener("click", () => send("press", "p=" + p + "&r=" + ri));
+    row.appendChild(b);
+    update = (n) => { show(n); setDesc(n.d); };
+    break;
+  }
+  case "info":
+    if (r.kbd) row.appendChild(keysEl(r.r));
+    else { const i = el("div", "info"); i.textContent = r.r; row.appendChild(i); update = (n) => (i.textContent = n.r); }
+    break;
+  case "cards": return cardsRow(p, ri, r, hl);
+  case "swatch": return swatchRow(p, ri, r, hl);
+  case "custom": return customRow(r);
+  }
+  const base = update;
+  return { el: row, update: (n) => { base(n); if (n.t !== "button") setDesc(n.d); } };
+}
+
+function keysEl(text) {
+  const box = el("div", "keys");
+  text.split(/\s+\/\s+/).forEach((alt, ai) => {
+    if (ai) box.appendChild(el("span", "", "/"));
+    const parts = alt === "Ctrl++" ? ["Ctrl", "+"] : alt.split("+").filter((x, i, a) => x || i === a.length - 1);
+    parts.forEach((k) => box.appendChild(el("kbd", "", esc(k || "+"))));
+  });
+  return box;
+}
+
+function cardsRow(p, ri, r, hl) {
+  const row = el("div", "row wide", '<div class="head"><div class="l">' + (hl ? highlight(r.l, hl) : esc(r.l)) + "</div></div>");
+  row.dataset.key = p + ":" + ri;
+  const grid = el("div", "cards");
+  const opts = r.o.map((o, i) => {
+    const c = el("button", "cardopt", '<div class="pv">' + preview(r.k, i) + '</div><div class="cap">' + esc(o) + "</div>");
+    c.addEventListener("click", () => { mark(i); setRow(p, ri, i); });
+    grid.appendChild(c); return c;
+  });
+  const mark = (v) => opts.forEach((c, k) => c.classList.toggle("on", k === v));
+  mark(r.v);
+  row.appendChild(grid);
+  return { el: row, update: (n) => mark(n.v) };
+}
+
+// Small drawings of the window: k 0 = theme (as in Windows / light / dark), 1 = tab layout.
+function preview(k, i) {
+  const L = { bg: "#F3F3F6", bar: "#E4E4EA", tab: "#FFFFFF", addr: "#FFFFFF", pg: "#E7E7EC", acc: "var(--accent)" };
+  const D = { bg: "#202024", bar: "#2C2C31", tab: "#3B3B42", addr: "#3B3B42", pg: "#2C2C31", acc: "var(--accent)" };
+  const win = (c, layout) => {
+    if (layout === 2) return '<div class="mw" style="background:' + c.bg + '">' +
+      '<div class="pg" style="left:0;top:0;bottom:0;width:26%;border-radius:0;background:' + c.bar + '"></div>' +
+      [0, 1, 2, 3].map((n) => '<div class="pg" style="left:5%;width:16%;height:7%;top:' + (12 + n * 11) + '%;background:' + (n === 0 ? c.acc : c.tab) + '"></div>').join("") +
+      '<div class="addr" style="left:31%;right:6%;top:8%;height:9%;background:' + c.addr + '"></div>' +
+      '<div class="pg" style="left:31%;right:6%;top:25%;bottom:8%;background:' + c.pg + '"></div></div>';
+    const two = layout === 1;
+    let h = '<div class="mw" style="background:' + c.bg + '"><div class="bar" style="height:' + (two ? 36 : 22) + '%;background:' + c.bar + '"></div>';
+    h += [0, 1, 2].map((n) => '<div class="pg" style="top:' + (two ? 6 : 6) + '%;height:' + (two ? 11 : 10) + '%;left:' + (two ? 5 + n * 19 : 40 + n * 17) + '%;width:' + (two ? 17 : 15) + '%;background:' + (n === 0 ? c.acc : c.tab) + '"></div>').join("");
+    h += '<div class="addr" style="left:5%;width:' + (two ? 90 : 32) + '%;top:' + (two ? 21 : 6) + '%;height:10%;background:' + c.addr + '"></div>';
+    h += '<div class="pg" style="left:5%;right:5%;top:' + (two ? 44 : 30) + '%;bottom:8%;background:' + c.pg + '"></div></div>';
+    return h;
+  };
+  if (k === 1) return win(model.dark ? D : L, i);
+  if (i === 0) return '<div class="mw" style="clip-path:polygon(0 0,100% 0,0 100%)">' + win(L, 0) + '</div><div class="mw" style="clip-path:polygon(100% 0,100% 100%,0 100%)">' + win(D, 0) + "</div>";
+  return win(i === 1 ? L : D, 0);
+}
+
+function swatchRow(p, ri, r, hl) {
+  const row = el("div", "row wide", '<div class="head"><div class="l">' + (hl ? highlight(r.l, hl) : esc(r.l)) + '</div><div class="sel"></div></div>');
+  row.dataset.key = p + ":" + ri;
+  const box = el("div", "sw"), sel = row.querySelector(".sel");
+  const btns = r.c.map((c, i) => {
+    const b = el("button", i === 0 ? "win" : "");
+    b.style.background = c; b.style.color = c; b.title = r.o[i] || "";
+    b.addEventListener("click", () => { mark(i); setRow(p, ri, i); });
+    box.appendChild(b); return b;
+  });
+  const mark = (v) => { btns.forEach((b, k) => b.classList.toggle("on", k === v)); sel.textContent = r.o[v] || ""; };
+  mark(r.v);
+  row.appendChild(box);
+  return { el: row, update: (n) => mark(n.v) };
+}
+
+// ---- Start Page rows: the start page keeps these in its own file (start.json) --------------------
+const BUILTIN = ["night", "aurora", "dusk", "ocean", "morning", "plain"];
+function wpParams() { return new URLSearchParams((model.wpq || "").replace(/^&/, "")); }
+function ensureStart() {
+  if (!startCfg || typeof startCfg !== "object") startCfg = { v: 1 };
+  startCfg.wallpaper = startCfg.wallpaper || { kind: "builtin", id: "night", dim: 0 };
+  return startCfg;
+}
+function saveStart() { send("start", "cfg=" + encodeURIComponent(JSON.stringify(startCfg))); }
+function customRow(r) {
+  if (r.k === "start-wallpaper") return wallpaperRow(r);
+  if (r.k === "start-layout") return layoutRow(r);
+  return { el: el("div"), update() {} };
+}
+function wallpaperRow(r) {
+  const row = el("div", "row wide");
+  const grid = el("div", "walls");
+  const tiles = {};
+  const add = (key, cls, label) => {
+    const b = el("button", "wall " + cls, (cls.includes("empty") ? '<i class="ico">' + (key === "file" ? "&#xE710;" : "&#xEB9F;") + "</i>" : "") + "<span></span>");
+    b.querySelector("span").textContent = label;
+    b.addEventListener("click", () => pick(key));
+    grid.appendChild(b); tiles[key] = b;
+  };
+  BUILTIN.forEach((id) => add(id, "wp-" + id + (id === "morning" ? " light" : ""), s()[id]));
+  add("bing", "", s().bing); add("file", "", s().file);
+  const pick = (key) => {
+    const c = ensureStart(), dim = c.wallpaper.dim || 0;
+    if (key === "file") {
+      if (!wpParams().get("custom") || c.wallpaper.kind === "file") { send("start-file"); return; }
+      c.wallpaper = { kind: "file", dim };
+    } else if (key === "bing") c.wallpaper = { kind: "bing", dim };
+    else c.wallpaper = { kind: "builtin", id: key, dim };
+    mark(); saveStart();
+  };
+  const thumbs = () => {
+    const q = wpParams(), dir = q.get("wpdir") || "";
+    const set = (key, url) => {
+      const b = tiles[key];
+      b.classList.toggle("empty", !url);
+      if (url) { b.style.backgroundImage = "url('" + url + "')"; const i = b.querySelector(".ico"); if (i) i.remove(); }
+      else if (!b.querySelector(".ico")) b.insertAdjacentHTML("afterbegin", '<i class="ico">' + (key === "file" ? "&#xE710;" : "&#xEB9F;") + "</i>");
+    };
+    set("bing", q.get("bing") === "1" ? dir + "bing.jpg?v=" + (q.get("bv") || 0) : "");
+    set("file", q.get("custom") ? dir + encodeURIComponent(q.get("custom")) + "?v=" + (q.get("cv") || 0) : "");
+  };
+  const mark = () => {
+    const w = ensureStart().wallpaper, key = w.kind === "builtin" ? w.id : w.kind;
+    Object.keys(tiles).forEach((k) => tiles[k].classList.toggle("on", k === key));
+    dimRow.update({ t: "slider", v: w.dim || 0, d: s().dimD });
+  };
+  row.appendChild(grid);
+  // the darken slider, a row of its own under the pictures
+  const dimRow = makeRow(-1, -1, { t: "slider", l: s().dim, d: s().dimD, min: 0, max: 70, step: 5, v: 0,
+                                   f: Array.from({ length: 15 }, (_, i) => i * 5 + "%") });
+  dimRow.el.querySelector(".tr").addEventListener("pointerup", () => {
+    setTimeout(() => { const c = ensureStart(); c.wallpaper.dim = currentDim(dimRow.el); saveStart(); }, 0);
+  });
+  const frag = el("div");
+  frag.style.display = "contents";
+  frag.appendChild(row); frag.appendChild(dimRow.el);
+  thumbs(); mark();
+  return { el: frag, update: () => { thumbs(); mark(); } };
+}
+function currentDim(rowEl) { return parseInt(rowEl.querySelector(".val").textContent, 10) || 0; }
+function layoutRow(r) {
+  const row = makeRow(-1, -1, { t: "seg", l: r.l, d: s().autoD, o: [s().auto, s().free], v: 0 });
+  const box = row.el;
+  box.querySelectorAll(".seg button").forEach((b, i) => b.addEventListener("click", () => {
+    ensureStart().layout = i === 1 ? "free" : "auto";
+    box.querySelector(".d").textContent = i === 1 ? s().freeD : s().autoD;
+    saveStart();
+  }, true));
+  const upd = () => {
+    const free = ensureStart().layout === "free";
+    row.update({ t: "seg", v: free ? 1 : 0, d: free ? s().freeD : s().autoD });
+  };
+  upd();
+  return { el: box, update: upd };
+}
+
+// ---- pages ---------------------------------------------------------------------------------------
+let rowsShown = new Map();     // "page:row" -> { update }
+function renderPage(i, how) {
+  const pg = model.pages[i], content = $("content");
+  rowsShown = new Map();
+  content.textContent = "";
+  const title = el("div", "title");
+  if (pg.p >= 0) {
+    const b = el("button", "back", BACK + '<span class="crumb"></span>');
+    b.querySelector(".crumb").textContent = model.pages[pg.p].n;
+    b.addEventListener("click", () => openPage(pg.p, "left"));
+    content.appendChild(b);
+    title.style.marginTop = "6px";
+  }
+  title.innerHTML += tileHtml(pg) + "<h1></h1>";
+  title.querySelector("h1").textContent = pg.n;
+  content.appendChild(title);
+  let card = null;
+  pg.rows.forEach((r, ri) => {
+    if (r.t === "header") {
+      if (r.l) content.appendChild(el("div", "grp", esc(r.l)));
+      card = el("div", "card"); content.appendChild(card);
+      return;
+    }
+    if (!card) { card = el("div", "card"); content.appendChild(card); }
+    const made = makeRow(i, ri, r);
+    rowsShown.set(i + ":" + ri, made);
+    card.appendChild(made.el);
+  });
+  content.querySelectorAll(".card").forEach((c) => { if (!c.children.length) c.remove(); });
+  animateIn(how);
+}
+function animateIn(how) {
+  const content = $("content");
+  content.classList.remove("in", "in-right", "in-left");
+  if (!how) return;
+  void content.offsetWidth;
+  content.classList.add(how === "right" ? "in-right" : how === "left" ? "in-left" : "in");
+}
+function openPage(i, how) {
+  if (!model || i < 0 || i >= model.pages.length) return;
+  const goingDeeper = model.pages[i].p === cur;
+  const from = cur;
+  cur = i;
+  $("scroll").scrollTop = 0;
+  renderPage(i, how || (from < 0 ? "" : goingDeeper ? "right" : "fade"));
+  markSide(from >= 0);
+  send("page", "i=" + i);
+}
+window.lyraOpenPage = (i) => { if (query) clearSearch(); openPage(i); };
+
+// ---- search: every page, the matching rows work right there ------------------------------------
+function runSearch() {
+  const qv = query.toLocaleLowerCase(), content = $("content");
+  rowsShown = new Map();
+  content.textContent = "";
+  const title = el("div", "title", "<h1></h1>");
+  title.querySelector("h1").textContent = s().results;
+  content.appendChild(title);
+  const counts = new Map();
+  let any = false;
+  model.pages.forEach((pg, pi) => {
+    const hits = [];
+    let groupHit = false;
+    pg.rows.forEach((r, ri) => {
+      if (r.t === "header") { groupHit = !!r.l && r.l.toLocaleLowerCase().includes(qv); return; }
+      const text = (r.l + " " + (r.d || "") + " " + (r.o ? r.o.join(" ") : "") + " " + (r.r || "")).toLocaleLowerCase();
+      if (text.includes(qv) || groupHit || pg.n.toLocaleLowerCase().includes(qv)) hits.push(ri);
+    });
+    if (!hits.length) return;
+    any = true;
+    const sp = sidePageOf(pi);
+    counts.set(sp, (counts.get(sp) || 0) + hits.length);
+    const head = el("div", "res-page", tileHtml(pg) + '<span class="pn"></span>');
+    head.querySelector(".pn").textContent = pg.p >= 0 ? model.pages[pg.p].n + " › " + pg.n : pg.n;
+    const go = el("button", "", esc(s().open) + " ›");
+    go.addEventListener("click", () => { clearSearch(); openPage(pi); });
+    head.appendChild(go);
+    content.appendChild(head);
+    const card = el("div", "card");
+    hits.forEach((ri) => {
+      const made = makeRow(pi, ri, pg.rows[ri], qv);
+      rowsShown.set(pi + ":" + ri, made);
+      card.appendChild(made.el);
+    });
+    content.appendChild(card);
+  });
+  if (!any) content.appendChild(el("div", "empty-res", '<i class="ico">&#xE721;</i><b>' + esc(s().none) + "</b><br>" + esc(s().noneHint)));
+  document.querySelectorAll("#nav .item").forEach((b) => {
+    const n = counts.get(+b.dataset.i) || 0;
+    b.classList.toggle("dim", !n);
+    b.querySelector(".count").textContent = n ? n : "";
+  });
+  markSide(true);
+}
+function clearSearch() {
+  query = ""; $("q").value = ""; $("searchBox").classList.remove("has");
+  document.querySelectorAll("#nav .item").forEach((b) => { b.classList.remove("dim"); b.querySelector(".count").textContent = ""; });
+}
+$("q").addEventListener("input", () => {
+  query = $("q").value.trim();
+  $("searchBox").classList.toggle("has", !!$("q").value);
+  if (query) { runSearch(); animateIn(""); }
+  else { renderPage(cur, "fade"); markSide(true); clearSearch(); }
+});
+$("clear").addEventListener("click", () => { clearSearch(); renderPage(cur, "fade"); markSide(true); $("q").focus(); });
+
+// ---- the pop-up menu (choices) -----------------------------------------------------------------------
+let menuPick = null, menuKb = -1;
+function openMenu(anchor, options, current, onPick) {
+  const m = $("menu");
+  m.textContent = "";
+  options.forEach((o, i) => {
+    const b = el("button", "", '<span class="ck">' + (i === current ? "&#10003;" : "") + "</span><span></span>");
+    b.lastChild.textContent = o;
+    b.addEventListener("click", () => { closeMenu(); onPick(i); });
+    m.appendChild(b);
+  });
+  menuPick = onPick; menuKb = current;
+  const r = anchor.getBoundingClientRect();
+  m.style.minWidth = Math.max(180, r.width) + "px";
+  m.style.left = "0px"; m.style.top = "0px";
+  m.classList.add("open");
+  const mh = m.offsetHeight, mw = m.offsetWidth;
+  let top = r.top - 5 - current * 30;                  // the current option sits over the button, as on a Mac
+  top = Math.max(8, Math.min(innerHeight - mh - 8, top));
+  m.style.top = top + "px";
+  m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, r.right - mw)) + "px";
+}
+function closeMenu() { $("menu").classList.remove("open"); menuPick = null; }
+document.addEventListener("pointerdown", (e) => { if (menuPick && !$("menu").contains(e.target)) closeMenu(); }, true);
+$("scroll").addEventListener("scroll", () => { if (menuPick) closeMenu(); });
+
+// ---- keyboard ------------------------------------------------------------------------------------------
+document.addEventListener("keydown", (e) => {
+  if (menuPick) {
+    const items = [...$("menu").children];
+    if (e.key === "Escape") { closeMenu(); e.preventDefault(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      menuKb = Math.max(0, Math.min(items.length - 1, menuKb + (e.key === "ArrowDown" ? 1 : -1)));
+      items.forEach((b, i) => b.classList.toggle("kb", i === menuKb)); e.preventDefault(); return;
+    }
+    if (e.key === "Enter" && menuKb >= 0) { const f = menuPick; closeMenu(); f(menuKb); e.preventDefault(); }
+    return;
+  }
+  const typing = document.activeElement && document.activeElement.tagName === "INPUT";
+  if ((e.ctrlKey && (e.key === "f" || e.key === "F" || e.key === "а" || e.key === "А")) || (!typing && e.key === "/")) {
+    $("q").focus(); $("q").select(); e.preventDefault(); return;
+  }
+  if (e.key === "Escape") {
+    if (query) { clearSearch(); renderPage(cur, "fade"); markSide(true); }
+    else if (document.activeElement === $("q")) $("q").blur();
+    else if (cur >= 0 && model.pages[cur].p >= 0) openPage(model.pages[cur].p, "left");
+    else send("close");
+    e.preventDefault(); return;
+  }
+  if (!typing && (e.key === "ArrowDown" || e.key === "ArrowUp") && !query) {
+    const list = model.pages.map((p, i) => i).filter((i) => model.pages[i].p < 0);
+    const at = list.indexOf(sidePageOf(cur));
+    const next = list[Math.max(0, Math.min(list.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)))];
+    if (next !== undefined && next !== cur) openPage(next, "fade");
+    e.preventDefault();
+  }
+});
+
+// ---- Lyra -> page ----------------------------------------------------------------------------------------
+function structure(m) {
+  return m.pages.map((p) => p.n + "|" + p.p + "|" + p.rows.map((r) => r.t + ":" + r.l + ":" + (r.o ? r.o.join(",") : "") + ":" + (r.k || "")).join(";")).join("\n");
+}
+window.lyraSettings = function (m) {
+  const first = !model;
+  model = m;
+  if (m.start && !startCfg) startCfg = m.start;     // after that the page is the one that changes it
+  if (m.picked) { ensureStart().wallpaper = { kind: "file", dim: (startCfg.wallpaper && startCfg.wallpaper.dim) || 0 }; saveStart(); }
+  document.documentElement.dataset.theme = m.dark ? "dark" : "light";
+  document.documentElement.style.background = "";
+  document.documentElement.style.colorScheme = m.dark ? "dark" : "light";
+  document.documentElement.style.setProperty("--accent", m.accent);
+  document.documentElement.classList.toggle("noanim", !m.anim);
+  document.title = m.ru ? "Настройки" : "Settings";
+  $("q").placeholder = s().search;
+  const newSide = m.pages.filter((p) => p.p < 0).map((p) => p.n + p.g + p.i).join("|");
+  if (newSide !== sideSig) { sideSig = newSide; buildSide(); }
+  const newSig = structure(m);
+  if (first) {
+    sig = newSig;
+    openPage(m.open >= 0 && m.open < m.pages.length ? m.open : 0, "");
+    $("content").classList.add("in");
+    return;
+  }
+  if (newSig !== sig) {
+    sig = newSig;
+    const top = $("scroll").scrollTop;
+    if (cur >= m.pages.length) cur = 0;
+    if (query) runSearch(); else renderPage(cur, "");
+    $("scroll").scrollTop = top;
+    markSide(false);
+    return;
+  }
+  for (const [key, made] of rowsShown) {
+    const [p, r] = key.split(":").map(Number);
+    if (m.pages[p] && m.pages[p].rows[r]) made.update(m.pages[p].rows[r]);
+  }
+};
+
+addEventListener("resize", () => markSide(false));
+send("ready");
+</script>
+</body>
+</html>

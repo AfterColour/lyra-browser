@@ -75,3 +75,8 @@ SRow RSwatches(const wchar_t* label, std::vector<Color> colors, std::vector<std:
     r.colors = std::move(colors);
     return r;
 }
+
+SRow RCustom(const wchar_t* kind, const wchar_t* label) {
+    SRow r; r.type = SRow::Custom; r.label = label; r.right = kind;
+    return r;
+}

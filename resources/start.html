@@ -459,7 +459,8 @@ function defaultConfig() {
 }
 let cfg;
 try { cfg = JSON.parse(q.get("cfg") || "null"); } catch (e) { cfg = null; }
-if (!cfg || !Array.isArray(cfg.widgets)) cfg = defaultConfig();
+if (!cfg || typeof cfg !== "object") cfg = defaultConfig();
+else if (!Array.isArray(cfg.widgets)) cfg.widgets = defaultConfig().widgets;   // only the wallpaper was chosen (Settings)
 cfg.data = cfg.data || {};
 cfg.wallpaper = cfg.wallpaper || { kind: "builtin", id: "night", dim: 0 };
 cfg.widgets = cfg.widgets.filter((w) => w && KINDS[w.type]);
@@ -1186,6 +1187,7 @@ if (q.get("private") === "1") {
   if (picked) { cfg.wallpaper = { kind: "file", dim: cfg.wallpaper.dim || 0 }; save(true); }
   applyWallpaper();
   if (picked) { panelTab = "walls"; editing = true; document.body.classList.add("editing"); renderPanel(); }
+  else if (q.get("edit") === "1") setTimeout(() => setEditing(true), 350);   // Settings > Start Page > Widgets
   render(true);
   addEventListener("resize", () => render());
 }
