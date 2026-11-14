@@ -633,7 +633,5 @@ void SplitDetach(unsigned long long id) {
     Tab* t = FindTab(id);
     if (!t || !SplitPartnerOf(*t)) return;
     Log("split: tab#%llu dragged out -> ordinary tabs", id);
-    int index = -1;
-    if (ActiveTab() != t && FindTab(id, &index)) SelectTab(index);
-    SplitClose();
+    SplitClose();                                        // (the open tab stays open)
 }

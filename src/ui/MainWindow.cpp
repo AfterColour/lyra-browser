@@ -557,8 +557,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             const int hitIndex = h.index;
             h.index = SplitTabAt(h.index, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));   // a split view's half
             s_tabPressRect = PressedTabRect(hitIndex, h.index);
-            g_down = h;
-            SelectTab(h.index);
+            g_down = h;                                  // (opened on release: a press may become a drag)
             if (h.index >= 0 && h.index < (int)g_tabs.size()) {
                 s_tabPressId = g_tabs[h.index]->id;
                 s_tabPressPt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -581,6 +580,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         Hit down = g_down;
         g_down = Hit();
         if (GetCapture() == hWnd) ReleaseCapture();
+        // A click on a tab (released where it was pressed, not dragged) opens it.
+        if (down.kind == Hit::TabBody && up.kind == Hit::TabBody &&
+            SplitTabAt(up.index, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)) == down.index)
+            SelectTab(down.index);
         if (up == down) {
             switch (up.kind) {
             case Hit::Back:     GoBack(); break;
