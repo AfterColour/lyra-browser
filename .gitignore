@@ -17,3 +17,5 @@
 *.obj
 *.prelyra
 /_to_delete/
+# Python caches of tools/
+__pycache__/

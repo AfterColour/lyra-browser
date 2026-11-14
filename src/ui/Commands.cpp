@@ -21,6 +21,7 @@
 #include "browser/SplitView.h"
 #include "ui/MainWindow.h"
 #include "ui/settings/SettingsWindow.h"
+#include "app/Updater.h"
 
 static void ShowWebInspector();
 static void CopyToClipboard(const std::wstring& s);
@@ -79,6 +80,7 @@ void RunCommand(int cmd) {
     case CMD_TRANSLATE: TranslateToggle(); break;
     case CMD_PALETTE:   CommandPaletteShow(); break;
     case CMD_SPLIT:     SplitToggle(); break;
+    case CMD_UPDATE:    UpdaterRestartAndInstall(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
@@ -108,6 +110,11 @@ void RunCommand(int cmd) {
 
 void ShowMoreMenu() {
     HMENU m = CreatePopupMenu();
+    if (UpdaterReady()) {                // a downloaded update: first in the menu
+        const std::wstring label = std::wstring(Tr(L"Restart to Update to ", L"Перезапустить и обновить до ")) + UpdaterReadyVersion();
+        AppendMenuW(m, MF_STRING, CMD_UPDATE, label.c_str());
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(m, MF_STRING, CMD_NEWTAB,    Tr(L"New Tab\tCtrl+T", L"Новая вкладка\tCtrl+T"));
     AppendMenuW(m, MF_STRING, CMD_NEWPRIVATE, Tr(L"New Private Tab\tCtrl+Shift+N", L"Новая приватная вкладка\tCtrl+Shift+N"));
     AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  Tr(L"Close Tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));

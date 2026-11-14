@@ -10,6 +10,7 @@
 //   state <base64>     WebKit's session state (back/forward list); optional
 //   end
 #include "browser/Session.h"
+#include "app/Updater.h"
 #include "browser/Reader.h"
 #include "app/Log.h"
 #include "browser/StartPage.h"
@@ -206,7 +207,10 @@ bool SessionRestore(bool pinnedOnly) {
     if (tabs.empty()) return false;
     // Pinned tabs come back in any case (not loaded until they are opened); the rest only when
     // the session is restored.
-    if (pinnedOnly || (clean && !g_prefs.restoreSession)) {
+    // After an update restart every tab comes back, whatever the setting says (asked every
+    // time, so the mark of that restart is used up now).
+    const bool afterUpdate = UpdaterJustRestarted();
+    if (pinnedOnly || (clean && !g_prefs.restoreSession && !afterUpdate)) {
         tabs.erase(std::remove_if(tabs.begin(), tabs.end(), [](const SavedTab& s) { return !s.pinned; }), tabs.end());
         pinnedOnly = true;
     }

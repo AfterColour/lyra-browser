@@ -664,11 +664,13 @@ static void DrawSettings(Graphics& g) {
             else if (row.type == SRow::ToggleGear) labelRight = SGearRect(ctl).X - SS(12);
             else labelRight = ctl.X - SS(16);
             const float lw = std::max(SS(40), labelRight - lx);
-            if (row.desc.empty()) {
+            // A button row may give its line live (Settings > About > Updates).
+            const std::wstring desc = row.type == SRow::Button && row.getStr ? row.getStr() : row.desc;
+            if (desc.empty()) {
                 SText(g, row.label, g_sfBody.get(), RectF(lx, r.Y, lw, r.Height), P.text);
             } else {
                 SText(g, row.label, g_sfBody.get(), RectF(lx, r.Y + SS(10), lw, SS(22)), P.text);
-                SText(g, row.desc, g_sfSmall.get(), RectF(lx, r.Y + SS(31), lw, SS(20)), P.text2);
+                SText(g, desc, g_sfSmall.get(), RectF(lx, r.Y + SS(31), lw, SS(20)), P.text2);
             }
         }
 
@@ -784,7 +786,7 @@ static void DrawSettings(Graphics& g) {
             FillRound(g, hv ? Color(P.field.GetA(), P.field.GetR(), P.field.GetG(), P.field.GetB()) : P.field, ctl, SS(7));
             if (hv) FillRound(g, P.hover, ctl, SS(7));
             StrokeRound(g, P.border, ctl, SS(7), 1.f);
-            SText(g, row.right, g_sfBody.get(), ctl, P.text, StringAlignmentCenter);
+            SText(g, row.fmt ? row.fmt(0) : row.right, g_sfBody.get(), ctl, P.text, StringAlignmentCenter);
             break;
         }
         case SRow::Info: {

@@ -24,6 +24,7 @@
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
+#include "app/Updater.h"
 
 // Icon background colours in the sidebar
 static const Color kTintGray(122, 128, 138), kTintPurple(107, 91, 214), kTintBlue(31, 122, 224),
@@ -486,6 +487,19 @@ void BuildPages() {
         p.rows.push_back(RHeader(kAppName));
         p.rows.push_back(RInfo(Tr(L"Engine", L"Движок"), L"WebKit"));
         p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), LYRA_VERSION_WSTR));
+        {   // Updates: the line under the label and the button follow the updater
+            SRow r = RButton(Tr(L"Updates", L"Обновления"), L" ", L"", []() {
+                if (UpdaterReady()) UpdaterRestartAndInstall();
+                else if (UpdaterSupported() && !UpdaterBusy()) UpdaterCheckNow();
+            });
+            r.getStr = []() { return UpdaterStatus(); };
+            r.fmt = [](int) { return std::wstring(UpdaterReady() ? Tr(L"Restart", L"Перезапустить") : Tr(L"Check now", L"Проверить")); };
+            p.rows.push_back(r);
+        }
+        p.rows.push_back(RToggle(Tr(L"Update automatically", L"Обновлять автоматически"),
+            Tr(L"Downloads new versions in the background; they install when Lyra restarts.",
+               L"Новые версии загружаются в фоне и ставятся при перезапуске Lyra."),
+            &g_prefs.autoUpdate, save));
         p.rows.push_back(RInfo(Tr(L"Settings file", L"Файл настроек"), g_settingsFile));
         p.rows.push_back(RButton(Tr(L"Settings folder", L"Папка настроек"), L"", Tr(L"Open", L"Открыть"),
             []() { ShellExecuteW(nullptr, L"open", g_settingsDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }));

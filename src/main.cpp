@@ -44,6 +44,7 @@
 #include "browser/TabSleep.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
+#include "app/Updater.h"
 
 // ----------------------------------------------------------------------------
 //  Entry point
@@ -193,6 +194,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     const bool restored = g_prefs.onboarded && SessionRestore(fromCommandLine);
     if (!restored) CreateTab(startUrl);
     ScheduleSpareTab(3000);              // the next new tab, once the first page is up
+    UpdaterInit();                       // installed copies look for updates (app/Updater.cpp)
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -224,6 +226,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // gone; the network process still writes cookies, site storage and the cache. Wait for them
     // (a few seconds at most) so ending Lyra here never cuts that short.
     WaitForChildProcesses(4000);
+    UpdaterOnExit();                     // a downloaded update installs now, quietly
     Log("exit");
     TerminateProcess(GetCurrentProcess(), (UINT)msg.wParam);
     return (int)msg.wParam;

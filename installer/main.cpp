@@ -14,7 +14,7 @@ bool UiRussian() {
 
 namespace {
 struct Args {
-    bool silent = false, update = false, uninstall = false, fromTemp = false, noRegister = false, noDesktop = false;
+    bool silent = false, update = false, uninstall = false, fromTemp = false, noRegister = false, noDesktop = false, noRestart = false;
     std::wstring dir;
 };
 
@@ -31,6 +31,7 @@ Args ParseArgs() {
         else if (_wcsicmp(s.c_str(), L"/fromtemp") == 0) a.fromTemp = true;
         else if (_wcsicmp(s.c_str(), L"/noregister") == 0) a.noRegister = true;
         else if (_wcsicmp(s.c_str(), L"/nodesktop") == 0) a.noDesktop = true;
+        else if (_wcsicmp(s.c_str(), L"/norestart") == 0) a.noRestart = true;
         else if (_wcsnicmp(s.c_str(), L"/dir=", 5) == 0) a.dir = s.substr(5);
     }
     LocalFree(argv);
@@ -117,7 +118,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
             Progress pr;
             std::wstring err;
             rc = Install(payload, o, pr, err) ? 0 : 1;
-            if (rc == 0 && a.update) LaunchLyra(o.dir);
+            if (rc == 0 && a.update && !a.noRestart) LaunchLyra(o.dir);
         } else {
             rc = RunUi(hi, Mode::Install, &payload, o);
         }

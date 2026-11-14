@@ -12,8 +12,10 @@ Steps:
  4. the engine: its branch and a tag lyra-v<v> go to github.com/AfterColour/lyra-webkit
  5. a GitHub release v<v> in AfterColour/lyra-browser with LyraSetup.exe and the sources;
     the notes come from release-notes\\<v>.md (written by you) if it exists
+ 6. docs\\update.json - signed with the update key (tools\\update-key.py) - is committed and
+    pushed: installed copies of Lyra find the new version there (GitHub Pages)
 """
-import glob, hashlib, os, re, shutil, subprocess, sys, zipfile
+import glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, time, zipfile
 
 LYRA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEBKIT = os.path.join(os.path.dirname(LYRA), "WebKit")
@@ -31,6 +33,31 @@ def run(cmd, cwd=None, check=True, capture=False):
     if check and r.returncode != 0:
         fail("failed: " + " ".join(cmd) + ("\n" + (r.stderr or r.stdout) if capture else ""))
     return r.stdout.strip() if capture else r.returncode
+
+
+def update_key():
+    spec = importlib.util.spec_from_file_location("update_key", os.path.join(LYRA, "tools", "update-key.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def write_manifest(ver, setup, out=None):
+    """docs/update.json for the version just released, signed; returns its path."""
+    uk = update_key()
+    url = "https://github.com/%s/releases/download/v%s/LyraSetup.exe" % (REPO, ver)
+    size = os.path.getsize(setup)
+    sha = hashlib.sha256(open(setup, "rb").read()).hexdigest()
+    msg = uk.message(ver, url, size, sha)
+    sig = uk.sign(msg)
+    if not uk.verify(msg, sig, uk.public_blob()):
+        fail("the update signature does not verify - is src/app/UpdateKey.h from this key?")
+    out = out or os.path.join(LYRA, "docs", "update.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    data = {"version": ver, "url": url, "size": size, "sha256": sha, "sig": sig,
+            "date": time.strftime("%Y-%m-%d"), "notes": "https://github.com/%s/releases/tag/v%s" % (REPO, ver)}
+    open(out, "w", encoding="utf-8", newline="\n").write(json.dumps(data, indent=2) + "\n")
+    return out
 
 
 def version():
@@ -86,7 +113,7 @@ def main():
     tag = "v" + ver
     step("Lyra %s%s" % (ver, " (dry run: nothing is published)" if dry else ""))
 
-    step("1/5 checks")
+    step("1/6 checks")
     if run(["git", "status", "--porcelain"], cwd=LYRA, capture=True):
         fail("Lyra has uncommitted changes - commit them first (commit-lyra.bat)")
     if run(["git", "status", "--porcelain", "--", "Source", "WebKitLibraries"], cwd=WEBKIT, capture=True):
@@ -97,6 +124,8 @@ def main():
     if run(["git", "tag", "-l", tag], cwd=LYRA, capture=True) or \
             subprocess.run([GH, "release", "view", tag, "-R", REPO], capture_output=True).returncode == 0:
         fail("%s is already released - raise the version in CMakeLists.txt (project(Lyra VERSION ...))" % tag)
+    if not os.path.exists(update_key().KEY_FILE):
+        fail("no update signing key - run: python tools\\update-key.py new")
     if subprocess.run([GH, "auth", "status"], capture_output=True).returncode != 0:
         fail("gh is not signed in - run: gh auth login")
     if run(["git", "remote", "get-url", ENGINE_REMOTE], cwd=WEBKIT, check=False, capture=True) == "":
@@ -105,31 +134,39 @@ def main():
             fail(msg + " - make the fork first")
         print("  note: " + msg + " - needed before a real release")
 
-    step("2/5 build")
+    step("2/6 build")
     run(["cmd", "/c", "echo.| build.bat"], cwd=LYRA)
     run([sys.executable, os.path.join(LYRA, "tools", "make-installer.py")])
     setup = os.path.join(LYRA, "dist", "LyraSetup.exe")
 
-    step("3/5 LGPL sources")
+    step("3/6 LGPL sources")
     sources = lgpl_sources(ver)
     print("  %s (%.0f MB)" % (os.path.relpath(sources, LYRA), os.path.getsize(sources) / 2**20))
 
     notes_file = os.path.join(LYRA, "release-notes", ver + ".md")
     sha = hashlib.sha256(open(setup, "rb").read()).hexdigest()
     if dry:
+        m = write_manifest(ver, setup, os.path.join(LYRA, "dist", "update.json"))
+        print("  manifest (dist\\update.json, not published):\n" + open(m, encoding="utf-8").read())
         step("dry run done: %s  SHA-256 %s" % (setup, sha))
         return
 
-    step("4/5 engine -> github.com/AfterColour/lyra-webkit")
+    step("4/6 engine -> github.com/AfterColour/lyra-webkit")
     run(["git", "tag", "-f", "lyra-" + tag, ENGINE_BRANCH], cwd=WEBKIT)
     run(["git", "push", ENGINE_REMOTE, ENGINE_BRANCH], cwd=WEBKIT)
     run(["git", "push", "-f", ENGINE_REMOTE, "lyra-" + tag], cwd=WEBKIT)
 
-    step("5/5 GitHub release " + tag)
+    step("5/6 GitHub release " + tag)
     cmd = [GH, "release", "create", tag, setup, sources, "-R", REPO, "--title", "Lyra " + ver, "--target", "main"]
     cmd += ["--notes-file", notes_file] if os.path.exists(notes_file) else ["--notes", "Lyra %s\n\nSHA-256 of LyraSetup.exe: %s" % (ver, sha)]
     run(cmd)
     run(["git", "fetch", "-q", "--tags", "origin"], cwd=LYRA)
+
+    step("6/6 update manifest -> docs/update.json")
+    m = write_manifest(ver, setup)
+    run(["git", "add", m], cwd=LYRA)
+    run(["git", "commit", "-q", "-m", "Lyra %s: update manifest" % ver], cwd=LYRA)
+    run(["git", "push", "-q"], cwd=LYRA)
     step("done: https://github.com/%s/releases/tag/%s" % (REPO, tag))
 
 

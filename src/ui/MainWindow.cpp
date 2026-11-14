@@ -37,6 +37,7 @@
 #include "ui/TabDrag.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
+#include "app/Updater.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -498,6 +499,11 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SuggestUpdate();
             return 0;
         }
+        // A command sent as a message (no control): the same as choosing it from the menu.
+        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_UPDATE) {
+            RunCommand(LOWORD(wParam));
+            return 0;
+        }
         if ((HWND)lParam == g_urlEdit && HIWORD(wParam) == EN_KILLFOCUS) {
             SuggestHide();
             ShowWindow(g_urlEdit, SW_HIDE);
@@ -675,6 +681,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
+        if (wParam == TIMER_UPDATE) {
+            UpdaterTimer();
+            return 0;
+        }
         if (wParam == TIMER_TRANSITION) {
             TransitionTick();
             return 0;
@@ -815,6 +825,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (!url.empty() && !g_closing) PostMessageW(hWnd, WM_APP_OPEN_URL, 0, (LPARAM)new std::wstring(url));
         return TRUE;
     }
+    case WM_APP_UPDATE:
+        UpdaterChanged();
+        return 0;
     case WM_APP_OPEN_URL: {
         std::unique_ptr<std::wstring> url((std::wstring*)lParam);
         if (url && !url->empty() && !g_closing) CreateTab(*url);

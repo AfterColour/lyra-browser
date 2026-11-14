@@ -28,6 +28,7 @@
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "app/Updater.h"
 
 Layout g_L;
 Hit g_hover, g_down;
@@ -820,6 +821,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
     toolButton(L.back, L"\uE76B", cur && cur->canBack, Hit::Back, g_fIcon.get());
     toolButton(L.fwd,  L"\uE76C", cur && cur->canFwd,  Hit::Forward, g_fIcon.get());
     toolButton(L.more, L"\uE712", true, Hit::More, g_fIcon.get());
+    if (UpdaterReady()) {                // an update is waiting: a small dot on the menu button
+        const float d = S(6);
+        SolidBrush dot(g_th.accent);
+        g.FillEllipse(&dot, L.more.GetRight() - S(7) - d / 2, L.more.Y + S(7) - d / 2, d, d);
+    }
     if (L.downloads.Width > 0) {
         // Downloads: the arrow, with a progress bar under it while something downloads; it
         // lights up in the accent colour for a moment when a download finishes.

@@ -4,6 +4,7 @@
 //   LyraSetup.exe                 window: install / update (the files are inside it, see Payload.cpp)
 //   LyraSetup.exe /S              install without a window
 //   LyraSetup.exe /update         install without a window, then start Lyra again (auto-update)
+//   LyraSetup.exe /update /norestart   the same without starting Lyra (it was closed by the user)
 //   Uninstall.exe                 the same program without files inside: window to remove Lyra
 //   Uninstall.exe /S              remove without a window
 // Other switches: /dir=<folder> (where to install), /noregister (only copy the files: no
