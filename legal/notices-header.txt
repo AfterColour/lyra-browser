@@ -21,6 +21,14 @@ The source code of the exact versions of the other libraries is published with
 every Lyra release at https://github.com/AfterColour/lyra-browser/releases.
 FFmpeg is built as LGPL (without any GPL-only parts).
 
+Online services used by the start page
+--------------------------------------
+Weather data by Open-Meteo.com (https://open-meteo.com), licensed under
+CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). City search uses
+the Open-Meteo geocoding API (data from GeoNames, CC BY 4.0).
+The "picture of the day" wallpaper is Microsoft Bing's daily image; each
+picture belongs to its author, who is credited on the start page.
+
 Components
 ----------
 {COMPONENTS}

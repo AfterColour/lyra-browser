@@ -1,21 +1,29 @@
 <!doctype html>
 <!--
-  Lyra start page (and the first-run welcome screen with ?welcome=1).
-  Lyra opens it as file:///<Lyra folder>/resources/start.html?lang=..&theme=..&accent=..&fav=..
-  Favourites are kept in localStorage. Settings changes are sent to Lyra as lyra://setup?...
-  links, which Lyra handles itself (browser/StartPage.cpp) and never loads.
+  Lyra's start page: widgets on a wallpaper, arranged by the user (and the private tab page with
+  ?private=1). Lyra opens it as file:///<Lyra folder>/resources/start.html?language=..&themeMode=..
+  and hands it (browser/StartPage.cpp, browser/Wallpaper.cpp):
+    cfg     the layout and widget settings, as saved before (lyra://start-save?cfg=<json>)
+    favs    the bookmarks in Favorites; top: the most visited sites; icons: cached site icons
+    wpdir   the folder with the wallpaper pictures: custom=<file> (the user's), bing=1 (picture
+            of the day) with bingInfo / bingLink; picked=1 right after a picture was chosen
+  Other lyra:// links: bookmarks-add/remove (Favorites), favicons, go?q= (search),
+  start-wallpaper-file (file dialog).
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <script>
-// Theme before the first paint (no white flash before the page's script runs).
+// Colours before the first paint, so a new tab never flashes white.
 (function () {
   var q = new URLSearchParams(location.search), t = +(q.get("themeMode") || 0);
   var d = t === 2 || (t === 0 && q.get("sysdark") === "1");
   document.documentElement.dataset.theme = d ? "dark" : "light";
   document.documentElement.style.colorScheme = d ? "dark" : "light";
-  document.documentElement.style.background = d ? "#18191C" : "#FAFBFC";
+  var wp = "night";
+  try { var c = JSON.parse(q.get("cfg") || "{}"); if (c.wallpaper && c.wallpaper.kind === "builtin") wp = c.wallpaper.id; else if (c.wallpaper) wp = ""; } catch (e) {}
+  var bg = { night: "#141032", aurora: "#071a24", dusk: "#2b1b4f", ocean: "#04121f", morning: "#fbf3ea" }[wp];
+  document.documentElement.style.background = q.get("private") === "1" ? (d ? "#18191C" : "#FAFBFC") : (bg || (d ? "#18191C" : "#F2F3F5"));
 })();
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -24,79 +32,225 @@
   :root {
     --priv: #8A4FBF;
     --page: #FAFBFC; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #59606B;
-    --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06); --thumb: #EEF0F4;
+    --hover: rgba(0,0,0,.05); --field: #FFFFFF; --accent: #0067C0; --shadow: 0 1px 3px rgba(0,0,0,.06);
+    --a1: #9E80FF; --a2: #6A4CE0; --gold: #FFD68C; --ease: cubic-bezier(.2, .8, .2, 1);
   }
   :root[data-theme="dark"] {
     --page: #18191C; --card: #25272C; --border: #34373E; --text: #ECEDEF; --text2: #A6ABB4;
-    --hover: rgba(255,255,255,.06); --field: #2E3036; --shadow: 0 0 0 transparent; --thumb: #2D3036;
+    --hover: rgba(255,255,255,.06); --field: #2E3036; --shadow: 0 0 0 transparent;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body {
-    background: var(--page); color: var(--text);
-    font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-    display: flex; align-items: center; justify-content: center;
-    -webkit-user-select: none; user-select: none;
-  }
-  button { font: inherit; color: inherit; }
+  body { color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         -webkit-user-select: none; user-select: none; overflow-x: hidden; }
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; -webkit-appearance: none; appearance: none; }
+  input, textarea { font: inherit; color: inherit; -webkit-user-select: text; user-select: text; }
   .hidden { display: none !important; }
 
-  /* ---- start page ---- */
-  main { width: 100%; max-width: 780px; padding: 0 32px 80px; }
-  h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
-  .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .shead a { color: var(--text2); font-size: 12px; text-decoration: none; border-radius: 6px; padding: 2px 6px; }
-  .shead a:hover { color: var(--text); background: var(--hover); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 14px 10px; }
-  .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
-          text-decoration: none; color: var(--text); padding: 6px 0; border-radius: 12px; outline: none; }
-  .tile:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-  .icon { width: 60px; height: 60px; border-radius: 14px; background: var(--card);
-          box-shadow: 0 0 0 1px var(--border), var(--shadow);
-          display: flex; align-items: center; justify-content: center; }
-  .tile:hover .icon { box-shadow: 0 0 0 1px var(--text2), var(--shadow); }
-  .badge { width: 30px; height: 30px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 15px;
-           display: flex; align-items: center; justify-content: center; }
-  .name { font-size: 12px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .remove { position: absolute; top: 0; right: 6px; width: 20px; height: 20px; border-radius: 50%;
-            border: 0; background: var(--card); box-shadow: 0 0 0 1px var(--border); color: var(--text2);
-            font-size: 12px; line-height: 20px; padding: 0; cursor: pointer; opacity: 0; transition: opacity .12s; }
-  .tile:hover .remove, .remove:focus-visible { opacity: 1; }
-  .freq { margin-top: 40px; }
-  .fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-  .fcard { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--card);
-           box-shadow: 0 0 0 1px var(--border), var(--shadow); text-decoration: none; color: var(--text); outline: none; }
-  .fcard:hover { box-shadow: 0 0 0 1px var(--text2), var(--shadow); }
-  .fcard:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-  .thumb { height: 96px; background: var(--thumb); display: flex; align-items: center; justify-content: center;
-           border-bottom: 1px solid var(--border); }
-  .thumb .badge { width: 36px; height: 36px; border-radius: 9px; font-size: 17px; }
-  .fmeta { padding: 9px 12px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-  .ftitle { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fhost { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .add .icon { background: transparent; box-shadow: 0 0 0 1px var(--border) inset; color: var(--text2); font-size: 26px; font-weight: 300; }
-  .corner { position: fixed; right: 20px; bottom: 16px; height: 30px; border: 0; border-radius: 7px;
-            background: var(--card); box-shadow: 0 0 0 1px var(--border); padding: 0 12px; font-size: 12px;
-            display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .corner:hover { background: var(--hover); }
-  .corner svg { color: var(--accent); }
+  /* ---- wallpaper ------------------------------------------------------------------- */
+  /* absolute, not fixed: a full-window fixed layer shows a thin line where its tiles meet */
+  #wall, #stars { position: absolute; left: 0; top: 0; width: 100%; min-height: 100%; height: var(--page-h, 100%); }
+  /* The dim is painted into the wallpaper itself: a separate translucent overlay layer shows thin
+     light lines where its tiles meet. */
+  #wall { z-index: 0; --dim: 0;
+          background-image: linear-gradient(rgba(0,0,0,var(--dim)), rgba(0,0,0,var(--dim))), var(--wp, none);
+          background-size: cover; background-position: center top; background-repeat: no-repeat; }
+  #stars { z-index: 0; pointer-events: none; overflow: hidden; }
+  #stars i { position: absolute; border-radius: 50%; background: #fff; opacity: 0; animation: tw var(--d) ease-in-out var(--w) infinite; }
+  #stars i.big { box-shadow: 0 0 6px 2px rgba(255,255,255,.2); }
+  @keyframes tw { 0%, 100% { opacity: calc(var(--a) * .35); } 50% { opacity: var(--a); } }
+  .wp-night   { --wp: radial-gradient(ellipse 70% 55% at 50% 40%, rgba(120,90,230,.30), transparent 70%), linear-gradient(160deg, #141032, #2C1A58); }
+  .wp-aurora  { --wp: radial-gradient(ellipse 60% 45% at 18% 0%, rgba(60,220,160,.42), transparent 70%),
+                            radial-gradient(ellipse 55% 50% at 85% 15%, rgba(120,90,255,.45), transparent 70%),
+                            linear-gradient(180deg, #071a24, #0b0f2a); }
+  .wp-dusk    { --wp: linear-gradient(180deg, #2b1b4f 0%, #5d2b68 42%, #c45f62 78%, #f0a874 100%); }
+  .wp-ocean   { --wp: radial-gradient(ellipse 80% 50% at 50% 115%, rgba(40,140,200,.75), transparent 70%), linear-gradient(180deg, #04121f, #0a2a45); }
+  .wp-morning { --wp: radial-gradient(ellipse 60% 50% at 80% 0%, rgba(255,214,170,.7), transparent 70%), linear-gradient(160deg, #fdf6ec, #f3e3f1 50%, #dfe9fb); }
+  .wp-plain   { --wp: linear-gradient(var(--page), var(--page)); }
+  .walls button[class^="wp-"] { background-image: var(--wp); }
+  .credit { position: fixed; left: 16px; bottom: 14px; z-index: 2; max-width: 46vw; font-size: 11.5px; color: rgba(255,255,255,.72);
+            text-decoration: none; text-shadow: 0 1px 3px rgba(0,0,0,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .credit:hover { color: #fff; }
 
-  /* ---- add favourite dialog ---- */
-  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
-  .dialog { width: 360px; background: var(--card); border-radius: 12px; padding: 20px;
-            box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: 10px; }
-  .dialog h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
-  .dialog label { font-size: 12px; color: var(--text2); display: flex; flex-direction: column; gap: 4px; }
-  .dialog input { height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--field);
-                  color: var(--text); padding: 0 10px; font: inherit; outline: none; -webkit-user-select: text; user-select: text; }
-  .dialog input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-  .btn { height: 32px; padding: 0 16px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); cursor: pointer; }
-  .btn:hover { background: var(--hover); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  .btn.primary:hover { filter: brightness(1.08); }
+  /* ---- widgets on a 12-column grid ------------------------------------------------------- */
+  /* tone: the wallpaper decides whether the glass is dark (light text) or light (dark text) */
+  body { --g-bg: rgba(20, 16, 44, .42); --g-line: rgba(255,255,255,.10); --g-text: #F4F2FF; --g-text2: rgba(236,232,255,.66);
+         --g-hover: rgba(255,255,255,.08); --g-field: rgba(255,255,255,.08); }
+  body.tone-light { --g-bg: rgba(255,255,255,.62); --g-line: rgba(0,0,0,.08); --g-text: #1B1D21; --g-text2: #5A6070;
+                    --g-hover: rgba(0,0,0,.05); --g-field: rgba(0,0,0,.05); }
+  #board { position: relative; z-index: 1; transition: margin-left .45s var(--ease); }
+  .w { position: absolute; border-radius: 20px; color: var(--g-text); background: var(--g-bg);
+       box-shadow: inset 0 0 0 1px var(--g-line), 0 18px 40px -24px rgba(0,0,0,.6);
+       -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
+       transition: left .35s var(--ease), top .35s var(--ease), width .35s var(--ease), height .35s var(--ease), opacity .4s, transform .4s var(--ease);
+       display: flex; flex-direction: column; overflow: hidden; }
+  .w.bare { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .w.enter { opacity: 0; transform: translateY(14px) scale(.98); }
+  .w .body { flex: 1; min-height: 0; padding: 16px 18px; display: flex; flex-direction: column; }
+  .w h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--g-text2); letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
+  .w h2 .grow { flex: 1; }
+  .w h2 a { color: var(--g-text2); font-weight: 400; text-decoration: none; font-size: 12px; padding: 2px 6px; border-radius: 6px; }
+  .w h2 a:hover { color: var(--g-text); background: var(--g-hover); }
 
-  /* ---- private tab ---- */
+  /* clock */
+  .clock { align-items: center; justify-content: center; text-align: center; text-shadow: 0 2px 18px rgba(0,0,0,.25); }
+  .clock .time { font: 200 calc(var(--h) * .42) / 1 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; letter-spacing: -.02em; }
+  .clock .date { margin-top: calc(var(--h) * .05); font-size: max(13px, calc(var(--h) * .075)); color: var(--g-text2); }
+  body.tone-light .clock { text-shadow: none; }
+
+  /* search */
+  .search .body { padding: 0; justify-content: center; }
+  .search form { display: flex; align-items: center; gap: 10px; height: 100%; padding: 0 18px; }
+  .search svg { width: 18px; height: 18px; color: var(--g-text2); flex: none; }
+  .search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; font-size: 15px; }
+  .search input::placeholder { color: var(--g-text2); }
+
+  /* favorites */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 10px 6px; overflow: auto; }
+  .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 6px 0; border-radius: 12px;
+          text-decoration: none; color: var(--g-text); outline: none; }
+  .tile .icon { width: 52px; height: 52px; border-radius: 14px; background: var(--g-field); box-shadow: inset 0 0 0 1px var(--g-line);
+                display: flex; align-items: center; justify-content: center; transition: transform .25s var(--ease), background .25s; }
+  .tile:hover .icon { transform: translateY(-2px); background: var(--g-hover); }
+  .tile:focus-visible .icon { box-shadow: 0 0 0 2px var(--a1); }
+  .badge { width: 28px; height: 28px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+  .tile .name { font-size: 12px; max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .remove { position: absolute; top: 0; right: 4px; width: 20px; height: 20px; border-radius: 50%; background: var(--g-bg);
+                  box-shadow: inset 0 0 0 1px var(--g-line); font-size: 11px; opacity: 0; transition: opacity .15s; }
+  .tile:hover .remove { opacity: 1; }
+  .tile.add .icon { background: transparent; box-shadow: inset 0 0 0 1px var(--g-line); color: var(--g-text2); font-size: 24px; font-weight: 300; }
+
+  /* frequently visited */
+  .rows { display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+  .row-link { display: flex; align-items: center; gap: 12px; padding: 7px 8px; border-radius: 10px; text-decoration: none; color: var(--g-text); }
+  .row-link:hover { background: var(--g-hover); }
+  .row-link .badge { width: 24px; height: 24px; border-radius: 7px; font-size: 12px; flex: none; }
+  .row-link .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-link .h { color: var(--g-text2); font-size: 12px; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: var(--g-text2); }
+
+  /* weather */
+  .weather .now { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .weather .now > div { min-width: 0; }
+  .weather .now svg { width: 52px; height: 52px; flex: none; }
+  .weather .city { font-size: 13px; font-weight: 600; color: var(--g-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+  .weather .temp { font: 200 44px/1 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; }
+  .weather .what { color: var(--g-text2); font-size: 12.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .weather .days { margin-top: auto; display: flex; flex-wrap: wrap; gap: 24px 6px; padding-top: 10px; height: 40px; overflow: hidden; }
+  .weather .day { flex: 1 0 70px; height: 30px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px;
+                  padding: 6px 4px; border-radius: 10px; background: var(--g-field); font-size: 12px; white-space: nowrap; }
+  .weather .day svg { width: 18px; height: 18px; flex: none; }
+  .weather .day i { font-style: normal; }
+  .weather .day .min { display: none; }
+  .weather.tall .days { height: 86px; }
+  .weather.tall .day { flex-direction: column; gap: 4px; padding: 8px 4px; border-radius: 12px; height: 76px; }
+  .weather.tall .day svg { width: 22px; height: 22px; }
+  .weather.tall .day .min { display: inline; }
+  .weather .day b { font-weight: 600; }
+  .weather .day span { color: var(--g-text2); }
+  .weather .empty { margin: auto; text-align: center; color: var(--g-text2); }
+  .weather .empty button { margin-top: 10px; }
+
+  /* notes and to-do */
+  .notes textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: none; font-size: 14px; line-height: 1.55; }
+  .notes textarea::placeholder, .todo input::placeholder { color: var(--g-text2); }
+  .todo ul { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+  .todo li { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 8px; }
+  .todo li:hover { background: var(--g-hover); }
+  .todo li .chk { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--g-text2); flex: none; display: flex; align-items: center; justify-content: center; font-size: 11px; transition: background .2s; }
+  .todo li.done .chk { background: var(--a1); box-shadow: none; color: #fff; }
+  .todo li.done .txt { color: var(--g-text2); text-decoration: line-through; }
+  .todo li .txt { flex: 1; min-width: 0; word-break: break-word; }
+  .todo li .del { opacity: 0; color: var(--g-text2); font-size: 12px; width: 20px; }
+  .todo li:hover .del { opacity: 1; }
+  .todo form { margin-top: 8px; }
+  .todo input { width: 100%; height: 34px; border: 0; outline: none; border-radius: 10px; padding: 0 12px; background: var(--g-field); }
+
+  .pill { height: 30px; padding: 0 14px; border-radius: 999px; background: var(--g-field); box-shadow: inset 0 0 0 1px var(--g-line); font-size: 12.5px; }
+  .pill:hover { background: var(--g-hover); }
+
+  /* ---- editing ----------------------------------------------------------------------- */
+  body.editing #board::before { content: ""; position: absolute; inset: 0 -8px; border-radius: 12px; pointer-events: none;
+                                background: repeating-linear-gradient(90deg, rgba(255,255,255,.03) 0 calc(var(--cw) - 16px), transparent calc(var(--cw) - 16px) var(--cw)); }
+  body.tone-light.editing #board::before { background: repeating-linear-gradient(90deg, rgba(0,0,0,.03) 0 calc(var(--cw) - 16px), transparent calc(var(--cw) - 16px) var(--cw)); }
+  body.editing .w { cursor: grab; box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 1px rgba(158,128,255,.35), 0 18px 40px -24px rgba(0,0,0,.6); }
+  body.editing .w.bare { background: rgba(255,255,255,.04); }
+  body.editing .w .body { pointer-events: none; }
+  body.editing .w.dragging { cursor: grabbing; transition: none; z-index: 5; box-shadow: inset 0 0 0 1px var(--g-line), 0 0 0 2px var(--a1), 0 30px 60px -20px rgba(0,0,0,.7); }
+  .w .tools { position: absolute; top: 8px; right: 8px; display: none; gap: 4px; z-index: 2; }
+  body.editing .w .tools { display: flex; }
+  .w .tools button { width: 26px; height: 26px; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+  .w .tools button:hover { background: rgba(0,0,0,.7); }
+  .w .grip { position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; display: none; cursor: nwse-resize; z-index: 2; }
+  .w .grip::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid var(--g-text2); border-bottom: 2px solid var(--g-text2); border-radius: 0 0 3px 0; }
+  body.editing .w .grip { display: block; }
+  .ghost { position: absolute; border-radius: 20px; background: rgba(158,128,255,.16); box-shadow: inset 0 0 0 2px rgba(158,128,255,.6); pointer-events: none; transition: all .15s; z-index: 0; }
+
+  .corner { position: fixed; right: 18px; bottom: 14px; z-index: 3; height: 34px; padding: 0 14px; border-radius: 999px;
+            display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--g-text); background: var(--g-bg);
+            box-shadow: inset 0 0 0 1px var(--g-line); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+            opacity: .75; transition: opacity .25s, transform .25s var(--ease); }
+  .corner:hover { opacity: 1; transform: translateY(-1px); }
+  .corner svg { width: 14px; height: 14px; }
+  body.editing .corner { opacity: 0; pointer-events: none; }
+
+  /* the panel on the right while editing */
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 6; display: flex; flex-direction: column;
+           background: rgba(22, 20, 38, .90); color: #F4F2FF; -webkit-backdrop-filter: blur(24px) saturate(140%); backdrop-filter: blur(24px) saturate(140%);
+           box-shadow: -1px 0 0 rgba(255,255,255,.08), -20px 0 60px -20px rgba(0,0,0,.6);
+           transform: translateX(105%); transition: transform .45s var(--ease); }
+  body.editing #panel { transform: none; }
+  #panel header { padding: 20px 20px 12px; }
+  #panel h3 { margin: 0 0 14px; font: 300 22px/1.2 "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", sans-serif; }
+  .tabs { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(255,255,255,.06); }
+  .tabs button { flex: 1; height: 30px; border-radius: 999px; color: rgba(236,232,255,.66); font-size: 13px; transition: background .25s, color .25s; }
+  .tabs button[aria-pressed="true"] { background: rgba(255,255,255,.12); color: #fff; }
+  #panel .scroll { flex: 1; overflow: auto; padding: 8px 20px 20px; }
+  .wlist button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; text-align: left; transition: background .2s; }
+  .wlist button:hover { background: rgba(255,255,255,.06); }
+  .wlist button:disabled { opacity: .4; cursor: default; background: none; }
+  .wlist .ic { width: 38px; height: 38px; border-radius: 11px; background: linear-gradient(135deg, rgba(158,128,255,.35), rgba(106,76,224,.35)); display: flex; align-items: center; justify-content: center; flex: none; }
+  .wlist .ic svg { width: 20px; height: 20px; }
+  .wlist b { display: block; font-size: 13.5px; font-weight: 600; }
+  .wlist span.d { font-size: 12px; color: rgba(236,232,255,.6); }
+  .wlist .plus { margin-left: auto; color: rgba(236,232,255,.6); font-size: 18px; }
+  .walls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .walls button { position: relative; height: 84px; border-radius: 14px; overflow: hidden; background-size: cover; background-position: center;
+                  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); transition: transform .25s var(--ease), box-shadow .25s; }
+  .walls button:hover { transform: translateY(-2px); }
+  .walls button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--a1), 0 10px 26px -12px rgba(140,110,255,.9); }
+  .walls button span { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .walls button.wp-morning span { color: #2a2440; text-shadow: none; }
+  .walls .file { display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.05); color: rgba(236,232,255,.7); font-size: 22px; }
+  .walls .file svg { width: 26px; height: 26px; margin-top: -10px; }
+  .slider { margin-top: 18px; }
+  .slider label { display: flex; justify-content: space-between; font-size: 12.5px; color: rgba(236,232,255,.7); margin-bottom: 6px; }
+  .slider input { width: 100%; accent-color: var(--a1); }
+  #panel footer { padding: 14px 20px 18px; display: flex; gap: 10px; box-shadow: 0 -1px 0 rgba(255,255,255,.08); }
+  #panel footer button { height: 38px; border-radius: 999px; padding: 0 16px; font-size: 13px; }
+  #panel footer .reset { color: rgba(236,232,255,.66); }
+  #panel footer .reset:hover { color: #fff; }
+  #panel footer .done { margin-left: auto; padding: 0 26px; color: #fff; font-weight: 600; background: linear-gradient(135deg, var(--a1), var(--a2)); }
+
+  /* small cards: widget settings, add a favorite */
+  .pop { position: fixed; z-index: 8; width: 300px; padding: 16px; border-radius: 16px; background: rgba(28, 26, 46, .97); color: #F4F2FF;
+         box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 24px 60px -16px rgba(0,0,0,.7); }
+  .pop h4 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+  .pop input[type=text] { width: 100%; height: 34px; border-radius: 10px; border: 0; outline: none; padding: 0 12px; background: rgba(255,255,255,.08); }
+  .pop input[type=text]::placeholder { color: rgba(236,232,255,.45); }
+  .pop .opts { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow: auto; }
+  .pop .opts button { text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
+  .pop .opts button:hover { background: rgba(255,255,255,.08); }
+  .pop .opts small { color: rgba(236,232,255,.55); }
+  .pop label.chk { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13px; cursor: pointer; }
+  .pop label.chk input { accent-color: var(--a1); width: 16px; height: 16px; margin: 0; }
+  .pop .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .pop .row button { height: 32px; padding: 0 14px; border-radius: 999px; font-size: 13px; background: rgba(255,255,255,.08); }
+  .pop .row button.primary { background: linear-gradient(135deg, var(--a1), var(--a2)); font-weight: 600; }
+  .scrim { position: fixed; inset: 0; z-index: 7; }
+
+  /* ---- private tab (unchanged look) ---------------------------------------------------- */
+  body.private-page { background: var(--page); display: flex; align-items: center; justify-content: center; }
   .private { position: relative; width: 680px; max-width: calc(100% - 32px); padding: 0 0 40px; }
   .private .mark { position: fixed; left: 50%; top: 50%; width: 560px; height: 560px; transform: translate(-50%, -50%);
                    color: var(--priv); opacity: .07; pointer-events: none; z-index: 0; }
@@ -107,11 +261,9 @@
   .private h1 { margin: 0; font-size: 24px; font-weight: 600; }
   .private .lead { margin: 0 0 22px; color: var(--text2); font-size: 14px; line-height: 1.5; }
   .private .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .private .col { background: var(--card); border-radius: 12px; padding: 16px 18px;
-                  box-shadow: 0 0 0 1px var(--border), var(--shadow); }
+  .private .col { background: var(--card); border-radius: 12px; padding: 16px 18px; box-shadow: 0 0 0 1px var(--border), var(--shadow); }
   .private .col h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .private .col h3 .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center;
-                          justify-content: center; color: #fff; font-size: 11px; flex: none; }
+  .private .col h3 .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; flex: none; }
   .private .col.hidesit h3 .dot { background: var(--priv); }
   .private .col.shows h3 .dot { background: #C7681C; }
   .private ul { margin: 0; padding: 0 0 0 18px; color: var(--text2); line-height: 1.55; }
@@ -119,50 +271,33 @@
   .private li b { color: var(--text); font-weight: 600; }
   .private .hint { margin-top: 18px; color: var(--text2); font-size: 12px; }
   @media (max-width: 640px) { .private .cols { grid-template-columns: 1fr; } }
-
-  /* ---- welcome ---- */
-  .welcome { width: 640px; max-width: calc(100% - 32px); background: var(--card); border-radius: 16px;
-             box-shadow: 0 0 0 1px var(--border), 0 12px 40px rgba(0,0,0,.12); overflow: hidden; }
-  .welcome .body { padding: 32px 36px 8px; display: flex; flex-direction: column; gap: 20px; }
-  .welcome h1 { margin: 0; font-size: 24px; font-weight: 600; }
-  .welcome p { margin: 6px 0 0; color: var(--text2); }
-  .group h4 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--text2); }
-  .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .seg button { height: 40px; border-radius: 8px; border: 0; background: var(--page); box-shadow: 0 0 0 1px var(--border); cursor: pointer; }
-  .seg button:hover { background: var(--hover); }
-  .seg button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); font-weight: 600; background: var(--card); }
-  .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-  .welcome .foot { margin-top: 12px; padding: 16px 36px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-<main id="start" class="hidden">
-  <section id="favSection">
-    <div class="shead"><h2 id="favTitle"></h2><a href="lyra://bookmarks" id="allBookmarks"></a></div>
-    <div class="grid" id="grid"></div>
-  </section>
-  <section id="freqSection" class="freq hidden">
-    <h2 id="freqTitle"></h2>
-    <div class="fgrid" id="fgrid"></div>
-  </section>
-</main>
+<div id="wall" class="hidden"></div>
+<div id="stars" class="hidden"></div>
+<main id="board" class="hidden"></main>
+<a class="credit hidden" id="credit" target="_blank"></a>
 <button class="corner hidden" id="customize">
-  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 4h7M12 4h2M2 12h2M7 12h7"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h7M12 4h2M2 12h2M7 12h7"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>
   <span id="customizeText"></span>
 </button>
 
-<div class="scrim hidden" id="addScrim">
-  <form class="dialog" id="addForm">
-    <h3 id="addTitle"></h3>
-    <label><span id="addNameLabel"></span><input id="addName" autocomplete="off"></label>
-    <label><span id="addUrlLabel"></span><input id="addUrl" autocomplete="off" placeholder="example.com"></label>
-    <div class="row">
-      <button type="button" class="btn" id="addCancel"></button>
-      <button type="submit" class="btn primary" id="addOk"></button>
+<aside id="panel">
+  <header>
+    <h3 id="panelTitle"></h3>
+    <div class="tabs"><button data-tab="widgets" aria-pressed="true" id="tabWidgets"></button><button data-tab="walls" aria-pressed="false" id="tabWalls"></button></div>
+  </header>
+  <div class="scroll">
+    <div class="wlist" id="wlist"></div>
+    <div id="wallsTab" class="hidden">
+      <div class="walls" id="walls"></div>
+      <div class="slider"><label><span id="dimLabel"></span><span id="dimValue"></span></label><input type="range" id="dim" min="0" max="70" step="5"></div>
     </div>
-  </form>
-</div>
+  </div>
+  <footer><button class="reset" id="reset"></button><button class="done" id="done"></button></footer>
+</aside>
 
 <section class="private hidden" id="private">
   <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c5 0 8.6 4.1 9.7 6.3a1.6 1.6 0 0 1 0 1.4 13 13 0 0 1-2.6 3.4"/><path d="M6.6 6.6A13.3 13.3 0 0 0 2.3 11.3a1.6 1.6 0 0 0 0 1.4C3.4 14.9 7 19 12 19a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
@@ -180,46 +315,37 @@
   </div>
 </section>
 
-<section class="welcome hidden" id="welcome">
-  <div class="body">
-    <div><h1 id="wTitle"></h1><p id="wText"></p></div>
-    <div class="group"><h4 id="wLang"></h4><div class="seg" data-key="lang"></div></div>
-    <div class="group"><h4 id="wTheme"></h4><div class="seg" data-key="theme"></div></div>
-    <div class="group"><h4 id="wLayout"></h4><div class="seg" data-key="layout"></div></div>
-    <div class="group"><h4 id="wDensity"></h4><div class="seg" data-key="density"></div></div>
-    <div class="group"><h4 id="wStart"></h4>
-      <label class="check"><input type="checkbox" id="wFav"><span id="wFavText"></span></label>
-      <label class="check" style="margin-top:8px"><input type="checkbox" id="wFreq"><span id="wFreqText"></span></label>
-    </div>
-  </div>
-  <div class="foot"><button class="btn primary" id="wDone"></button></div>
-</section>
-
 <script>
 "use strict";
 const q = new URLSearchParams(location.search);
-const state = {
-  lang: +(q.get("language") || 0),        // 0 as in Windows, 1 English, 2 Russian
-  theme: +(q.get("themeMode") || 0),      // 0 as in Windows, 1 light, 2 dark
-  layout: +(q.get("layout") || 0),
-  density: +(q.get("density") || 0),
-  fav: q.get("fav") !== "0",
-  freq: q.get("freq") === "1",
-};
-const systemRu = q.get("sysru") === "1";
-const systemDark = q.get("sysdark") === "1";
-const welcome = q.get("welcome") === "1";
-if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.style.setProperty("--accent", "#" + q.get("accent"));
+const state = { lang: +(q.get("language") || 0), theme: +(q.get("themeMode") || 0) };
+const systemRu = q.get("sysru") === "1", systemDark = q.get("sysdark") === "1";
+const ru = () => state.lang === 2 || (state.lang === 0 && systemRu);
+const dark = () => state.theme === 2 || (state.theme === 0 && systemDark);
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
 const T = {
   en: {
-    allBookmarks: "All bookmarks", newTab: "New Tab", favorites: "Favorites", frequent: "Frequently Visited", wFreq: "Show frequently visited sites", add: "Add", customize: "Customize start page",
-    addTitle: "Add to Favorites", name: "Name", address: "Address", cancel: "Cancel", remove: "Remove",
-    wTitle: "Welcome to Lyra", wText: "Set up the basics. Everything can be changed later in Settings.",
-    wLang: "Language", wTheme: "Theme", wLayout: "Tabs", wDensity: "Toolbar size", wStart: "Start page",
-    wFav: "Show Favorites", wDone: "Get started",
-    lang: ["As in Windows", "English", "Русский"], theme: ["As in Windows", "Light", "Dark"],
-    layout: ["Compact", "Separate tab bar", "Vertical"], density: ["Compact", "Normal", "Large"],
+    newTab: "New Tab", customize: "Customize", panelTitle: "Your start page", tabWidgets: "Widgets", tabWalls: "Wallpaper",
+    reset: "Reset", done: "Done", dim: "Darken", remove: "Remove", settings: "Settings",
+    resetAsk: "Put the start page back as it was at first?",
+    favorites: "Favorites", allBookmarks: "All bookmarks", add: "Add", frequent: "Frequently visited", noFrequent: "Sites you visit often will appear here.",
+    search: "Search or enter address", notesPh: "A thought, a list, a number to remember…", todoPh: "Add a task and press Enter",
+    weatherNone: "Choose a city to see the weather", chooseCity: "Choose city", cityPh: "City", weatherFail: "No weather right now",
+    addTitle: "Add to Favorites", name: "Name", cancel: "Cancel", seconds: "Show seconds", greeting: "Show the date",
+    greet: ["Good night", "Good morning", "Good afternoon", "Good evening"],
+    widgets: {
+      clock: ["Clock", "Time and date, large and calm"], search: ["Search", "Search the web or go to an address"],
+      favorites: ["Favorites", "Your favourite sites as tiles"], frequent: ["Frequently visited", "The sites you open most"],
+      weather: ["Weather", "Now and the next days, for any city"], notes: ["Notes", "A small notepad, kept on this computer"],
+      todo: ["To-do", "A short list of things to do"],
+    },
+    walls: { night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture" },
+    wmo: { 0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Fog", 51: "Drizzle", 53: "Drizzle", 55: "Drizzle",
+           61: "Rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain", 71: "Snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+           80: "Showers", 81: "Showers", 82: "Heavy showers", 85: "Snow showers", 86: "Snow showers", 95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm" },
+    days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
     pTab: "Private Tab", pTitle: "You are browsing privately",
     pLead: "When you close the last private tab, Lyra forgets everything these tabs did. Other people using this computer will not see it.",
     pForgets: "Lyra does not keep", pShows: "Private browsing does not hide",
@@ -233,13 +359,25 @@ const T = {
     pHint: "Type an address or a search in the address field above. Ctrl+Shift+N opens another private tab.",
   },
   ru: {
-    allBookmarks: "Все закладки", newTab: "Новая вкладка", favorites: "Избранное", frequent: "Часто посещаемые", wFreq: "Показывать часто посещаемые", add: "Добавить", customize: "Настроить стартовую страницу",
-    addTitle: "Добавить в избранное", name: "Название", address: "Адрес", cancel: "Отмена", remove: "Убрать",
-    wTitle: "Добро пожаловать в Lyra", wText: "Настройте основное — всё это можно поменять позже в настройках.",
-    wLang: "Язык", wTheme: "Тема", wLayout: "Вкладки", wDensity: "Размер панелей", wStart: "Стартовая страница",
-    wFav: "Показывать избранное", wDone: "Начать",
-    lang: ["Как в Windows", "English", "Русский"], theme: ["Как в Windows", "Светлая", "Тёмная"],
-    layout: ["Компактно", "Отдельной строкой", "Вертикально"], density: ["Компактный", "Обычный", "Крупный"],
+    newTab: "Новая вкладка", customize: "Настроить", panelTitle: "Ваша стартовая страница", tabWidgets: "Виджеты", tabWalls: "Обои",
+    reset: "Сбросить", done: "Готово", dim: "Затемнение", remove: "Убрать", settings: "Настройки",
+    resetAsk: "Вернуть стартовую страницу к первоначальному виду?",
+    favorites: "Избранное", allBookmarks: "Все закладки", add: "Добавить", frequent: "Часто посещаемые", noFrequent: "Здесь появятся сайты, которые вы открываете чаще всего.",
+    search: "Поиск или адрес", notesPh: "Мысль, список, номер, который нужно запомнить…", todoPh: "Новая задача — и Enter",
+    weatherNone: "Выберите город, чтобы видеть погоду", chooseCity: "Выбрать город", cityPh: "Город", weatherFail: "Погода сейчас недоступна",
+    addTitle: "Добавить в избранное", name: "Название", cancel: "Отмена", seconds: "Показывать секунды", greeting: "Показывать дату",
+    greet: ["Доброй ночи", "Доброе утро", "Добрый день", "Добрый вечер"],
+    widgets: {
+      clock: ["Часы", "Время и дата — крупно и спокойно"], search: ["Поиск", "Поиск в сети или переход по адресу"],
+      favorites: ["Избранное", "Любимые сайты плитками"], frequent: ["Часто посещаемые", "Сайты, которые вы открываете чаще всего"],
+      weather: ["Погода", "Сейчас и на ближайшие дни, в любом городе"], notes: ["Заметки", "Маленький блокнот, хранится на этом компьютере"],
+      todo: ["Задачи", "Короткий список дел"],
+    },
+    walls: { night: "Ночное небо", aurora: "Северное сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка" },
+    wmo: { 0: "Ясно", 1: "Преимущественно ясно", 2: "Переменная облачность", 3: "Пасмурно", 45: "Туман", 48: "Туман", 51: "Морось", 53: "Морось", 55: "Морось",
+           61: "Дождь", 63: "Дождь", 65: "Сильный дождь", 66: "Ледяной дождь", 67: "Ледяной дождь", 71: "Снег", 73: "Снег", 75: "Сильный снег", 77: "Снежная крупа",
+           80: "Ливень", 81: "Ливень", 82: "Сильный ливень", 85: "Снегопад", 86: "Снегопад", 95: "Гроза", 96: "Гроза", 99: "Гроза" },
+    days: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"],
     pTab: "Приватная вкладка", pTitle: "Вы в приватном режиме",
     pLead: "Когда закроется последняя приватная вкладка, Lyra забудет всё, что в них происходило. Другие пользователи этого компьютера этого не увидят.",
     pForgets: "Lyra не сохраняет", pShows: "Приватный режим не скрывает",
@@ -253,231 +391,681 @@ const T = {
     pHint: "Введите адрес или поисковый запрос в адресной строке выше. Ctrl+Shift+N откроет ещё одну приватную вкладку.",
   },
 };
-const ru = () => state.lang === 2 || (state.lang === 0 && systemRu);
 const t = () => (ru() ? T.ru : T.en);
-const $ = (id) => document.getElementById(id);
 
-function applyTheme() {
-  const dark = state.theme === 2 || (state.theme === 0 && systemDark);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+const ICON = {
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+  favorites: '<path d="M12 4.5 14.3 9l5 .7-3.6 3.5.9 5-4.6-2.4-4.6 2.4.9-5L4.7 9.7l5-.7z"/>',
+  frequent: '<path d="M4 18 9 12l4 3 7-8"/><path d="M15 7h5v5"/>',
+  weather: '<circle cx="9" cy="10" r="3.5"/><path d="M9 3v1.5M3.5 10H2M4.8 5.8l1 1M13.2 5.8l-1 1"/><path d="M10 19h7.5a3.5 3.5 0 0 0 0-7h-.3A4.5 4.5 0 0 0 9 14.5"/>',
+  notes: '<path d="M6 3.5h9l3.5 3.5v13.5H6z"/><path d="M14.5 3.5V7.5h4"/><path d="M9 12h6M9 15.5h6"/>',
+  todo: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+};
+const svg = (paths, sw) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 1.6) + '" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+
+// ---- the saved layout -----------------------------------------------------------------
+// cfg = { v: 1, wallpaper: { kind: "builtin"|"bing"|"file", id, dim }, widgets: [{ id, type, x, y, w, h, opt }], data: { <id>: ... } }
+const KINDS = {   // grid sizes: default, minimum, maximum; single = only one on the page
+  clock:     { w: 6, h: 3, minW: 3, minH: 2, maxH: 6, single: true, bare: true },
+  search:    { w: 6, h: 1, minW: 3, minH: 1, maxH: 1, single: true },
+  favorites: { w: 8, h: 3, minW: 3, minH: 2, maxH: 8, single: true },
+  frequent:  { w: 4, h: 4, minW: 3, minH: 2, maxH: 8, single: true },
+  weather:   { w: 4, h: 3, minW: 3, minH: 2, maxH: 5 },
+  notes:     { w: 4, h: 3, minW: 2, minH: 2, maxH: 10 },
+  todo:      { w: 4, h: 4, minW: 3, minH: 2, maxH: 10 },
+};
+function defaultConfig() {
+  const fav = q.get("fav") !== "0", freq = q.get("freq") === "1";
+  const widgets = [
+    { id: "clock", type: "clock", x: 3, y: 0, w: 6, h: 3 },
+    { id: "search", type: "search", x: 3, y: 3, w: 6, h: 1 },
+  ];
+  if (fav) widgets.push({ id: "favorites", type: "favorites", x: 2, y: 5, w: freq ? 5 : 8, h: 3 });
+  if (freq) widgets.push({ id: "frequent", type: "frequent", x: fav ? 7 : 4, y: 5, w: fav ? 3 : 4, h: 3 });
+  return { v: 1, wallpaper: { kind: "builtin", id: "night", dim: 0 }, widgets, data: {} };
+}
+let cfg;
+try { cfg = JSON.parse(q.get("cfg") || "null"); } catch (e) { cfg = null; }
+if (!cfg || !Array.isArray(cfg.widgets)) cfg = defaultConfig();
+cfg.data = cfg.data || {};
+cfg.wallpaper = cfg.wallpaper || { kind: "builtin", id: "night", dim: 0 };
+cfg.widgets = cfg.widgets.filter((w) => w && KINDS[w.type]);
+let saveTimer = 0;
+function save(now) {
+  clearTimeout(saveTimer);
+  const go = () => { location.href = "lyra://start-save?cfg=" + encodeURIComponent(JSON.stringify(cfg)); };
+  if (now) go(); else saveTimer = setTimeout(go, 500);
+}
+const newId = (type) => type + "-" + Math.random().toString(36).slice(2, 7);
+
+// ---- wallpaper --------------------------------------------------------------------------
+const BUILTIN = { night: "dark", aurora: "dark", dusk: "dark", ocean: "dark", morning: "light", plain: "" };
+const WPDIR = q.get("wpdir") || "";
+const customUrl = () => q.get("custom") ? WPDIR + encodeURIComponent(q.get("custom")) + "?v=" + (q.get("cv") || 0) : "";
+const bingUrl = () => q.get("bing") === "1" ? WPDIR + "bing.jpg?v=" + (q.get("bv") || 0) : "";
+let starsMade = false;
+function applyWallpaper() {
+  const wp = cfg.wallpaper, wall = $("wall");
+  wall.className = "";
+  wall.style.removeProperty("--wp");
+  let tone = "dark", night = false;
+  if (wp.kind === "file" && customUrl()) {
+    wall.style.setProperty("--wp", "url('" + customUrl() + "')");
+  } else if (wp.kind === "bing" && bingUrl()) {
+    wall.style.setProperty("--wp", "url('" + bingUrl() + "')");
+  } else if (wp.kind === "bing" || wp.kind === "file") {
+    wall.className = "wp-night"; night = true;       // the picture is still on its way
+  } else {
+    const id = BUILTIN.hasOwnProperty(wp.id) ? wp.id : "night";
+    wall.className = "wp-" + id;
+    tone = BUILTIN[id] || (dark() ? "dark" : "light");
+    night = id === "night";
+  }
+  wall.style.setProperty("--dim", (wp.dim || 0) / 100);
+  document.body.classList.toggle("tone-light", tone === "light");
+  $("stars").classList.toggle("hidden", !night);
+  if (night && !starsMade) { makeStars(); starsMade = true; }
+  const credit = $("credit");
+  const showCredit = wp.kind === "bing" && bingUrl() && q.get("bingInfo");
+  credit.classList.toggle("hidden", !showCredit);
+  if (showCredit) { credit.textContent = q.get("bingInfo"); credit.href = q.get("bingLink") || "https://www.bing.com"; }
+}
+function makeStars() {
+  const box = $("stars"), n = Math.round(innerWidth * innerHeight / 6000);
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    const big = Math.random() < .08, r = ((big ? 1.3 : .5) + Math.random() * .8) * 2;
+    html += '<i class="' + (big ? "big" : "") + '" style="left:' + (Math.random() * 100).toFixed(2) + "%;top:" + (Math.random() * 100).toFixed(2) +
+            "%;width:" + r.toFixed(1) + "px;height:" + r.toFixed(1) + "px;--a:" + (.3 + Math.random() * .6).toFixed(2) + ";--d:" +
+            (2.5 + Math.random() * 5).toFixed(1) + "s;--w:-" + (Math.random() * 6).toFixed(1) + 's"></i>';
+  }
+  box.innerHTML = html;
 }
 
-// ---- favourites ----------------------------------------------------------------
-// The bookmarks in Lyra's Favorites folder: ?favs=[{i: id, u: url, t: title}].
+// ---- grid geometry --------------------------------------------------------------------------
+const COLS = 12, ROW = 64, GAP = 16, TOP = 56, PANEL = 340;
+let cw = 80, offY = TOP;
+function measure() {
+  const room = innerWidth - (editing ? PANEL : 0);
+  const width = Math.max(480, Math.min(1180, room - 64));
+  cw = width / COLS;
+  const board = $("board");
+  board.style.width = width + "px";
+  board.style.marginLeft = Math.max(16, (room - width) / 2) + "px";
+  board.style.setProperty("--cw", cw + "px");
+  const rows = cfg.widgets.reduce((m, w) => Math.max(m, w.y + w.h), 0);
+  // Fewer rows than the window: the widgets sit a little above the middle.
+  offY = Math.max(TOP, Math.min((innerHeight - rows * ROW) * 0.38, 240));
+  const h = offY + rows * ROW + 24;
+  board.style.height = h + "px";
+  document.documentElement.style.setProperty("--page-h", Math.max(innerHeight, h) + "px");
+}
+function place(node, w) {
+  node.style.left = (w.x * cw) + "px";
+  node.style.top = (offY + w.y * ROW) + "px";
+  node.style.width = (w.w * cw - GAP) + "px";
+  node.style.height = (w.h * ROW - GAP) + "px";
+  node.style.setProperty("--h", (w.h * ROW - GAP) + "px");
+}
+const overlaps = (a, b) => a !== b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+// Moves widgets down until none overlaps `moved` (or each other), top to bottom.
+function settle(moved) {
+  const list = cfg.widgets.slice().sort((a, b) => (a === moved ? -1 : b === moved ? 1 : a.y - b.y || a.x - b.x));
+  const placed = [];
+  for (const w of list) {
+    while (placed.some((p) => overlaps(w, p))) w.y++;
+    placed.push(w);
+  }
+}
+// Lifts widgets up into empty rows, so the page keeps no gaps after a move.
+function compact() {
+  const list = cfg.widgets.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const w of list) {
+    while (w.y > 0) {
+      const probe = { x: w.x, y: w.y - 1, w: w.w, h: w.h };
+      if (cfg.widgets.some((o) => o !== w && overlaps(probe, o))) break;
+      w.y--;
+    }
+  }
+}
+function freeSpot(w, h) {
+  for (let y = 0; y < 80; y++)
+    for (let x = 0; x + w <= COLS; x++) {
+      const probe = { x, y, w, h };
+      if (!cfg.widgets.some((o) => overlaps(probe, o))) return probe;
+    }
+  return { x: 0, y: 0, w, h };
+}
+
+// ---- widgets ------------------------------------------------------------------------------
+const nodes = new Map();      // widget id -> element
+function render(animate) {
+  measure();
+  const board = $("board");
+  const seen = new Set();
+  cfg.widgets.forEach((w, i) => {
+    seen.add(w.id);
+    let node = nodes.get(w.id);
+    if (!node) {
+      node = el("div", "w " + w.type + (KINDS[w.type].bare ? " bare" : ""));
+      node.dataset.id = w.id;
+      node.appendChild(el("div", "body"));
+      const tools = el("div", "tools");
+      if (w.type === "weather" || w.type === "clock") {
+        const gear = el("button", "", "&#9881;"); gear.title = t().settings;
+        gear.addEventListener("pointerdown", (e) => e.stopPropagation());
+        gear.addEventListener("click", (e) => { e.stopPropagation(); openSettings(w, node); });
+        tools.appendChild(gear);
+      }
+      const x = el("button", "", "&#10005;"); x.title = t().remove;
+      x.addEventListener("pointerdown", (e) => e.stopPropagation());
+      x.addEventListener("click", (e) => { e.stopPropagation(); removeWidget(w); });
+      tools.appendChild(x);
+      node.appendChild(tools);
+      const grip = el("div", "grip");
+      grip.addEventListener("pointerdown", (e) => startResize(e, w, node));
+      node.appendChild(grip);
+      node.addEventListener("pointerdown", (e) => startDrag(e, w, node));
+      board.appendChild(node);
+      nodes.set(w.id, node);
+      if (animate) node.classList.add("enter");
+      place(node, w);
+      fill(w, node);
+      if (animate) setTimeout(() => node.classList.remove("enter"), 80 + i * 70);
+    }
+    place(node, w);
+  });
+  for (const [id, node] of nodes) if (!seen.has(id)) { node.remove(); nodes.delete(id); }
+}
+function fill(w, node) {
+  const body = node.querySelector(".body");
+  body.textContent = "";
+  body.className = "body";
+  ({ clock: fillClock, search: fillSearch, favorites: fillFavorites, frequent: fillFrequent,
+     weather: fillWeather, notes: fillNotes, todo: fillTodo })[w.type](w, body);
+}
+function refill(type) { for (const w of cfg.widgets) if (!type || w.type === type) { const n = nodes.get(w.id); if (n) fill(w, n); } }
+
+// clock
+let clockTimer = 0;
+function fillClock(w, body) {
+  body.classList.add("clock");
+  const time = el("div", "time"), date = el("div", "date");
+  body.append(time, date);
+  const opt = w.opt || {};
+  const locale = ru() ? "ru-RU" : undefined;
+  const tick = () => {
+    const d = new Date();
+    time.textContent = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: opt.seconds ? "2-digit" : undefined });
+    const g = t().greet[Math.floor(((d.getHours() + 1) % 24) / 6)];
+    date.textContent = opt.date === false ? g : g + "  ·  " + d.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" });
+  };
+  tick();
+  clearInterval(clockTimer);
+  clockTimer = setInterval(tick, opt.seconds ? 1000 : 5000);
+}
+// search
+function fillSearch(w, body) {
+  const form = el("form", "", svg(ICON.search, 2) + '<input type="text" autocomplete="off" spellcheck="false">');
+  const input = form.querySelector("input");
+  input.placeholder = t().search;
+  form.addEventListener("submit", (e) => { e.preventDefault(); const v = input.value.trim(); if (v) location.href = "lyra://go?q=" + encodeURIComponent(v); });
+  body.appendChild(form);
+}
+// favorites
 let FAVS = [];
 try { FAVS = JSON.parse(q.get("favs") || "[]").filter((f) => f && typeof f.u === "string"); } catch (e) {}
-function lyraCommand(cmd, params) {
+function bookmarks(cmd, params) {
   const qs = Object.entries(params).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
   location.href = "lyra://bookmarks-" + cmd + (qs ? "?" + qs : "");
 }
-// Older builds kept Favorites in this page's storage: hand them to Lyra once (it reloads the page).
-const OLD_KEY = "lyra.favorites";
-function migrateOldFavorites() {
-  let old = null;
-  try { old = JSON.parse(localStorage.getItem(OLD_KEY)); } catch (e) {}
-  if (!Array.isArray(old)) return false;
-  try { localStorage.removeItem(OLD_KEY); } catch (e) {}
-  const pairs = old.filter((f) => f && typeof f.url === "string")
-                   .map((f) => "t=" + encodeURIComponent(f.title || "") + "&u=" + encodeURIComponent(f.url));
-  location.href = "lyra://bookmarks-favs?" + pairs.join("&");
-  return true;
+function fillFavorites(w, body) {
+  const h = el("h2", "", '<span class="grow"></span><a href="lyra://bookmarks"></a>');
+  h.firstChild.textContent = t().favorites; h.lastChild.textContent = t().allBookmarks;
+  const grid = el("div", "tiles");
+  for (const fav of FAVS) {
+    const a = el("a", "tile", '<span class="icon"><span class="badge"></span></span><span class="name"></span><button class="remove" type="button">&#10005;</button>');
+    a.href = fav.u; a.title = fav.u;
+    const b = badgeFor(fav.t, fav.u);
+    a.querySelector(".badge").textContent = b.letter; a.querySelector(".badge").style.background = b.color;
+    attachIcon(a.querySelector(".badge"), fav.u);
+    a.querySelector(".name").textContent = fav.t || hostOf(fav.u);
+    a.querySelector(".remove").title = t().remove;
+    a.querySelector(".remove").addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      FAVS = FAVS.filter((x) => x !== fav);
+      bookmarks("remove", { id: fav.i });
+      refill("favorites");
+    });
+    grid.appendChild(a);
+  }
+  const add = el("button", "tile add", '<span class="icon">+</span><span class="name"></span>');
+  add.type = "button"; add.querySelector(".name").textContent = t().add;
+  add.addEventListener("click", openAddFavorite);
+  grid.appendChild(add);
+  body.append(h, grid);
+}
+// frequently visited
+function fillFrequent(w, body) {
+  let top = [];
+  try { top = JSON.parse(q.get("top") || "[]").filter((e) => e && e.u).slice(0, 12); } catch (e) {}
+  const h = el("h2"); h.textContent = t().frequent;
+  const list = el("div", "rows");
+  if (!top.length) { const p = el("div", "muted"); p.textContent = t().noFrequent; list.appendChild(p); }
+  for (const e of top) {
+    const a = el("a", "row-link", '<span class="badge"></span><span class="t"></span><span class="h"></span>');
+    a.href = e.u; a.title = e.u;
+    const b = badgeFor(e.t, e.u);
+    a.querySelector(".badge").textContent = b.letter; a.querySelector(".badge").style.background = b.color;
+    attachIcon(a.querySelector(".badge"), e.u);
+    a.querySelector(".t").textContent = e.t || hostOf(e.u);
+    a.querySelector(".h").textContent = hostOf(e.u);
+    list.appendChild(a);
+  }
+  body.append(h, list);
+}
+// weather (Open-Meteo: free, no key; the page asks it directly)
+const WX = {
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/>',
+  part: '<circle cx="9" cy="9" r="3.4"/><path d="M9 3v1.2M3 9h1.2M4.8 4.8l.9.9M13.2 4.8l-.9.9"/><path d="M10 19.5h7.5a3.3 3.3 0 0 0 0-6.6h-.4A4.3 4.3 0 0 0 9 14.2a2.7 2.7 0 0 0 1 5.3z"/>',
+  cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.8 1.4A3.3 3.3 0 0 0 7 18.5z"/>',
+  fog: '<path d="M7 13.5h10.5a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.8 1.4A3.3 3.3 0 0 0 7 13.5z"/><path d="M4 17h16M6 20.5h12"/>',
+  rain: '<path d="M7 15h10.5a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.8 1.4A3.3 3.3 0 0 0 7 15z"/><path d="M8.5 18l-1 2.5M12.5 18l-1 2.5M16.5 18l-1 2.5"/>',
+  snow: '<path d="M7 15h10.5a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.8 1.4A3.3 3.3 0 0 0 7 15z"/><path d="M8.5 18.5h.01M12 20h.01M15.5 18.5h.01"/>',
+  storm: '<path d="M7 14h10.5a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.8 1.4A3.3 3.3 0 0 0 7 14z"/><path d="m12.5 15-2 3.5h3l-2 3.5"/>',
+};
+function wxIcon(code) {
+  const k = code === 0 || code === 1 ? "sun" : code === 2 ? "part" : code === 3 ? "cloud" : code === 45 || code === 48 ? "fog"
+          : code >= 95 ? "storm" : (code >= 71 && code <= 77) || code === 85 || code === 86 ? "snow" : code >= 51 ? "rain" : "cloud";
+  return svg(WX[k], 1.4);
+}
+function fillWeather(w, body) {
+  const opt = w.opt || {};
+  body.classList.add("weather");
+  body.title = "Weather data: Open-Meteo.com (CC BY 4.0)";
+  if (!opt.city) {
+    const empty = el("div", "empty", "<div></div><button class='pill'></button>");
+    empty.firstChild.textContent = t().weatherNone;
+    empty.lastChild.textContent = t().chooseCity;
+    empty.lastChild.addEventListener("click", () => openSettings(w, nodes.get(w.id)));
+    body.appendChild(empty);
+    return;
+  }
+  const data = cfg.data[w.id] || {};
+  const show = (j) => {
+    body.textContent = "";
+    body.classList.toggle("tall", w.h >= 4);
+    const c = j.current;
+    const now = el("div", "now", wxIcon(c.weather_code) + "<div><div class='city'></div><div class='temp'></div><div class='what'></div></div>");
+    now.querySelector(".city").textContent = opt.city;
+    now.querySelector(".temp").textContent = Math.round(c.temperature_2m) + "°";
+    now.querySelector(".what").textContent = (t().wmo[c.weather_code] || "") + "  ·  " +
+      Math.round(j.daily.temperature_2m_max[0]) + "° / " + Math.round(j.daily.temperature_2m_min[0]) + "°";
+    body.append(now);
+    const daysFit = 5;
+    if (w.h >= 3) {
+      const days = el("div", "days");
+      for (let i = 1; i <= daysFit && i < j.daily.time.length; i++) {
+        const d = el("div", "day", "<b></b>" + wxIcon(j.daily.weather_code[i]) + "<span><i class='max'></i><i class='min'></i></span>");
+        d.firstChild.textContent = t().days[new Date(j.daily.time[i] + "T12:00").getDay()];
+        d.querySelector('.max').textContent = Math.round(j.daily.temperature_2m_max[i]) + '°';
+        d.querySelector('.min').textContent = ' ' + Math.round(j.daily.temperature_2m_min[i]) + '°';
+        days.appendChild(d);
+      }
+      body.appendChild(days);
+    }
+  };
+  if (data.json) show(data.json);
+  if (!data.json || Date.now() - (data.at || 0) > 30 * 60 * 1000) {
+    fetch("https://api.open-meteo.com/v1/forecast?latitude=" + opt.lat + "&longitude=" + opt.lon +
+          "&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=6")
+      .then((r) => r.json()).then((j) => {
+        if (!j || !j.current) throw new Error("no data");
+        cfg.data[w.id] = { at: Date.now(), json: j };
+        save();
+        show(j);
+      }).catch(() => { if (!data.json) { body.textContent = ""; const e = el("div", "empty"); e.textContent = t().weatherFail; body.appendChild(e); } });
+  }
+}
+// notes
+function fillNotes(w, body) {
+  body.classList.add("notes");
+  const ta = el("textarea");
+  ta.placeholder = t().notesPh;
+  ta.value = (cfg.data[w.id] && cfg.data[w.id].text) || "";
+  ta.addEventListener("input", () => { cfg.data[w.id] = { text: ta.value }; save(); });
+  body.appendChild(ta);
+}
+// to-do
+function fillTodo(w, body) {
+  body.classList.add("todo");
+  const data = cfg.data[w.id] = cfg.data[w.id] || { items: [] };
+  const h = el("h2"); h.textContent = t().widgets.todo[0];
+  const ul = el("ul");
+  data.items.forEach((it, i) => {
+    const li = el("li", it.done ? "done" : "", '<button class="chk"></button><span class="txt"></span><button class="del">&#10005;</button>');
+    li.querySelector(".chk").textContent = it.done ? "✓" : "";
+    li.querySelector(".txt").textContent = it.text;
+    li.querySelector(".chk").addEventListener("click", () => { it.done = !it.done; save(); fill(w, nodes.get(w.id)); });
+    li.querySelector(".del").addEventListener("click", () => { data.items.splice(i, 1); save(); fill(w, nodes.get(w.id)); });
+    ul.appendChild(li);
+  });
+  const form = el("form", "", '<input type="text" autocomplete="off">');
+  const input = form.querySelector("input");
+  input.placeholder = t().todoPh;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = input.value.trim();
+    if (!v) return;
+    data.items.push({ text: v, done: false });
+    save();
+    fill(w, nodes.get(w.id));
+    nodes.get(w.id).querySelector("form input").focus();
+  });
+  body.append(h, ul, form);
 }
 
-// Site icons cached by Lyra (?icons=<folder URL>, files <host>.png); the letter badge stays when
-// there is none yet.
-const ICONS = new URLSearchParams(location.search).get("icons") || "";
-function iconKey(url) {
-  try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; }
+// site badges and icons (as the tab strip draws them)
+const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
+function badgeFor(title, url) {
+  const host = hostOf(url);
+  let h = 2166136261 >>> 0;
+  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const letter = ((title || host).match(/[\p{L}\p{N}]/u) || ["•"])[0].toUpperCase();
+  return { letter, color: PALETTE[Math.imul(h, 2654435761) >>> 29] };
 }
-function attachIcon(badgeEl, url, attempt) {
+const ICONS = q.get("icons") || "";
+function iconKey(url) { try { return new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) { return ""; } }
+let iconRequests = [], iconTimer = 0;
+function attachIcon(badge, url, attempt) {
   attempt = attempt || 0;
   const key = ICONS && iconKey(url);
   if (!key) return;
   const img = new Image();
-  img.onload = () => {
-    badgeEl.textContent = ""; badgeEl.style.background = "transparent";
-    img.style.width = "100%"; img.style.height = "100%"; img.style.borderRadius = "4px"; img.alt = "";
-    badgeEl.appendChild(img);
-  };
+  img.onload = () => { badge.textContent = ""; badge.style.background = "transparent"; img.style.cssText = "width:100%;height:100%;border-radius:4px"; badge.appendChild(img); };
   img.onerror = () => {
-    // Not cached yet: ask Lyra to fetch it, then look again a little later.
-    if (attempt === 0) requestIcon(url);
-    if (attempt < 2) setTimeout(() => attachIcon(badgeEl, url, attempt + 1), attempt === 0 ? 2500 : 7000);
+    if (attempt === 0) {
+      iconRequests.push(url);
+      clearTimeout(iconTimer);
+      iconTimer = setTimeout(() => {
+        const qs = iconRequests.slice(0, 40).map((u) => "u=" + encodeURIComponent(u)).join("&");
+        iconRequests = [];
+        if (qs) location.href = "lyra://favicons?" + qs;      // Lyra fetches them; the page stays
+      }, 150);
+    }
+    if (attempt < 2) setTimeout(() => attachIcon(badge, url, attempt + 1), attempt === 0 ? 2500 : 7000);
   };
   img.src = ICONS + key + ".png" + (attempt ? "?r=" + attempt : "");
 }
-let iconRequests = [], iconTimer = 0;
-function requestIcon(url) {
-  iconRequests.push(url);
-  clearTimeout(iconTimer);
-  iconTimer = setTimeout(() => {
-    const q = iconRequests.slice(0, 40).map((u) => "u=" + encodeURIComponent(u)).join("&");
-    iconRequests = [];
-    if (q) location.href = "lyra://favicons?" + q;     // handled by Lyra, the page stays
-  }, 150);
-}
-const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
-function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
-function badgeFor(f) {
-  const host = hostOf(f.url);
-  let h = 2166136261 >>> 0;
-  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
-  const letter = ((f.title || host).match(/[\p{L}\p{N}]/u) || ["•"])[0].toUpperCase();
-  return { letter, color: PALETTE[Math.imul(h, 2654435761) >>> 29] };   // same colour as the tab badge
-}
 
-function renderFavorites() {
-  const grid = $("grid");
-  grid.textContent = "";
-  FAVS.forEach((fav) => {
-    const f = { title: fav.t, url: fav.u };
-    const a = document.createElement("a");
-    a.className = "tile"; a.href = f.url; a.title = f.url;
-    const b = badgeFor(f);
-    a.innerHTML = '<span class="icon"><span class="badge"></span></span><span class="name"></span>' +
-                  '<button class="remove" type="button">✕</button>';
-    a.querySelector(".badge").textContent = b.letter;
-    a.querySelector(".badge").style.background = b.color;
-    attachIcon(a.querySelector(".badge"), f.url);
-    a.querySelector(".name").textContent = f.title || hostOf(f.url);
-    const rm = a.querySelector(".remove");
-    rm.title = t().remove; rm.setAttribute("aria-label", t().remove);
-    rm.addEventListener("click", (e) => {
-      e.preventDefault(); e.stopPropagation();
-      FAVS = FAVS.filter((x) => x !== fav);
-      lyraCommand("remove", { id: fav.i });          // the page updates itself, Lyra does not reload it
-      renderFavorites();
-    });
-    grid.appendChild(a);
-  });
-  const add = document.createElement("button");
-  add.type = "button"; add.className = "tile add";
-  add.style.border = "0"; add.style.background = "none"; add.style.cursor = "pointer";
-  add.innerHTML = '<span class="icon">+</span><span class="name"></span>';
-  add.querySelector(".name").textContent = t().add;
-  add.addEventListener("click", openAdd);
-  grid.appendChild(add);
+// ---- editing: drag, resize, add, remove -----------------------------------------------------
+let editing = false;
+function setEditing(on) {
+  editing = on;
+  document.body.classList.toggle("editing", on);
+  closePop();
+  if (on) renderPanel();
+  else save(true);
+  render();
 }
-
-// ---- frequently visited (from Lyra's history, passed as ?top=[{u,t}]) ------------------
-function renderFrequent() {
-  let top = [];
-  try { top = JSON.parse(q.get("top") || "[]"); } catch (e) {}
-  // Shown next to Favorites even when a site is in both: these are the sites actually used most.
-  top = top.filter((e) => e && e.u).slice(0, 8);
-  const section = $("freqSection");
-  section.classList.toggle("hidden", !state.freq || !top.length);
-  section.classList.toggle("freq", state.fav);
-  const grid = $("fgrid");
-  grid.textContent = "";
-  for (const e of top) {
-    const a = document.createElement("a");
-    a.className = "fcard"; a.href = e.u; a.title = e.u;
-    const b = badgeFor({ title: hostOf(e.u), url: e.u });
-    a.innerHTML = '<span class="thumb"><span class="badge"></span></span>' +
-                  '<span class="fmeta"><span class="ftitle"></span><span class="fhost"></span></span>';
-    a.querySelector(".badge").textContent = b.letter;
-    a.querySelector(".badge").style.background = b.color;
-    attachIcon(a.querySelector(".badge"), e.u);
-    a.querySelector(".ftitle").textContent = e.t || hostOf(e.u);
-    a.querySelector(".fhost").textContent = hostOf(e.u);
-    grid.appendChild(a);
-  }
+let ghost = null;
+function showGhost(w) {
+  if (!ghost) { ghost = el("div", "ghost"); $("board").appendChild(ghost); }
+  place(ghost, w);
 }
-
-function openAdd() {
-  $("addName").value = ""; $("addUrl").value = "";
-  $("addScrim").classList.remove("hidden");
-  $("addUrl").focus();
-}
-function closeAdd() { $("addScrim").classList.add("hidden"); }
-$("addCancel").addEventListener("click", closeAdd);
-$("addScrim").addEventListener("click", (e) => { if (e.target === $("addScrim")) closeAdd(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAdd(); });
-$("addForm").addEventListener("submit", (e) => {
+function hideGhost() { if (ghost) { ghost.remove(); ghost = null; } }
+function startDrag(e, w, node) {
+  if (!editing || e.button !== 0) return;
   e.preventDefault();
-  let url = $("addUrl").value.trim();
-  if (!url) { $("addUrl").focus(); return; }
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
-  closeAdd();
-  lyraCommand("add", { folder: 1, t: $("addName").value.trim() || hostOf(url), u: url });   // Lyra reloads the page
-});
-$("customize").addEventListener("click", () => { location.href = "lyra://settings"; });
-
-// ---- welcome -------------------------------------------------------------------
-function setupUrl(extra) {
-  return "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
-         "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) + (extra || "");
+  const r = node.getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  const target = { x: w.x, y: w.y, w: w.w, h: w.h };
+  node.classList.add("dragging");
+  node.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const br = $("board").getBoundingClientRect();
+    node.style.left = (ev.clientX - br.left - dx) + "px";
+    node.style.top = (ev.clientY - br.top - dy) + "px";
+    target.x = Math.max(0, Math.min(COLS - w.w, Math.round((ev.clientX - br.left - dx) / cw)));
+    target.y = Math.max(0, Math.round((ev.clientY - br.top - dy - offY) / ROW));
+    showGhost(target);
+  };
+  const up = () => {
+    node.removeEventListener("pointermove", move);
+    node.removeEventListener("pointerup", up);
+    node.classList.remove("dragging");
+    hideGhost();
+    w.x = target.x; w.y = target.y;
+    settle(w); compact(); render(); save();
+  };
+  node.addEventListener("pointermove", move);
+  node.addEventListener("pointerup", up);
 }
-function renderWelcome() {
+function startResize(e, w, node) {
+  if (!editing || e.button !== 0) return;
+  e.preventDefault(); e.stopPropagation();
+  const k = KINDS[w.type];
+  const start = { x: e.clientX, y: e.clientY, w: w.w, h: w.h };
+  const grip = e.currentTarget;
+  grip.setPointerCapture(e.pointerId);
+  node.classList.add("dragging");
+  const target = { x: w.x, y: w.y, w: w.w, h: w.h };
+  const move = (ev) => {
+    target.w = Math.max(k.minW, Math.min(COLS - w.x, Math.round(start.w + (ev.clientX - start.x) / cw)));
+    target.h = Math.max(k.minH, Math.min(k.maxH, Math.round(start.h + (ev.clientY - start.y) / ROW)));
+    node.style.width = Math.max(60, start.w * cw - GAP + (ev.clientX - start.x)) + "px";
+    node.style.height = Math.max(40, start.h * ROW - GAP + (ev.clientY - start.y)) + "px";
+    showGhost(target);
+  };
+  const up = () => {
+    grip.removeEventListener("pointermove", move);
+    grip.removeEventListener("pointerup", up);
+    node.classList.remove("dragging");
+    hideGhost();
+    w.w = target.w; w.h = target.h;
+    settle(w); compact(); render(); fill(w, node); save();
+  };
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", up);
+}
+function addWidget(type) {
+  const k = KINDS[type];
+  const spot = freeSpot(k.w, k.h);
+  const w = { id: k.single ? type : newId(type), type, x: spot.x, y: spot.y, w: k.w, h: k.h };
+  cfg.widgets.push(w);
+  render(true); renderPanel(); save();
+  const node = nodes.get(w.id);
+  if (node) node.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (type === "weather") setTimeout(() => openSettings(w, nodes.get(w.id)), 450);
+}
+function removeWidget(w) {
+  const node = nodes.get(w.id);
+  cfg.widgets = cfg.widgets.filter((x) => x !== w);
+  delete cfg.data[w.id];
+  if (node) node.classList.add("enter");
+  setTimeout(() => { compact(); render(); }, 300);
+  renderPanel(); save();
+}
+
+// the panel
+let panelTab = "widgets";
+function renderPanel() {
   const s = t();
-  for (const id of ["wTitle", "wText", "wLang", "wTheme", "wLayout", "wDensity", "wStart", "wDone"])
-    $(id).textContent = s[id];
-  $("wFavText").textContent = s.wFav;
-  $("wFreqText").textContent = s.wFreq;
-  document.querySelectorAll(".seg").forEach((seg) => {
-    const key = seg.dataset.key;
-    seg.textContent = "";
-    s[key].forEach((label, i) => {
-      const b = document.createElement("button");
-      b.type = "button"; b.textContent = label;
-      b.setAttribute("aria-pressed", String(state[key] === i));
-      b.addEventListener("click", () => {
-        state[key] = i;
-        applyTheme(); renderTexts(); renderWelcome();
-        location.href = setupUrl("&live=1");      // Lyra applies it at once, the page stays
-      });
-      seg.appendChild(b);
+  $("panelTitle").textContent = s.panelTitle;
+  $("tabWidgets").textContent = s.tabWidgets; $("tabWalls").textContent = s.tabWalls;
+  $("reset").textContent = s.reset; $("done").textContent = s.done;
+  $("dimLabel").textContent = s.dim;
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === panelTab)));
+  $("wlist").classList.toggle("hidden", panelTab !== "widgets");
+  $("wallsTab").classList.toggle("hidden", panelTab !== "walls");
+  const list = $("wlist");
+  list.textContent = "";
+  for (const type of Object.keys(KINDS)) {
+    const has = cfg.widgets.some((w) => w.type === type);
+    const b = el("button", "", '<span class="ic">' + svg(ICON[type]) + '</span><span><b></b><span class="d"></span></span><span class="plus">+</span>');
+    b.querySelector("b").textContent = s.widgets[type][0];
+    b.querySelector(".d").textContent = s.widgets[type][1];
+    b.disabled = KINDS[type].single && has;
+    b.addEventListener("click", () => addWidget(type));
+    list.appendChild(b);
+  }
+  const walls = $("walls");
+  walls.textContent = "";
+  const wp = cfg.wallpaper;
+  const pick = (kind, id) => {
+    cfg.wallpaper = { kind, id, dim: wp.dim || 0 };
+    applyWallpaper(); renderPanel(); save(true);
+  };
+  for (const id of Object.keys(BUILTIN)) {
+    const b = el("button", "wp-" + id, "<span></span>");
+    b.querySelector("span").textContent = s.walls[id];
+    b.setAttribute("aria-pressed", String(wp.kind === "builtin" && wp.id === id));
+    b.addEventListener("click", () => pick("builtin", id));
+    walls.appendChild(b);
+  }
+  const imageIcon = svg('<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-8 8"/>');
+  const bing = el("button", bingUrl() ? "" : "file", (bingUrl() ? "" : imageIcon) + "<span></span>");
+  if (bingUrl()) bing.style.backgroundImage = "url('" + bingUrl() + "')";
+  bing.querySelector("span").textContent = s.walls.bing;
+  bing.setAttribute("aria-pressed", String(wp.kind === "bing"));
+  bing.addEventListener("click", () => pick("bing"));
+  walls.appendChild(bing);
+  const file = el("button", customUrl() ? "" : "file", (customUrl() ? "" : "+") + "<span></span>");
+  if (customUrl()) file.style.backgroundImage = "url('" + customUrl() + "')";
+  file.querySelector("span").textContent = s.walls.file;
+  file.setAttribute("aria-pressed", String(wp.kind === "file"));
+  file.addEventListener("click", () => {
+    if (customUrl() && wp.kind !== "file") { pick("file"); return; }
+    save(true);
+    setTimeout(() => { location.href = "lyra://start-wallpaper-file"; }, 60);     // Lyra's file dialog
+  });
+  walls.appendChild(file);
+  $("dim").value = wp.dim || 0;
+  $("dimValue").textContent = (wp.dim || 0) + "%";
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { panelTab = b.dataset.tab; renderPanel(); }));
+$("dim").addEventListener("input", () => { cfg.wallpaper.dim = +$("dim").value; $("dimValue").textContent = cfg.wallpaper.dim + "%"; applyWallpaper(); save(); });
+$("done").addEventListener("click", () => setEditing(false));
+$("reset").addEventListener("click", () => {
+  if (!confirm(t().resetAsk)) return;
+  cfg = defaultConfig();
+  for (const node of nodes.values()) node.remove();
+  nodes.clear();
+  applyWallpaper(); render(true); renderPanel(); save(true);
+});
+$("customize").addEventListener("click", () => setEditing(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if ($("pop")) closePop(); else if (editing) setEditing(false); } });
+
+// ---- small cards: widget settings and "add to Favorites" ------------------------------------
+function closePop() { const p = $("pop"); if (p) p.remove(); const s = $("popScrim"); if (s) s.remove(); }
+function openPop(near, build) {
+  closePop();
+  const scrim = el("div", "scrim"); scrim.id = "popScrim"; scrim.addEventListener("click", closePop);
+  const pop = el("div", "pop"); pop.id = "pop";
+  build(pop);
+  document.body.append(scrim, pop);
+  const r = near ? near.getBoundingClientRect() : { left: innerWidth / 2 - 150, top: innerHeight / 3, width: 300, bottom: innerHeight / 3 };
+  const x = Math.max(12, Math.min(innerWidth - 312, r.left + r.width / 2 - 150));
+  const y = Math.min(innerHeight - pop.offsetHeight - 12, r.bottom + 8);
+  pop.style.left = x + "px"; pop.style.top = Math.max(12, y) + "px";
+  const first = pop.querySelector("input[type=text]"); if (first) first.focus();
+}
+function openSettings(w, node) {
+  const s = t();
+  if (w.type === "clock") {
+    openPop(node, (pop) => {
+      pop.innerHTML = "<h4></h4><label class='chk'><input type='checkbox' id='oSec'><span></span></label><label class='chk'><input type='checkbox' id='oDate'><span></span></label>";
+      pop.querySelector("h4").textContent = s.widgets.clock[0];
+      const spans = pop.querySelectorAll("label span"); spans[0].textContent = s.seconds; spans[1].textContent = s.greeting;
+      const opt = w.opt = w.opt || {};
+      pop.querySelector("#oSec").checked = !!opt.seconds; pop.querySelector("#oDate").checked = opt.date !== false;
+      pop.querySelector("#oSec").addEventListener("change", (e) => { opt.seconds = e.target.checked; fill(w, node); save(); });
+      pop.querySelector("#oDate").addEventListener("change", (e) => { opt.date = e.target.checked; fill(w, node); save(); });
+    });
+    return;
+  }
+  openPop(node, (pop) => {   // weather: find a city
+    pop.innerHTML = "<h4></h4><input type='text' autocomplete='off'><div class='opts'></div>";
+    pop.querySelector("h4").textContent = s.chooseCity;
+    const input = pop.querySelector("input"), opts = pop.querySelector(".opts");
+    input.placeholder = s.cityPh;
+    let timer = 0;
+    input.addEventListener("input", () => {
+      clearTimeout(timer);
+      const name = input.value.trim();
+      if (name.length < 2) { opts.textContent = ""; return; }
+      timer = setTimeout(() => {
+        fetch("https://geocoding-api.open-meteo.com/v1/search?count=6&language=" + (ru() ? "ru" : "en") + "&name=" + encodeURIComponent(name))
+          .then((r) => r.json()).then((j) => {
+            opts.textContent = "";
+            for (const c of (j.results || [])) {
+              const b = el("button", "", "<span></span> <small></small>");
+              b.firstChild.textContent = c.name;
+              b.lastChild.textContent = [c.admin1, c.country].filter(Boolean).join(", ");
+              b.addEventListener("click", () => {
+                w.opt = { city: c.name, lat: c.latitude, lon: c.longitude };
+                delete cfg.data[w.id];
+                closePop(); fill(w, node); save();
+              });
+              opts.appendChild(b);
+            }
+          }).catch(() => {});
+      }, 300);
     });
   });
-  $("wFav").checked = state.fav;
-  $("wFreq").checked = state.freq;
 }
-$("wFreq").addEventListener("change", () => { state.freq = $("wFreq").checked; location.href = setupUrl("&live=1"); });
-$("wFav").addEventListener("change", () => { state.fav = $("wFav").checked; location.href = setupUrl("&live=1"); });
-$("wDone").addEventListener("click", () => { location.href = setupUrl("&done=1"); });
-
-// ---- texts ---------------------------------------------------------------------
-function renderTexts() {
+function openAddFavorite() {
   const s = t();
-  document.title = s.newTab;
-  document.documentElement.lang = ru() ? "ru" : "en";
-  $("favTitle").textContent = s.favorites;
-  $("allBookmarks").textContent = s.allBookmarks;
-  $("freqTitle").textContent = s.frequent;
-  $("customizeText").textContent = s.customize;
-  $("addTitle").textContent = s.addTitle;
-  $("addNameLabel").textContent = s.name;
-  $("addUrlLabel").textContent = s.address;
-  $("addCancel").textContent = s.cancel;
-  $("addOk").textContent = s.add;
+  openPop(null, (pop) => {
+    pop.innerHTML = "<h4></h4><input type='text' id='fUrl' placeholder='example.com'><div style='height:8px'></div><input type='text' id='fName'>" +
+                    "<div class='row'><button id='fCancel'></button><button class='primary' id='fOk'></button></div>";
+    pop.querySelector("h4").textContent = s.addTitle;
+    pop.querySelector("#fName").placeholder = s.name;
+    pop.querySelector("#fCancel").textContent = s.cancel; pop.querySelector("#fOk").textContent = s.add;
+    pop.querySelector("#fCancel").addEventListener("click", closePop);
+    const ok = () => {
+      let url = pop.querySelector("#fUrl").value.trim();
+      if (!url) { pop.querySelector("#fUrl").focus(); return; }
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
+      const name = pop.querySelector("#fName").value.trim() || hostOf(url);
+      closePop();
+      bookmarks("add", { folder: 1, t: name, u: url });       // Lyra reloads the page with it
+    };
+    pop.querySelector("#fOk").addEventListener("click", ok);
+    pop.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); });
+  });
 }
 
+// ---- private tab ------------------------------------------------------------------------------
 function renderPrivate() {
   const s = t();
   document.title = s.pTab;
+  document.body.classList.add("private-page");
   for (const id of ["pTitle", "pLead", "pForgets", "pShows", "pHint"]) $(id).textContent = s[id];
   for (const id of ["pForgetsList", "pShowsList"]) {
     const ul = $(id);
     ul.textContent = "";
-    for (const html of s[id]) { const li = document.createElement("li"); li.innerHTML = html; ul.appendChild(li); }
+    for (const html of s[id]) ul.appendChild(el("li", "", html));
   }
 }
 
-applyTheme();
-renderTexts();
+// ---- start ------------------------------------------------------------------------------------
+document.documentElement.lang = ru() ? "ru" : "en";
 if (q.get("private") === "1") {
   $("private").classList.remove("hidden");
   renderPrivate();
-} else if (welcome) {
-  $("welcome").classList.remove("hidden");
-  renderWelcome();
-} else if (!migrateOldFavorites()) {
-  $("start").classList.remove("hidden");
-  $("customize").classList.remove("hidden");
-  $("favSection").classList.toggle("hidden", !state.fav);
-  renderFavorites();
-  renderFrequent();
+} else {
+  document.title = t().newTab;
+  $("customizeText").textContent = t().customize;
+  for (const id of ["wall", "board", "customize"]) $(id).classList.remove("hidden");
+  const picked = q.get("picked") === "1";
+  if (picked) { cfg.wallpaper = { kind: "file", dim: cfg.wallpaper.dim || 0 }; save(true); }
+  applyWallpaper();
+  if (picked) { panelTab = "walls"; editing = true; document.body.classList.add("editing"); renderPanel(); }
+  render(true);
+  addEventListener("resize", () => render());
 }
 </script>
 </body>

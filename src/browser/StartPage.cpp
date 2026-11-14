@@ -1,6 +1,7 @@
 // Lyra — стартовая страница и экран первого запуска; команды lyra://… от этих страниц.
 #include "browser/StartPage.h"
 #include "browser/Reader.h"
+#include "browser/Wallpaper.h"
 #include "browser/Bookmarks.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
@@ -89,6 +90,9 @@ std::wstring StartPageUrl(bool welcome) {
             favs += L"{\"i\":" + std::to_wstring(b.id) + L",\"u\":" + JsString(b.url) + L",\"t\":" + JsString(b.title) + L"}";
         }
         url += L"&favs=" + ToWide(UrlEncode(ToUtf8(favs + L"]")));
+        // The widgets' layout and settings, and the wallpaper pictures (browser/Wallpaper.cpp).
+        url += L"&cfg=" + ToWide(UrlEncode(ToUtf8(StartConfigJson()))) + WallpaperParams();
+        WallpaperBingEnsure();
     }
     if (welcome) {
         url += L"&welcome=1&anim=" + std::wstring(g_prefs.animations ? L"1" : L"0");
@@ -461,6 +465,25 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         }
         HistoryClearSince(since);
         RefreshHistoryPages();
+        return;
+    }
+    if (command == L"lyra://start-save") {           // the start page's layout changed
+        StartConfigSave(ToUtf8(UrlDecode(QueryString(query, L"cfg"))));
+        WallpaperBingEnsure();
+        return;
+    }
+    if (command == L"lyra://start-wallpaper-file") { // "Your own picture": the file dialog
+        if (WallpaperPickFile()) {
+            int index = -1;
+            if (Tab* t = FindTab(tabId, &index)) LoadInTab(*t, StartPageUrl() + L"&picked=1");
+        }
+        return;
+    }
+    if (command == L"lyra://go") {                   // the search widget: like typing into the address field
+        const std::wstring text = UrlDecode(QueryString(query, L"q"));
+        int index = -1;
+        if (!text.empty())
+            if (Tab* t = FindTab(tabId, &index)) LoadInTab(*t, ToWide(ResolveInput(text)));
         return;
     }
     if (command == L"lyra://welcome-import") {        // the welcome's bookmarks step

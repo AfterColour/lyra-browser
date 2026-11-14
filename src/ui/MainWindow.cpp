@@ -828,6 +828,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_UPDATE:
         UpdaterChanged();
         return 0;
+    case WM_APP_WALLPAPER:
+        RefreshStartPages();
+        return 0;
     case WM_APP_OPEN_URL: {
         std::unique_ptr<std::wstring> url((std::wstring*)lParam);
         if (url && !url->empty() && !g_closing) CreateTab(*url);
