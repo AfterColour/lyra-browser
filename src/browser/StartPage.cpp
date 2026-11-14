@@ -17,6 +17,7 @@
 #include "ui/DownloadsPopup.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/settings/SettingsPages.h"     // kEngines
 #include "ui/settings/SettingsWindow.h"
 
 static bool SystemRussian() { return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN; }
@@ -97,6 +98,9 @@ std::wstring StartPageUrl(bool welcome) {
     if (welcome) {
         url += L"&welcome=1&anim=" + std::wstring(g_prefs.animations ? L"1" : L"0");
         url += L"&canDefault=" + std::wstring(RegisteredAsBrowser() ? L"1" : L"0");
+        int engine = -1;                                 // the search engine step: which one is chosen now
+        for (int i = 0; i < kEngineCount; ++i) if (g_searchEngine == kEngines[i].url) engine = i;
+        url += L"&engine=" + std::to_wstring(engine);
         url += L"&importers=" + ToWide(UrlEncode(ToUtf8(ImportersJson())));
     }
     return url;
@@ -512,6 +516,8 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     if (fav >= 0) g_prefs.startFavorites = fav != 0;
     const int freq = QueryInt(query, L"freq");
     if (freq >= 0) g_prefs.startFrequent = freq != 0;
+    const int engine = QueryInt(query, L"engine");     // the welcome's search engine step
+    if (engine >= 0 && engine < kEngineCount) g_searchEngine = kEngines[engine].url;
     const bool done = QueryInt(query, L"done") == 1;
     if (done) g_prefs.onboarded = true;
     SaveSettings();

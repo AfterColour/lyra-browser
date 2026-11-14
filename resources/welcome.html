@@ -131,6 +131,25 @@
   .mock.split .half.l { clip-path: polygon(0 0, 100% 0, 0 100%); }
   .mock.split .half.d { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
 
+  /* search engine: every option says plainly what it does with your searches */
+  .engines { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-top: 24px; text-align: left; }
+  .step.wide { width: 960px; }
+  .step.wide .actions { margin-top: 26px; }
+  .eng { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 11px 14px; border-radius: 16px; background: var(--card);
+         box-shadow: inset 0 0 0 1px var(--line); transition: transform .35s var(--ease), box-shadow .35s, background .35s; }
+  .eng:hover { transform: translateY(-2px); background: var(--card2); }
+  .eng[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--a1), 0 14px 36px -18px rgba(140, 110, 255, .9); background: var(--card2); }
+  .eng .mono { width: 34px; height: 34px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center;
+               color: #fff; font-weight: 700; font-size: 15px; box-shadow: inset 0 -1px 0 rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.25); }
+  .eng .txt { flex: 1; min-width: 0; }
+  .eng .nm { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+  .eng .nm .tick { margin-left: auto; width: 18px; height: 18px; border-radius: 50%; background: var(--a1); color: #fff; font-size: 11px;
+                   display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.5);
+                   transition: opacity .3s, transform .4s cubic-bezier(.3, 1.4, .5, 1); }
+  .eng[aria-pressed="true"] .nm .tick { opacity: 1; transform: none; }
+  .eng .ds { margin-top: 3px; font-size: 12.3px; line-height: 1.42; color: var(--text2); }
+  .later { margin-top: 14px; font-size: 12.5px; color: var(--text3); }
+
   /* bookmarks import */
   .list { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 560px; }
   .chip { height: 44px; padding: 0 20px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line);
@@ -201,7 +220,15 @@
     <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
   </section>
 
-  <section class="step" data-step="3">
+  <section class="step wide" data-step="3">
+    <h2 id="tS"></h2>
+    <p class="lead" id="lS"></p>
+    <div class="engines" id="engines"></div>
+    <div class="later" id="laterS"></div>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
+  </section>
+
+  <section class="step" data-step="4">
     <h2 id="t3"></h2>
     <p class="lead" id="l3"></p>
     <div class="list" id="importers"></div>
@@ -210,7 +237,7 @@
     <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
   </section>
 
-  <section class="step" data-step="4">
+  <section class="step" data-step="5">
     <svg class="trace" viewBox="40 24 180 200" aria-hidden="true">
       <path d="M134,110 C150,90 166,66 160,44 C156,32 140,28 128,38 C116,50 112,80 106,112 C100,144 94,176 82,200 C74,214 54,222 46,208 C40,196 60,190 82,198 C112,208 140,214 166,210 C182,206 196,200 204,190"/>
       <circle cx="160" cy="44" r="6" style="animation-delay:.4s"/>
@@ -244,6 +271,7 @@ const state = {
   density: +(q.get("density") ?? 1),
   fav: q.get("fav") !== "0",
   freq: q.get("freq") === "1",
+  engine: q.has("engine") ? +q.get("engine") : 0,   // index in Lyra's list; -1: a custom address
 };
 const systemRu = q.get("sysru") === "1", systemDark = q.get("sysdark") === "1";
 const still = q.get("anim") === "0" || matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -261,6 +289,17 @@ const T = {
     themes: ["As in Windows", "Light", "Dark"], densityLabel: "Toolbar size", density: ["Compact", "Normal", "Large"],
     t2: "Where do the tabs go?", l2: "Try each one - you will see it right away.",
     layouts: ["Next to the address", "Their own row", "Down the side"],
+    tS: "Which search engine?", lS: "Search engines differ in their results and in what they do with your searches. Here is what each one does.",
+    laterS: "You can pick another one at any time in Settings > Search.",
+    engines: [
+      ["DuckDuckGo", "Does not keep a profile of you or a history of your searches. Results come mostly from Bing; ads depend only on what you searched for."],
+      ["Google", "The largest index and often the most complete results. Your searches are tied to your Google account and activity and used to personalise results and ads."],
+      ["Bing", "Microsoft's own index, with Copilot answers. Searches are used for personalised ads and linked to your Microsoft account when you are signed in."],
+      ["Brave Search", "Its own independent index, not borrowed from Google or Bing. Does not build user profiles; shows anonymous ads in the results."],
+      ["Startpage", "Google's results, with your query passed on without your IP address or cookies. Owned by the advertising company System1."],
+      ["Ecosia", "Results from Bing and Google; its profits go to planting trees. Says it anonymises searches within a week and builds no lasting profiles."],
+      ["Yandex", "Strong with Russian-language queries and services in Russia. Keeps search data for personalisation and ads; as a Russian company it must hand data to authorities when required."],
+    ],
     t3: "Bring your bookmarks along?", l3: "Lyra found these browsers on this computer.",
     l3none: "No other browsers found - a clean start, then.",
     importedN: (n, b) => n > 0 ? n + " bookmarks came over from " + b + "." : "No bookmarks were found in " + b + ".",
@@ -274,6 +313,17 @@ const T = {
     themes: ["Как в Windows", "Светлая", "Тёмная"], densityLabel: "Размер панелей", density: ["Компактный", "Обычный", "Крупный"],
     t2: "Где будут вкладки?", l2: "Попробуйте каждый вариант - он сразу появится вверху.",
     layouts: ["Рядом с адресом", "Отдельной строкой", "Сбоку"],
+    tS: "Какой поисковик?", lS: "Поисковики отличаются и результатами, и тем, что делают с вашими запросами. Вот как устроен каждый.",
+    laterS: "Выбрать другой можно в любой момент: Настройки > Поиск.",
+    engines: [
+      ["DuckDuckGo", "Не ведёт профиль пользователя и не хранит историю поиска. Результаты в основном от Bing; реклама зависит только от самого запроса."],
+      ["Google", "Самый большой индекс и чаще всего самые полные результаты. Запросы связываются с аккаунтом Google и вашей активностью и используются для персональной выдачи и рекламы."],
+      ["Bing", "Собственный индекс Microsoft и ответы Copilot. Запросы используются для персональной рекламы и привязываются к аккаунту Microsoft, если вы вошли."],
+      ["Brave Search", "Свой независимый индекс, не заимствованный у Google или Bing. Не строит профили пользователей; в выдаче анонимная реклама."],
+      ["Startpage", "Результаты Google, но запрос уходит туда без вашего IP-адреса и cookie. Принадлежит рекламной компании System1."],
+      ["Ecosia", "Результаты Bing и Google, прибыль идёт на посадку деревьев. По их словам, обезличивает запросы в течение недели и не строит постоянных профилей."],
+      ["Яндекс", "Силён в русскоязычных запросах и сервисах по России. Хранит данные поиска для персонализации и рекламы; как российская компания обязан передавать данные властям по требованию."],
+    ],
     t3: "Перенесём ваши закладки?", l3: "Lyra нашла на этом компьютере такие браузеры.",
     l3none: "Других браузеров не нашлось - начнём с чистого листа.",
     importedN: (n, b) => n > 0 ? "Перенесено закладок из " + b + ": " + n + "." : "В " + b + " закладок не нашлось.",
@@ -289,7 +339,8 @@ const $ = (id) => document.getElementById(id);
 // ---- talking to Lyra ------------------------------------------------------------
 function setup(extra) {
   location.href = "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
-                  "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) + (extra || "");
+                  "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) +
+                  (state.engine >= 0 ? "&engine=" + state.engine : "") + (extra || "");
 }
 
 // ---- steps ------------------------------------------------------------------------
@@ -313,9 +364,9 @@ function go(n) {
   const focus = steps[n].querySelector(".primary");
   if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 350);
 }
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < steps.length; i++) {
   const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  c.setAttribute("cx", 8 + i * 54); c.setAttribute("cy", 8); c.setAttribute("r", 3.5);
+  c.setAttribute("cx", 8 + i * 216 / (steps.length - 1)); c.setAttribute("cy", 8); c.setAttribute("r", 3.5);
   $("pstars").appendChild(c);
 }
 document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => go(cur + 1)));
@@ -372,7 +423,7 @@ const lightNow = () => state.theme === 1 || (state.theme === 0 && !systemDark);
 function render() {
   const t = s();
   document.documentElement.lang = ru() ? "ru" : "en";
-  for (const id of ["t0", "l0", "b0", "t1", "l1", "densityLabel", "t2", "l2", "t3", "t4", "l4", "finish", "dTitle", "dText", "dBtn"])
+  for (const id of ["t0", "l0", "b0", "t1", "l1", "densityLabel", "t2", "l2", "tS", "lS", "laterS", "t3", "t4", "l4", "finish", "dTitle", "dText", "dBtn"])
     $(id).textContent = t[id];
   document.querySelectorAll("[data-back]").forEach((b) => (b.textContent = t.back));
   document.querySelectorAll("[data-next]:not(#b0)").forEach((b) => (b.textContent = t.next));
@@ -381,6 +432,24 @@ function render() {
   renderSeg("density", t.density, state.density, (i) => { state.density = i; render(); setup("&live=1"); });
   renderCards("layouts", 3, state.layout, (i) => mockHtml(["compact", "row", "side"][i], lightNow()), t.layouts,
               (i) => { state.layout = i; render(); setup("&live=1"); });
+  // Search engine: the same order as in Settings, each with a plain description
+  const engBox = $("engines");
+  engBox.textContent = "";
+  const COLORS = ["#DE5833", "#4285F4", "#0C8484", "#FB542B", "#6573FF", "#2E9E5B", "#FC3F1D"];
+  t.engines.forEach(([name, desc], i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "eng";
+    b.setAttribute("aria-pressed", String(state.engine === i));
+    b.innerHTML = '<span class="mono" style="background:' + COLORS[i] + '"></span><span class="txt"><span class="nm"><span></span>' +
+                  '<span class="tick">&#10003;</span></span><span class="ds"></span></span>';
+    b.querySelector(".mono").textContent = name[0];
+    b.querySelector(".nm span").textContent = name;
+    b.querySelector(".ds").textContent = desc;
+    b.addEventListener("click", () => { state.engine = i; render(); setup("&live=1"); });
+    engBox.appendChild(b);
+  });
+  if (t.engines.length % 2) engBox.lastChild.style.gridColumn = "1 / -1";
+
   // Bookmarks import
   $("l3").textContent = importers.length ? t.l3 : t.l3none;
   const list = $("importers");
