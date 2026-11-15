@@ -48,10 +48,8 @@ static void MakeFonts() {
     s_fTitle = make(L"Segoe UI Variable Text", S(14), FontStyleBold);
     s_fText = make(L"Segoe UI Variable Text", S(13), FontStyleRegular);
     s_fBold = make(L"Segoe UI Variable Text", S(13), FontStyleBold);
-    s_fGlyph = make(L"Segoe Fluent Icons", S(10), FontStyleRegular);
-    if (!s_fGlyph->IsAvailable()) s_fGlyph = make(L"Segoe MDL2 Assets", S(10), FontStyleRegular);
-    s_fIcon = make(L"Segoe Fluent Icons", S(16), FontStyleRegular);
-    if (!s_fIcon->IsAvailable()) s_fIcon = make(L"Segoe MDL2 Assets", S(16), FontStyleRegular);
+    s_fGlyph = MakeIconFont(S(10));
+    s_fIcon = MakeIconFont(S(16));
 }
 
 static Color Lighter(const Color& c, int d) {

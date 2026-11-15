@@ -21,6 +21,7 @@
 #include "ui/Commands.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/Menu.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
@@ -108,7 +109,10 @@ static void PasswordActions(const std::string& origin, const std::wstring& usern
     AppendMenuW(m, MF_STRING, 3, Tr(L"Delete", L"Удалить"));
     POINT pt;
     GetCursorPos(&pt);
-    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_setHwnd, nullptr);
+    MenuSetIcon(m, 1, L"\uE8C8");
+    MenuSetIcon(m, 2, L"\uE8D7");
+    MenuSetIcon(m, 3, L"\uE74D");
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_setHwnd);
     DestroyMenu(m);
     if (cmd == 1) CopyText(username);
     else if (cmd == 2) {

@@ -701,11 +701,7 @@ bool CreatePipWindow(const std::wstring& title) {
         if (!RegisterClassExW(&oc)) return false;
         registered = true;
     }
-    auto icons = [](float px) {
-        auto f = std::make_unique<Font>(L"Segoe Fluent Icons", px, FontStyleRegular, UnitPixel);
-        if (!f->IsAvailable()) f = std::make_unique<Font>(L"Segoe MDL2 Assets", px, FontStyleRegular, UnitPixel);
-        return f;
-    };
+    auto icons = [](float px) { return MakeIconFont(px); };
     s_fGlyph = icons(S(14));
     s_fBig = icons(S(20));
     s_fText = std::make_unique<Font>(L"Segoe UI", S(11), FontStyleBold, UnitPixel);

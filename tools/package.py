@@ -149,6 +149,7 @@ def main():
         if os.path.isfile(c):
             texts.append((p + " " + ports[p], c))
     texts.append(("Mozilla Readability (reader view)", os.path.join(LYRA, "resources", "readability-LICENSE.md")))
+    texts.append(("Fluent UI System Icons (icon font used when Windows has no Segoe icon font)", os.path.join(LYRA, "resources", "icons", "FluentSystemIcons-LICENSE.txt")))
     missing = [t for t, p in texts if not os.path.isfile(p)]
     if missing:
         fail("license text not found: " + ", ".join(missing))
@@ -156,6 +157,7 @@ def main():
     comps = ["- WebKit (modified, see above), with ANGLE, Skia and the Web Inspector libraries"]
     comps += ["- %s %s" % (p, ports[p]) for p in sorted(ports)]
     comps += ["- Mozilla Readability"]
+    comps += ["- Fluent UI System Icons (Microsoft, MIT)"]
     header = open(os.path.join(LYRA, "legal", "notices-header.txt"), encoding="utf-8").read()
     body = [header.replace("{VERSION}", ver).replace("{COMPONENTS}", "\n".join(comps))]
     for title, path in texts:

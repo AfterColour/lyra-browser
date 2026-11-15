@@ -13,6 +13,7 @@
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Draw.h"
+#include "ui/Menu.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
@@ -270,8 +271,14 @@ static void ContextMenu(int row, POINT screen) {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (d.url.empty() ? MF_GRAYED : 0), 5, Tr(L"Copy Download Link", L"Копировать ссылку"));
     AppendMenuW(m, MF_STRING | (d.state == DownloadItem::Running ? MF_GRAYED : 0), 6, Tr(L"Remove from List", L"Убрать из списка"));
+    MenuSetIcon(m, 1, L"\uE8E5");
+    MenuSetIcon(m, 2, L"\uE838");
+    MenuSetIcon(m, 3, L"\uE711");
+    MenuSetIcon(m, 4, L"\uE72C");
+    MenuSetIcon(m, 5, L"\uE71B");
+    MenuSetIcon(m, 6, L"\uE74D");
     s_inMenu = true;
-    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, screen.x, screen.y, 0, s_popup, nullptr);
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, screen.x, screen.y, s_popup);
     s_inMenu = false;
     DestroyMenu(m);
     switch (cmd) {
@@ -435,8 +442,7 @@ void DownloadsPopupShow() {
     s_fTitle = make(L"Segoe UI Variable Text", S(14), FontStyleBold);
     s_fName = make(L"Segoe UI Variable Text", S(13), FontStyleRegular);
     s_fSmall = make(L"Segoe UI Variable Text", S(12), FontStyleRegular);
-    s_fGlyph = make(L"Segoe Fluent Icons", S(12), FontStyleRegular);
-    if (!s_fGlyph->IsAvailable()) s_fGlyph = make(L"Segoe MDL2 Assets", S(12), FontStyleRegular);
+    s_fGlyph = MakeIconFont(S(12));
 
     s_popup = CreateWindowExW(WS_EX_TOOLWINDOW, L"LyraDownloadsPopup", L"", WS_POPUP, 0, 0, 10, 10, g_hWnd, nullptr, hi, nullptr);
     if (!s_popup) return;

@@ -11,6 +11,7 @@
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Draw.h"
+#include "ui/Menu.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
@@ -83,8 +84,7 @@ static void MakeFonts() {
     s_fText = make(L"Segoe UI Variable Text", S(13), FontStyleRegular);
     s_fBold = make(L"Segoe UI Variable Text", S(13), FontStyleBold);
     s_fLabel = make(L"Segoe UI Variable Text", S(12), FontStyleRegular);
-    s_fGlyph = make(L"Segoe Fluent Icons", S(10), FontStyleRegular);
-    if (!s_fGlyph->IsAvailable()) s_fGlyph = make(L"Segoe MDL2 Assets", S(10), FontStyleRegular);
+    s_fGlyph = MakeIconFont(S(10));
     if (s_editFont) DeleteObject(s_editFont);
     s_editFont = CreateFontW(-(int)std::round(S(13)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -214,7 +214,7 @@ static void PickFolder() {
     POINT pt = { (LONG)r.X, (LONG)r.GetBottom() + 2 };
     ClientToScreen(s_popup, &pt);
     s_inMenu = true;
-    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY, pt.x, pt.y, 0, s_popup, nullptr);
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, s_popup);
     s_inMenu = false;
     DestroyMenu(m);
     if (cmd > 0 && cmd <= (int)ids.size() && s_id) {

@@ -672,14 +672,13 @@ static std::unique_ptr<Font> MakeFont(const wchar_t* const* families, int count,
 
 void RebuildResources() {
     static const wchar_t* ui[]    = { L"Segoe UI Variable Text", L"Segoe UI" };
-    static const wchar_t* icons[] = { L"Segoe Fluent Icons", L"Segoe MDL2 Assets" };
     const ChromeDims d = CurrentDims();
     g_fText    = MakeFont(ui, 2, S(d.font + 1));
     g_fTab     = MakeFont(ui, 2, S(d.font));
     g_fTabBold = MakeFont(ui, 2, S(d.font), FontStyleBold);
-    g_fIcon    = MakeFont(icons, 2, S(d.icon));
-    g_fIconSm  = MakeFont(icons, 2, S(d.icon - 3));
-    g_fCaption = MakeFont(icons, 2, S(10));
+    g_fIcon    = MakeIconFont(S(d.icon));
+    g_fIconSm  = MakeIconFont(S(d.icon - 3));
+    g_fCaption = MakeIconFont(S(10));
     g_fBadge   = MakeFont(ui, 2, S(9), FontStyleBold);
 
     HFONT old = g_editFont;

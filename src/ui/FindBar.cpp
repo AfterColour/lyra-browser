@@ -74,8 +74,7 @@ static void MakeFonts() {
         return f;
     };
     s_fCount = make(L"Segoe UI Variable Text", S(12), FontStyleRegular);
-    s_fGlyph = make(L"Segoe Fluent Icons", S(11), FontStyleRegular);
-    if (!s_fGlyph->IsAvailable()) s_fGlyph = make(L"Segoe MDL2 Assets", S(11), FontStyleRegular);
+    s_fGlyph = MakeIconFont(S(11));
     if (s_editFont) DeleteObject(s_editFont);
     s_editFont = CreateFontW(-(int)std::round(S(13)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");

@@ -12,6 +12,7 @@
 #include "core/Url.h"
 #include "ui/Commands.h"
 #include "ui/MainWindow.h"
+#include "ui/Menu.h"
 #include "ui/settings/SettingsPages.h"
 
 #include <WebKit/WKContextMenuItem.h>
@@ -45,6 +46,10 @@ struct MenuContext {
     bool editable = false, selection = false;
 };
 MenuContext s_menu;
+
+// The items of the menu that is about to be shown (ContextMenuShow), and where.
+WKArrayRef s_pendingItems = nullptr;
+POINT s_pendingPt = {};
 
 std::wstring UrlString(WKURLRef u) {
     std::wstring s;
@@ -241,8 +246,51 @@ void OnGetMenu(WKPageRef, WKArrayRef proposed, WKArrayRef* newMenu, WKHitTestRes
         !s_menu.link.empty(), !s_menu.image.empty(), !s_menu.media.empty(), s_menu.editable, s_menu.selection,
         WKArrayGetSize(items), proposed ? WKArrayGetSize(proposed) : 0);
     if (!WKArrayGetSize(items)) items = proposed;       // never an empty menu
-    if (items) WKRetain(items);                          // WebKit adopts the array
-    *newMenu = items;
+    // WebKit gets an empty menu (its Windows menu then does not appear at all) and Lyra shows these
+    // items itself once this callback has returned. The choice goes back to WebKit the way its own
+    // menu would send it (WM_MENUCOMMAND to the view), so its actions and Lyra's both work as before.
+    if (s_pendingItems) WKRelease(s_pendingItems);
+    s_pendingItems = items;
+    if (items) WKRetain(items);
+    GetCursorPos(&s_pendingPt);
+    *newMenu = WKArrayCreate(nullptr, 0);               // WebKit adopts the array
+    PostMessageW(g_hWnd, WM_APP_PAGE_MENU, 0, 0);
+}
+
+const wchar_t* IconFor(WKContextMenuItemTag tag, const std::wstring& title) {
+    switch (tag) {
+    case kOpenLinkInNewTab: case kOpenImageInNewTab: return L"\uE8A7";
+    case kOpenLinkInPrivateTab: return L"\uED1A";
+    case kOpenLinkInSplit: return L"\uE8A0";
+    case kCopyLinkText: return L"\uE8C8";
+    case kCopyImageAddress: return L"\uE71B";
+    case kSearchSelection: return L"\uE721";
+    case kUndo: return L"\uE7A7";
+    case kRedo: return L"\uE7A6";
+    case kSelectAll: return L"\uE8B3";
+    case kPrint: return L"\uE749";
+    case kTranslate: return L"\uE8C1";
+    case kReader: return L"\uE736";
+    case kPictureInPicture: return L"\uE8B9";
+    case kWKContextMenuItemTagDownloadLinkToDisk: case kWKContextMenuItemTagDownloadImageToDisk:
+    case kWKContextMenuItemTagDownloadMediaToDisk: return L"\uE74E";
+    case kWKContextMenuItemTagCopyLinkToClipboard: case kWKContextMenuItemTagCopyImageURLToClipboard:
+    case kWKContextMenuItemTagCopyMediaLinkToClipboard: return L"\uE71B";
+    case kWKContextMenuItemTagCopyImageToClipboard: case kWKContextMenuItemTagCopy: return L"\uE8C8";
+    case kWKContextMenuItemTagCut: return L"\uE8C6";
+    case kWKContextMenuItemTagPaste: return L"\uE77F";
+    case kWKContextMenuItemTagGoBack: return L"\uE72B";
+    case kWKContextMenuItemTagGoForward: return L"\uE72A";
+    case kWKContextMenuItemTagReload: return L"\uE72C";
+    case kWKContextMenuItemTagStop: return L"\uE711";
+    case kWKContextMenuItemTagInspectElement: return L"\uE943";
+    case kWKContextMenuItemTagMediaPlayPause: return title == Tr(L"Pause", L"\u041f\u0430\u0443\u0437\u0430") ? L"\uE769" : L"\uE768";
+    case kWKContextMenuItemTagMediaMute: return title == Tr(L"Mute", L"\u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0437\u0432\u0443\u043a") ? L"\uE74F" : L"\uE767";
+    case kWKContextMenuItemTagToggleMediaLoop: return L"\uE8EE";
+    case kWKContextMenuItemTagToggleMediaControls: return L"\uE714";
+    case kWKContextMenuItemTagEnterVideoFullscreen: case kWKContextMenuItemTagToggleVideoFullscreen: return L"\uE740";
+    default: return nullptr;
+    }
 }
 
 // The selected text (in a text field too), asked of the page when "search" is chosen.
@@ -302,6 +350,39 @@ void ContextMenuClearClient(WKPageRef page) {
     WKPageContextMenuClientV0 cm = {};
     cm.base.version = 0;
     WKPageSetPageContextMenuClient(page, &cm.base);
+}
+
+void ContextMenuShow() {
+    WKArrayRef items = s_pendingItems;
+    s_pendingItems = nullptr;
+    if (!items) return;
+    const unsigned long long tabId = s_menu.tabId;
+    Tab* t = FindTab(tabId);
+    HWND view = t ? (t->hwnd ? t->hwnd : t->pipHwnd) : nullptr;
+    if (!t || !view || !IsWindow(view) || MenuActive()) { WKRelease(items); return; }
+    HMENU m = CreatePopupMenu();
+    const size_t n = WKArrayGetSize(items);
+    for (size_t i = 0; i < n; ++i) {
+        WKContextMenuItemRef item = (WKContextMenuItemRef)WKArrayGetItemAtIndex(items, i);
+        if (!item || WKGetTypeID(item) != WKContextMenuItemGetTypeID()) continue;
+        const WKContextMenuItemType type = WKContextMenuItemGetType(item);
+        if (type == kWKContextMenuItemTypeSeparator) { AppendMenuW(m, MF_SEPARATOR, 0, nullptr); continue; }
+        if (type == kWKContextMenuItemTypeSubmenu) continue;           // (Lyra's menu has none)
+        const WKContextMenuItemTag tag = WKContextMenuItemGetTag(item);
+        const std::wstring title = String(WKContextMenuItemCopyTitle(item));
+        UINT flags = MF_STRING;
+        if (!WKContextMenuItemGetEnabled(item)) flags |= MF_GRAYED;
+        if (type == kWKContextMenuItemTypeCheckableAction && WKContextMenuItemGetChecked(item)) flags |= MF_CHECKED;
+        AppendMenuW(m, flags, (UINT_PTR)tag, title.c_str());
+        if (const wchar_t* icon = IconFor(tag, title)) MenuSetIcon(m, (UINT)tag, icon);
+    }
+    HMENU chosen = nullptr;
+    int pos = -1;
+    MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, s_pendingPt.x, s_pendingPt.y, g_hWnd, &chosen, &pos);
+    // WebKit reads the item (its id and title) from the menu and position it is given.
+    if (chosen && pos >= 0 && FindTab(tabId) && IsWindow(view)) SendMessageW(view, WM_MENUCOMMAND, (WPARAM)pos, (LPARAM)chosen);
+    DestroyMenu(m);
+    WKRelease(items);
 }
 
 void ContextMenuCommand(WPARAM tag) {

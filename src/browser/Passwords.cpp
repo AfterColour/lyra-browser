@@ -8,6 +8,7 @@
 #include "core/StringUtils.h"
 #include "core/Localization.h"
 #include "ui/MainWindow.h"
+#include "ui/Menu.h"
 #include "ui/PermissionPrompt.h"
 #include "ui/settings/SettingsPages.h"
 
@@ -422,7 +423,8 @@ void PasswordsSiteMenu() {
     AppendMenuW(m, MF_STRING, 1, Tr(L"Manage passwords\x2026", L"Управление паролями\x2026"));
     POINT pt;
     GetCursorPos(&pt);
-    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_hWnd, nullptr);
+    MenuSetIcon(m, 1, L"\uE8D7");
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
     DestroyMenu(m);
     if (cmd == 1) OpenPasswordsSettings();
     else if (cmd >= 1000 && (size_t)(cmd - 1000) / 2 < here.size()) {

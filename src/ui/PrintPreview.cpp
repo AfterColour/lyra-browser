@@ -14,6 +14,7 @@
 #include "core/Settings.h"
 #include "core/StringUtils.h"
 #include "ui/Draw.h"
+#include "ui/Menu.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/WindowFrame.h"
@@ -624,7 +625,7 @@ void ShowMenuFor(const Item& it) {
     for (int i = 0; i < (int)opts.size(); ++i) AppendMenuW(m, MF_STRING | (i == cur ? MF_CHECKED : 0), (UINT_PTR)(i + 1), opts[i].c_str());
     POINT pt = { (LONG)it.r.X, (LONG)it.r.GetBottom() + (LONG)S(2) };
     ClientToScreen(s_wnd, &pt);
-    const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY, pt.x, pt.y, 0, s_wnd, nullptr);
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, s_wnd);
     DestroyMenu(m);
     if (cmd <= 0 || cmd - 1 == cur) return;
     const int i = cmd - 1;
@@ -700,14 +701,12 @@ LRESULT CALLBACK EditProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 void MakeFonts() {
     const wchar_t* ui = L"Segoe UI";
     { FontFamily ff(L"Segoe UI Variable Text"); if (ff.IsAvailable()) ui = L"Segoe UI Variable Text"; }
-    const wchar_t* ico = L"Segoe MDL2 Assets";
-    { FontFamily ff(L"Segoe Fluent Icons"); if (ff.IsAvailable()) ico = L"Segoe Fluent Icons"; }
     s_fBody = std::make_unique<Font>(ui, S(13), FontStyleRegular, UnitPixel);
     s_fSmall = std::make_unique<Font>(ui, S(12), FontStyleRegular, UnitPixel);
     s_fBold = std::make_unique<Font>(ui, S(13), FontStyleBold, UnitPixel);
     s_fTitle = std::make_unique<Font>(ui, S(20), FontStyleBold, UnitPixel);
-    s_fIcon = std::make_unique<Font>(ico, S(12), FontStyleRegular, UnitPixel);
-    s_fCaption = std::make_unique<Font>(ico, S(10), FontStyleRegular, UnitPixel);
+    s_fIcon = MakeIconFont(S(12));
+    s_fCaption = MakeIconFont(S(10));
     if (s_editFont) DeleteObject(s_editFont);
     s_editFont = CreateFontW(-(int)std::round(S(13)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");

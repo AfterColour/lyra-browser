@@ -12,4 +12,5 @@ struct TabCtx;
 // dark or light theme).
 void ContextMenuSetClient(WKPageRef page, TabCtx* ctx);
 void ContextMenuClearClient(WKPageRef page);
+void ContextMenuShow();                       // WM_APP_PAGE_MENU: shows the menu WebKit asked for, in Lyra's style
 void ContextMenuCommand(WPARAM tag);           // WM_APP_CONTEXT_MENU: a Lyra item was chosen

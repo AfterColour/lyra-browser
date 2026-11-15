@@ -21,6 +21,8 @@
 #include "ui/CommandPalette.h"
 #include "browser/SplitView.h"
 #include "ui/MainWindow.h"
+#include "ui/Menu.h"
+#include "ui/Theme.h"
 #include "ui/settings/SettingsWindow.h"
 #include "app/Updater.h"
 
@@ -167,10 +169,19 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     if (g_prefs.devExtras) AppendMenuW(m, MF_STRING, CMD_DEVTOOLS, Tr(L"Developer Tools\tF12", L"Инструменты разработчика\tF12"));
     AppendMenuW(m, MF_STRING, CMD_SETTINGS,  Tr(L"Settings\x2026\tCtrl+,", L"Настройки\x2026\tCtrl+,"));
-    POINT pt = { (LONG)g_L.more.GetRight(), (LONG)g_L.more.GetBottom() };
+    static const struct { UINT id; const wchar_t* glyph; } icons[] = {
+        { CMD_UPDATE, L"\uE72C" }, { CMD_NEWTAB, L"\uE710" }, { CMD_NEWPRIVATE, L"\uED1A" }, { CMD_CLOSETAB, L"\uE711" },
+        { CMD_REOPENTAB, L"\uE7A7" }, { CMD_HISTORY, L"\uE81C" }, { CMD_BOOKMARKS, L"\uE728" }, { CMD_PASSWORDS, L"\uE8D7" },
+        { CMD_DOWNLOADS, L"\uE896" }, { CMD_BOOKMARK_PAGE, L"\uE734" }, { CMD_ADBLOCK_SITE, L"\uE72E" }, { CMD_COPYURL, L"\uE71B" },
+        { CMD_SETHOME, L"\uE80F" }, { CMD_READER, L"\uE736" }, { CMD_TRANSLATE, L"\uE8C1" }, { CMD_PIP, L"\uE8B9" },
+        { CMD_SPLIT, L"\uE8A0" }, { CMD_PALETTE, L"\uE765" }, { CMD_FIND, L"\uE721" }, { CMD_PRINT, L"\uE749" },
+        { CMD_ZOOMIN, L"\uE8A3" }, { CMD_ZOOMOUT, L"\uE71F" }, { CMD_ZOOMRESET, L"\uE71E" }, { CMD_DEVTOOLS, L"\uE943" },
+        { CMD_SETTINGS, L"\uE713" },
+    };
+    for (auto& i : icons) MenuSetIcon(m, i.id, i.glyph);
+    POINT pt = { (LONG)g_L.more.GetRight(), (LONG)(g_L.more.GetBottom() + S(4)) };
     ClientToScreen(g_hWnd, &pt);
-    int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
-                                  pt.x, pt.y, 0, g_hWnd, nullptr);
+    int cmd = MenuTrack(m, TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
     DestroyMenu(m);
     if (cmd) RunCommand(cmd);
 }

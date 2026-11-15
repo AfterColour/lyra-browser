@@ -7,6 +7,10 @@ void AddRound(GraphicsPath& p, const RectF& r, float rad);
 void FillRound(Graphics& g, const Color& c, const RectF& r, float rad);
 void DrawGlyph(Graphics& g, const wchar_t* glyph, const RectF& r, const Color& c, Font* f);
 
+// The icon font: Segoe Fluent Icons (Windows 11) or Segoe MDL2 Assets (Windows 10); if Windows has
+// neither (or a broken copy), Lyra's own resources\icons\LyraIcons.ttf with the same code points.
+std::unique_ptr<Font> MakeIconFont(float px);
+
 // Paints `rc` (client coordinates) of a window through a 32-bit off-screen buffer.
 //  - opaque: GDI+ draws on the buffer's DC (ClearType text); every pixel is made opaque.
 //  - !opaque: the buffer starts fully transparent and is drawn as premultiplied ARGB (greyscale

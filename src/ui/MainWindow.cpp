@@ -37,6 +37,7 @@
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "ui/Theme.h"
+#include "ui/Menu.h"
 #include "ui/WindowFrame.h"
 #include "app/Updater.h"
 
@@ -656,9 +657,16 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             AppendMenuW(m, MF_STRING, kClose, Tr(L"Close both pages", L"Закрыть обе страницы"));
         else
             AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
+        MenuSetIcon(m, kPin, g_tabs[h.index]->pinned ? L"\uE77A" : L"\uE718");
+        MenuSetIcon(m, kSplitSwap, L"\uE8AB");
+        MenuSetIcon(m, kSplitClose, L"\uE8A0");
+        MenuSetIcon(m, kSplitWith, L"\uE8A0");
+        MenuSetIcon(m, kSleep, L"\uE708");
+        MenuSetIcon(m, kSleepOthers, L"\uE708");
+        MenuSetIcon(m, kClose, L"\uE711");
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ClientToScreen(hWnd, &pt);
-        const int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, nullptr);
+        const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, hWnd);
         DestroyMenu(m);
         int index = -1;
         Tab* t = FindTab(id, &index);
@@ -788,6 +796,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_CONTEXT_MENU:
         ContextMenuCommand(wParam);
+        return 0;
+    case WM_APP_PAGE_MENU:
+        ContextMenuShow();
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);

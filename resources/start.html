@@ -57,9 +57,7 @@
           background-image: linear-gradient(rgba(0,0,0,var(--dim)), rgba(0,0,0,var(--dim))), var(--wp, none);
           background-size: cover; background-position: center top; background-repeat: no-repeat; }
   #stars { z-index: 0; pointer-events: none; overflow: hidden; }
-  #stars i { position: absolute; border-radius: 50%; background: #fff; opacity: 0; animation: tw var(--d) ease-in-out var(--w) infinite; }
-  #stars i.big { box-shadow: 0 0 6px 2px rgba(255,255,255,.2); }
-  @keyframes tw { 0%, 100% { opacity: calc(var(--a) * .35); } 50% { opacity: var(--a); } }
+  #stars canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
   .wp-night   { --wp: radial-gradient(ellipse 70% 55% at 50% 40%, rgba(120,90,230,.30), transparent 70%), linear-gradient(160deg, #141032, #2C1A58); }
   .wp-aurora  { --wp: radial-gradient(ellipse 60% 45% at 18% 0%, rgba(60,220,160,.42), transparent 70%),
                             radial-gradient(ellipse 55% 50% at 85% 15%, rgba(120,90,255,.45), transparent 70%),
@@ -498,23 +496,85 @@ function applyWallpaper() {
   wall.style.setProperty("--dim", (wp.dim || 0) / 100);
   document.body.classList.toggle("tone-light", tone === "light");
   $("stars").classList.toggle("hidden", !night);
+  starsOn = night;
   if (night && !starsMade) { makeStars(); starsMade = true; }
+  if (night) twinkle();
   const credit = $("credit");
   const showCredit = wp.kind === "bing" && bingUrl() && q.get("bingInfo");
   credit.classList.toggle("hidden", !showCredit);
   if (showCredit) { credit.textContent = q.get("bingInfo"); credit.href = q.get("bingLink") || "https://www.bing.com"; }
 }
-function makeStars() {
-  const box = $("stars"), n = Math.round(innerWidth * innerHeight / 6000);
-  let html = "";
-  for (let i = 0; i < n; i++) {
-    const big = Math.random() < .08, r = ((big ? 1.3 : .5) + Math.random() * .8) * 2;
-    html += '<i class="' + (big ? "big" : "") + '" style="left:' + (Math.random() * 100).toFixed(2) + "%;top:" + (Math.random() * 100).toFixed(2) +
-            "%;width:" + r.toFixed(1) + "px;height:" + r.toFixed(1) + "px;--a:" + (.3 + Math.random() * .6).toFixed(2) + ";--d:" +
-            (2.5 + Math.random() * 5).toFixed(1) + "s;--w:-" + (Math.random() * 6).toFixed(1) + 's"></i>';
+// The night sky's stars. They used to be a few hundred elements, each with its own endless
+// opacity animation: a few hundred compositing layers, and the frosted widgets above them had to
+// be blurred again every frame - the whole browser felt sluggish on this wallpaper. Now they are
+// one canvas, redrawn about 12 times a second: each step is a tiny change in brightness, so the
+// twinkle looks the same.
+let stars = [], starsOn = false, starTimer = 0, starSprites = null;
+const STAR_STEP = 83;   // ms
+function starSprite(r, glow) {
+  const pad = glow ? 8 : 1, s = Math.ceil((r + pad) * 2), c = document.createElement("canvas");
+  c.width = c.height = s;
+  const g = c.getContext("2d"), m = s / 2;
+  if (glow) {
+    const gr = g.createRadialGradient(m, m, 0, m, m, m);
+    gr.addColorStop(0, "rgba(255,255,255,1)");
+    gr.addColorStop(r / m, "rgba(255,255,255,.9)");
+    gr.addColorStop(Math.min(1, (r + 2) / m), "rgba(255,255,255,.22)");
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr;
+    g.fillRect(0, 0, s, s);
+  } else {
+    g.fillStyle = "#fff";
+    g.beginPath(); g.arc(m, m, r, 0, Math.PI * 2); g.fill();
   }
-  box.innerHTML = html;
+  return c;
 }
+function makeStars() {
+  const n = Math.round(innerWidth * innerHeight / 6000);
+  stars = [];
+  for (let i = 0; i < n; i++) {
+    const big = Math.random() < .08, r = (big ? 1.3 : .5) + Math.random() * .8;
+    stars.push({ x: Math.random(), y: Math.random(), r, big, a: .3 + Math.random() * .6,
+                 d: (2.5 + Math.random() * 5) * 1000, w: Math.random() });
+  }
+  starSprites = new Map();
+  const box = $("stars");
+  box.innerHTML = "<canvas></canvas>";
+  sizeStars();
+}
+function sizeStars() {
+  const c = $("stars").firstElementChild;
+  if (!c) return;
+  const box = $("stars"), dpr = Math.min(2, devicePixelRatio || 1);
+  const w = Math.round(box.clientWidth * dpr), h = Math.round(Math.min(box.clientHeight, innerHeight * 3) * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; c.style.height = (h / dpr) + "px"; }
+  drawStars();
+}
+function drawStars() {
+  const c = $("stars").firstElementChild;
+  if (!c || !c.width) return;
+  const g = c.getContext("2d"), dpr = Math.min(2, devicePixelRatio || 1), now = performance.now();
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  g.clearRect(0, 0, c.width, c.height);
+  for (const s of stars) {
+    const k = Math.round(s.r * dpr * 4) / 4, key = k + (s.big ? "b" : "");
+    let sp = starSprites.get(key);
+    if (!sp) { sp = starSprite(k, s.big); starSprites.set(key, sp); }
+    const ph = still ? .5 : (now / s.d + s.w) % 1;
+    g.globalAlpha = s.a * (.35 + .65 * (.5 - .5 * Math.cos(ph * Math.PI * 2)));
+    g.drawImage(sp, Math.round(s.x * c.width - sp.width / 2), Math.round(s.y * c.height - sp.height / 2));
+  }
+  g.globalAlpha = 1;
+}
+function twinkle() {
+  clearTimeout(starTimer);
+  if (!starsOn || document.hidden || !stars.length) return;
+  drawStars();
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) starTimer = setTimeout(twinkle, STAR_STEP);
+}
+document.addEventListener("visibilitychange", twinkle);
+let starResize = 0;
+addEventListener("resize", () => { clearTimeout(starResize); starResize = setTimeout(sizeStars, 150); });
 
 // ---- grid geometry --------------------------------------------------------------------------
 const COLS = 12, ROW = 64, GAP = 16, TOP = 56, PANEL = 340;
@@ -542,7 +602,7 @@ function measure() {
   offY = Math.max(TOP, Math.min((innerHeight - rows * ROW) * 0.38, 240));
   const h = offY + rows * ROW + 24;
   board.style.height = h + "px";
-  document.documentElement.style.setProperty("--page-h", Math.max(innerHeight, h) + "px");
+  document.documentElement.style.setProperty("--page-h", Math.max(innerHeight, h) + "px"); if (starsMade) sizeStars();
 }
 function place(node, w) {
   node.style.translate = (w.x * cw) + "px " + (offY + w.y * ROW) + "px";
