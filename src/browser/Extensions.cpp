@@ -2,6 +2,8 @@
 #include "browser/Extensions.h"
 #include "app/Log.h"
 #include "browser/AdBlock.h"
+#include "browser/Bookmarks.h"
+#include "browser/History.h"
 #include "browser/ExtensionStore.h"
 #include "browser/ExtensionDnr.h"
 #include "core/Constants.h"
@@ -1075,6 +1077,258 @@ std::string MenusOp(const Extension& e, const JsonValue& msg, const std::string&
     return "{\"value\":null}";
 }
 
+// ---- bookmarks and history (chrome.bookmarks / chrome.history) -----------------------------------
+// Lyra's two folders are Chrome's two: Favorites is the bookmarks bar ("1"), Bookmarks the other
+// bookmarks ("2"), under the root "0". Only for extensions whose manifest asks for the permission.
+std::wstring ToLower(std::wstring s) {
+    if (!s.empty()) CharLowerBuffW(s.data(), (DWORD)s.size());
+    return s;
+}
+
+bool HasPermission(const Extension& e, const char* name) {
+    JsonValue m;
+    if (!JsonParse(e.manifestText, m)) return false;
+    if (const JsonValue* p = m.get("permissions"))
+        for (auto& x : p->items) if (x.isString() && x.s == name) return true;
+    return false;
+}
+
+double Num(const JsonValue* o, const char* key, double fallback) {
+    const JsonValue* v = o ? o->get(key) : nullptr;
+    return v && v->type == JsonValue::Number ? v->n : fallback;
+}
+
+int BmIndex(const Bookmark& b) {
+    if (b.parent == 0) return b.id == kFavoritesFolder ? 0 : 1;
+    const auto kids = BookmarkChildren(b.parent);
+    for (size_t i = 0; i < kids.size(); ++i) if (kids[i].id == b.id) return (int)i;
+    return 0;
+}
+
+std::string BmNode(const Bookmark& b, int index, bool children) {
+    const std::wstring title = b.parent == 0 ? BookmarkFolderName(b.id) : b.title;
+    std::string s = "{\"id\":\"" + std::to_string(b.id) + "\",\"parentId\":\"" + std::to_string(b.parent) +
+                    "\",\"index\":" + std::to_string(index) + ",\"title\":" + JsonQuote(ToUtf8(title)) +
+                    ",\"dateAdded\":" + std::to_string(b.added) + ",\"syncing\":false";
+    if (b.parent == 0) s += std::string(",\"folderType\":") + (b.id == kFavoritesFolder ? "\"bookmarks-bar\"" : "\"other\"");
+    if (!b.folder) s += ",\"url\":" + JsonQuote(ToUtf8(b.url));
+    else {
+        s += ",\"dateGroupModified\":" + std::to_string(b.added);
+        if (children) {
+            s += ",\"children\":[";
+            const auto kids = BookmarkChildren(b.id);
+            for (size_t i = 0; i < kids.size(); ++i) { if (i) s += ","; s += BmNode(kids[i], (int)i, true); }
+            s += "]";
+        }
+    }
+    return s + "}";
+}
+
+std::string BmRoot() {
+    std::string s = "{\"id\":\"0\",\"title\":\"\",\"dateAdded\":0,\"syncing\":false,\"children\":[";
+    int i = 0;
+    for (long long id : { kFavoritesFolder, kBookmarksFolder })
+        if (const Bookmark* b = BookmarkGet(id)) { if (i) s += ","; s += BmNode(*b, i++, true); }
+    return s + "]}";
+}
+
+long long BmId(const std::string& s) {
+    if (s.empty() || s.size() > 18 || s.find_first_not_of("0123456789") != std::string::npos) return -1;
+    return std::stoll(s);
+}
+
+std::string BmError(const std::string& text) { return "{\"error\":" + JsonQuote(text) + "}"; }
+
+std::string BookmarksOp(const Extension& e, const JsonValue& msg, const std::string& op) {
+    if (!HasPermission(e, "bookmarks")) return BmError("This extension has no \"bookmarks\" permission.");
+    const char* noId = "Can't find bookmark for id.";
+    const char* rootError = "Can't modify the root bookmark folders.";
+    auto value = [](const std::string& v) { return "{\"value\":" + v + "}"; };
+    const long long id = BmId(msg.str("id"));
+    if (op == "bookmarks.getTree") return value("[" + BmRoot() + "]");
+    if (op == "bookmarks.getSubTree" || op == "bookmarks.getChildren") {
+        if (id == 0) {
+            if (op == "bookmarks.getSubTree") return value("[" + BmRoot() + "]");
+            std::string s = "[";
+            int i = 0;
+            for (long long r : { kFavoritesFolder, kBookmarksFolder })
+                if (const Bookmark* b = BookmarkGet(r)) { if (i) s += ","; s += BmNode(*b, i++, false); }
+            return value(s + "]");
+        }
+        const Bookmark* b = id > 0 ? BookmarkGet(id) : nullptr;
+        if (!b) return BmError(noId);
+        if (op == "bookmarks.getSubTree") return value("[" + BmNode(*b, BmIndex(*b), true) + "]");
+        std::string s = "[";
+        const auto kids = b->folder ? BookmarkChildren(b->id) : std::vector<Bookmark>();
+        for (size_t i = 0; i < kids.size(); ++i) { if (i) s += ","; s += BmNode(kids[i], (int)i, false); }
+        return value(s + "]");
+    }
+    if (op == "bookmarks.get") {
+        std::string s = "[";
+        if (const JsonValue* ids = msg.get("ids"))
+            for (auto& x : ids->items) {
+                const long long one = BmId(x.s);
+                const Bookmark* b = one > 0 ? BookmarkGet(one) : nullptr;
+                if (!b) return BmError(noId);
+                if (s.size() > 1) s += ",";
+                s += BmNode(*b, BmIndex(*b), false);
+            }
+        return value(s + "]");
+    }
+    if (op == "bookmarks.getRecent" || op == "bookmarks.search") {
+        std::vector<Bookmark> all = BookmarksAll();
+        std::vector<Bookmark> found;
+        if (op == "bookmarks.getRecent") {
+            for (auto& b : all) if (!b.folder) found.push_back(b);
+            std::stable_sort(found.begin(), found.end(), [](const Bookmark& a, const Bookmark& b) { return a.added > b.added; });
+            const size_t n = (size_t)std::max(0.0, Num(&msg, "n", 10));
+            if (found.size() > n) found.resize(n);
+        } else {
+            const JsonValue* q = msg.get("query");
+            const std::wstring text = ToLower(ToWide(q ? q->str("query") : "")), url = ToWide(q ? q->str("url") : ""),
+                               title = ToWide(q ? q->str("title") : "");
+            std::vector<std::wstring> words;
+            for (size_t i = 0; i < text.size();) {
+                size_t j = text.find(L' ', i);
+                if (j == std::wstring::npos) j = text.size();
+                if (j > i) words.push_back(text.substr(i, j - i));
+                i = j + 1;
+            }
+            for (auto& b : all) {
+                if (b.parent == 0) continue;
+                if (!url.empty() && (b.folder || b.url != url)) continue;
+                if (!title.empty() && b.title != title) continue;
+                const std::wstring hay = ToLower(b.title + L" " + b.url);
+                bool all_ = true;
+                for (auto& w : words) if (hay.find(w) == std::wstring::npos) all_ = false;
+                if (all_ && (!words.empty() || !url.empty() || !title.empty())) found.push_back(b);
+            }
+        }
+        std::string s = "[";
+        for (auto& b : found) { if (s.size() > 1) s += ","; s += BmNode(b, BmIndex(b), false); }
+        return value(s + "]");
+    }
+    if (op == "bookmarks.create") {
+        const JsonValue* b = msg.get("bookmark");
+        const long long parent = b && b->get("parentId") ? BmId(b->str("parentId")) : kBookmarksFolder;
+        const Bookmark* p = parent > 0 ? BookmarkGet(parent) : nullptr;
+        if (!p || !p->folder) return BmError("Can't find parent bookmark for id.");
+        const int index = (int)Num(b, "index", -1);
+        const std::wstring title = ToWide(b ? b->str("title") : ""), url = ToWide(b ? b->str("url") : "");
+        long long made;
+        if (url.empty()) { made = BookmarkAddFolder(parent, title); if (index >= 0) BookmarkMove(made, parent, index); }
+        else made = BookmarkAdd(parent, title, url, index);
+        const Bookmark* n = BookmarkGet(made);
+        if (!n) return BmError("The bookmark could not be created.");
+        const std::string node = BmNode(*n, BmIndex(*n), false);
+        Broadcast("bookmarks.onCreated", "[\"" + std::to_string(made) + "\"," + node + "]");
+        return value(node);
+    }
+    const Bookmark* b = id > 0 ? BookmarkGet(id) : nullptr;
+    if (id == 0 || (b && b->parent == 0)) return BmError(rootError);
+    if (!b) return BmError(noId);
+    const std::string sid = "\"" + std::to_string(id) + "\"";
+    if (op == "bookmarks.update") {
+        const JsonValue* ch = msg.get("changes");
+        std::string info = "{";
+        if (ch && ch->get("title")) { BookmarkRename(id, ToWide(ch->str("title"))); }
+        if (ch && ch->get("url") && !b->folder) { BookmarkSetUrl(id, ToWide(ch->str("url"))); }
+        const Bookmark* n = BookmarkGet(id);
+        info += "\"title\":" + JsonQuote(ToUtf8(n->title));
+        if (!n->folder) info += ",\"url\":" + JsonQuote(ToUtf8(n->url));
+        Broadcast("bookmarks.onChanged", "[" + sid + "," + info + "}]");
+        return value(BmNode(*n, BmIndex(*n), false));
+    }
+    if (op == "bookmarks.move") {
+        const JsonValue* d = msg.get("destination");
+        const long long oldParent = b->parent;
+        const int oldIndex = BmIndex(*b);
+        const long long parent = d && d->get("parentId") ? BmId(d->str("parentId")) : oldParent;
+        const Bookmark* p = parent > 0 ? BookmarkGet(parent) : nullptr;
+        if (!p || !p->folder) return BmError("Can't find parent bookmark for id.");
+        BookmarkMove(id, parent, (int)Num(d, "index", -1));
+        const Bookmark* n = BookmarkGet(id);
+        const int index = BmIndex(*n);
+        Broadcast("bookmarks.onMoved", "[" + sid + ",{\"parentId\":\"" + std::to_string(n->parent) + "\",\"index\":" + std::to_string(index) +
+                                       ",\"oldParentId\":\"" + std::to_string(oldParent) + "\",\"oldIndex\":" + std::to_string(oldIndex) + "}]");
+        return value(BmNode(*n, index, false));
+    }
+    if (op == "bookmarks.remove" || op == "bookmarks.removeTree") {
+        if (op == "bookmarks.remove" && b->folder && !BookmarkChildren(id).empty())
+            return BmError("Can't remove non-empty folder (use recursive to remove a folder and its contents).");
+        const int index = BmIndex(*b);
+        const std::string info = "{\"parentId\":\"" + std::to_string(b->parent) + "\",\"index\":" + std::to_string(index) + ",\"node\":" + BmNode(*b, index, true) + "}";
+        BookmarkRemove(id);
+        Broadcast("bookmarks.onRemoved", "[" + sid + "," + info + "]");
+        return "{\"value\":null}";
+    }
+    return BmError("unknown operation");
+}
+
+std::string HistoryItem(const HistoryEntry& h) {
+    return "{\"id\":\"" + std::to_string(std::hash<std::wstring>()(h.url) % 1000000000000ULL) + "\",\"url\":" + JsonQuote(ToUtf8(h.url)) +
+           ",\"title\":" + JsonQuote(ToUtf8(h.title)) + ",\"lastVisitTime\":" + std::to_string(h.lastVisit) +
+           ",\"visitCount\":" + std::to_string(h.visits) + ",\"typedCount\":0}";
+}
+
+std::string HistoryOp(const Extension& e, const JsonValue& msg, const std::string& op) {
+    if (!HasPermission(e, "history")) return BmError("This extension has no \"history\" permission.");
+    const JsonValue* q = msg.get("details");
+    const std::wstring url = ToWide(q ? q->str("url") : "");
+    if (op == "history.search") {
+        const std::wstring text = ToLower(ToWide(q ? q->str("text") : ""));
+        const double start = Num(q, "startTime", (double)(NowUnixMs() - 24LL * 3600 * 1000)), end = Num(q, "endTime", 1e18);
+        const size_t max = (size_t)std::max(0.0, Num(q, "maxResults", 100));
+        std::string s = "[";
+        size_t n = 0;
+        for (auto& h : HistoryNewest(100000)) {
+            if (n >= max) break;
+            if (h.lastVisit < start || h.lastVisit > end) continue;
+            if (!text.empty() && ToLower(h.title + L" " + h.url).find(text) == std::wstring::npos) continue;
+            if (n++) s += ",";
+            s += HistoryItem(h);
+        }
+        return "{\"value\":" + s + "]}";
+    }
+    if (op == "history.getVisits") {
+        for (auto& h : HistoryNewest(100000))
+            if (h.url == url) {
+                const std::string id = std::to_string(std::hash<std::wstring>()(h.url) % 1000000000000ULL);
+                return "{\"value\":[{\"id\":\"" + id + "\",\"visitId\":\"" + id + "\",\"visitTime\":" + std::to_string(h.lastVisit) +
+                       ",\"referringVisitId\":\"0\",\"transition\":\"link\",\"isLocal\":true}]}";
+            }
+        return "{\"value\":[]}";
+    }
+    if (op == "history.addUrl") {
+        if (url.empty()) return BmError("Url is required.");
+        HistoryVisit(url, L"");
+        return "{\"value\":null}";
+    }
+    if (op == "history.deleteUrl") {
+        HistoryRemove(url);
+        Broadcast("history.onVisitRemoved", "[{\"allHistory\":false,\"urls\":[" + JsonQuote(ToUtf8(url)) + "]}]");
+        return "{\"value\":null}";
+    }
+    if (op == "history.deleteRange") {
+        const double start = Num(q, "startTime", 0), end = Num(q, "endTime", 0);
+        std::string urls;
+        for (auto& h : HistoryNewest(100000))
+            if (h.lastVisit >= start && h.lastVisit <= end) {
+                HistoryRemove(h.url);
+                if (!urls.empty()) urls += ",";
+                urls += JsonQuote(ToUtf8(h.url));
+            }
+        Broadcast("history.onVisitRemoved", "[{\"allHistory\":false,\"urls\":[" + urls + "]}]");
+        return "{\"value\":null}";
+    }
+    if (op == "history.deleteAll") {
+        HistoryClearSince(0);
+        Broadcast("history.onVisitRemoved", "[{\"allHistory\":true,\"urls\":[]}]");
+        return "{\"value\":null}";
+    }
+    return BmError("unknown operation");
+}
+
 bool MenuShows(const MenuItem& m, const ExtensionMenuContext& c, bool inherit) {
     if (!m.visible) return false;
     const bool special = !c.link.empty() || !c.image.empty() || !c.media.empty() || c.editable || c.selection;
@@ -1669,6 +1923,8 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
 
     // ---- the extension's own pages from here on ----
     if (op.rfind("menus.", 0) == 0) { answer = MenusOp(*e, msg, op); return; }
+    if (op.rfind("bookmarks.", 0) == 0) { answer = BookmarksOp(*e, msg, op); return; }
+    if (op.rfind("history.", 0) == 0) { answer = HistoryOp(*e, msg, op); return; }
     if (op == "tabs.query") { answer = "{\"value\":" + TabsQuery(msg.get("info") ? *msg.get("info") : JsonValue()) + "}"; return; }
     if (op == "tabs.get") {
         Tab* t = TabById(msg.get("tabId"));

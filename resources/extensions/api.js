@@ -510,6 +510,38 @@ const dnr = {
       ACTION_MENU_TOP_LEVEL_LIMIT: 6,
     };
     menus.onClicked.addListener((info, tab) => { const f = menuClicks.get(String(info.menuItemId)); if (f) f(info, tab); });
+    // Bookmarks and history: only with the permission (as in Chrome, the API is not there otherwise).
+    const asks = (name) => (EXT.manifest.permissions || []).includes(name);
+    const bm = (op, data, cb) => withCallback(call("bookmarks." + op, data), cb);
+    const bookmarks = {
+      getTree: (cb) => bm("getTree", {}, cb),
+      getSubTree: (id, cb) => bm("getSubTree", { id: String(id) }, cb),
+      get: (ids, cb) => bm("get", { ids: [].concat(ids).map(String) }, cb),
+      getChildren: (id, cb) => bm("getChildren", { id: String(id) }, cb),
+      getRecent: (n, cb) => bm("getRecent", { n }, cb),
+      search: (q, cb) => bm("search", { query: typeof q === "string" ? { query: q } : (q || {}) }, cb),
+      create: (b, cb) => bm("create", { bookmark: b || {} }, cb),
+      update: (id, changes, cb) => bm("update", { id: String(id), changes: changes || {} }, cb),
+      move: (id, destination, cb) => bm("move", { id: String(id), destination: destination || {} }, cb),
+      remove: (id, cb) => bm("remove", { id: String(id) }, cb),
+      removeTree: (id, cb) => bm("removeTree", { id: String(id) }, cb),
+      onCreated: makeEvent("bookmarks.onCreated"), onRemoved: makeEvent("bookmarks.onRemoved"),
+      onChanged: makeEvent("bookmarks.onChanged"), onMoved: makeEvent("bookmarks.onMoved"),
+      onChildrenReordered: makeEvent(), onImportBegan: makeEvent(), onImportEnded: makeEvent(),
+      MAX_WRITE_OPERATIONS_PER_HOUR: 1000000, MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000,
+    };
+    const hist = (op, details, cb) => withCallback(call("history." + op, { details: details || {} }), cb);
+    const history = {
+      search: (q, cb) => hist("search", q, cb),
+      getVisits: (d, cb) => hist("getVisits", d, cb),
+      addUrl: (d, cb) => hist("addUrl", d, cb),
+      deleteUrl: (d, cb) => hist("deleteUrl", d, cb),
+      deleteRange: (d, cb) => hist("deleteRange", d, cb),
+      deleteAll: (cb) => hist("deleteAll", {}, cb),
+      onVisited: makeEvent("history.onVisited"), onVisitRemoved: makeEvent("history.onVisitRemoved"),
+    };
+    if (asks("bookmarks")) api.bookmarks = bookmarks;
+    if (asks("history")) api.history = history;
     const grantedPermissions = (p) => {
       const have = EXT.manifest.permissions || [];
       return ((p && p.permissions) || []).every((x) => have.includes(x));
