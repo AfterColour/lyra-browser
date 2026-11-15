@@ -2,6 +2,7 @@
 #include "browser/ContextMenu.h"
 #include "browser/PageClients.h"
 #include "browser/CustomThemes.h"
+#include "browser/Extensions.h"
 #include "browser/DevProbe.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
@@ -85,6 +86,7 @@ static void OnDidStart(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     t->progress = 0.08f;
     t->fade = 1.f;
     SyncTab(*t);
+    ExtensionsOnTabUpdated(t);
     InvalidateChrome();
 }
 
@@ -94,6 +96,7 @@ static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     t->readerable = false;               // the new page is checked when it finishes
     TranslatePageCommitted(*t);
     SyncTab(*t);
+    ExtensionsOnTabUpdated(t);
     Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
     InvalidateChrome();
 }
@@ -106,6 +109,7 @@ static void OnDidFinish(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     t->loading = false;
     t->progress = std::max(t->progress, 0.9f);
     SyncTab(*t);
+    ExtensionsOnTabUpdated(t);
     // The finished page's title names its history entry (the title seen when the address
     // changed may still have been the previous page's).
     if (WKStringRef ts = WKPageCopyTitle(t->page)) { HistorySetTitle(t->url, WKStr(ts)); WKRelease(ts); }
@@ -247,6 +251,7 @@ static void OnStateChanged(const void* ci) {
     Tab* t = ResolveTab(ci, "stateChanged");
     if (!t) return;
     if (SyncTab(*t)) InvalidateChrome();
+    ExtensionsOnTabUpdated(t);
 }
 
 // window.open() / target=_blank: WebKit hands us a configuration that already links

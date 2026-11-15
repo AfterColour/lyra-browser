@@ -7,7 +7,11 @@
 //     css, run_at, all_frames), each extension in an isolated world of its own
 //     (WKUserScriptCreateWithSourceInWorld, an addition to Lyra's WebKit);
 //   - their chrome.* / browser.* API (resources/extensions/api.js): runtime, storage, i18n.
-// Background pages, the toolbar button and its popup, tabs and other APIs come next.
+//   - a background page (or service worker, run as a page) per extension, kept running
+//     hidden, and options pages in a window of their own: the full chrome.* API there, with
+//     messages between the parts (runtime / tabs.sendMessage), tabs, windows, scripting,
+//     alarms, storage.onChanged everywhere; tab events.
+// The toolbar button and its pop-up, ports (runtime.connect) and web requests come next.
 #pragma once
 
 #include "common/Platform.h"
@@ -28,3 +32,10 @@ void ExtensionRemove(const std::wstring& id);
 bool ExtensionInstallFromFile();                        // Settings: .crx / .zip / .xpi (file dialog)
 bool ExtensionInstallFromFolder();                      // Settings: an unpacked extension (folder dialog)
 bool ExtensionInstall(const std::wstring& path, std::wstring& err);   // file or folder
+void ExtensionsShutdown();
+// What the extensions' tabs API reports (tabs.onCreated / onUpdated / onActivated / onRemoved).
+struct Tab;
+void ExtensionsOnTabCreated(Tab* t);
+void ExtensionsOnTabUpdated(Tab* t);                     // loading, address or title changed
+void ExtensionsOnTabActivated(Tab* t);
+void ExtensionsOnTabRemoved(unsigned long long id);

@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/Extensions.h"
 #include "browser/PictureInPicture.h"
 #include "browser/AdBlock.h"
 #include "browser/History.h"
@@ -189,6 +190,7 @@ void SelectTab(int i) {
         ShowWindow(h, SW_SHOW);
     }
     SessionLoadLazyTab(*g_tabs[i]);
+    if (from != to) ExtensionsOnTabActivated(to);
     if (IsEditing()) ShowWindow(g_urlEdit, SW_HIDE);
     UpdateWindowTitle();
     InvalidateChrome();
@@ -298,6 +300,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     g_tabs.push_back(std::move(tab));
     Log("tab#%llu CREATED view=%p page=%p hwnd=%p popup=%d (tabs=%d)", raw->id, (void*)raw->view,
         (void*)raw->page, (void*)raw->hwnd, (int)openedByPage, (int)g_tabs.size());
+    ExtensionsOnTabCreated(raw);
     RefreshLayout(true);                 // the new tab grows in
     if (select) SelectTab((int)g_tabs.size() - 1);
     else ShowWindow(raw->hwnd, SW_HIDE);
@@ -622,6 +625,7 @@ void CloseTab(int i) {
     Log("CloseTab: begin index=%d tab#%llu loading=%d active=%d tabs=%d", i, g_tabs[i]->id,
         (int)g_tabs[i]->loading, g_active, (int)g_tabs.size());
     RememberClosedTab(*g_tabs[i]);
+    ExtensionsOnTabRemoved(g_tabs[i]->id);
 
     // 1) Take the tab out of our own state and cut off callbacks, so nothing that
     //    runs while WebKit objects are being destroyed can reach it.

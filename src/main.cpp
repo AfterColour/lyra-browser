@@ -208,6 +208,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     }
 
     StallWatchStop();
+    ExtensionsShutdown();                // background pages before the WebKit context goes
     Log("message loop ended; releasing WebKit preferences/context");
     MediaControlsShutdown();
     PasswordsShutdown();
