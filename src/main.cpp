@@ -31,6 +31,7 @@
 #include "browser/History.h"
 #include "browser/StartPage.h"
 #include "app/CrashHandler.h"
+#include "app/StallWatch.h"
 #include "app/Environment.h"
 #include "app/Log.h"
 #include "browser/TabManager.h"
@@ -195,6 +196,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     if (!restored) CreateTab(startUrl);
     ScheduleSpareTab(3000);              // the next new tab, once the first page is up
     UpdaterInit();                       // installed copies look for updates (app/Updater.cpp)
+    StallWatchStart();                   // notes in tabs.log where the window got stuck (app/StallWatch.cpp)
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -203,6 +205,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         DispatchMessageW(&msg);
     }
 
+    StallWatchStop();
     Log("message loop ended; releasing WebKit preferences/context");
     MediaControlsShutdown();
     PasswordsShutdown();
