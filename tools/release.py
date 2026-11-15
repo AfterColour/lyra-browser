@@ -13,7 +13,8 @@ Steps:
  5. a GitHub release v<v> in AfterColour/lyra-browser with LyraSetup.exe and the sources;
     the notes come from release-notes\\<v>.md (written by you) if it exists
  6. docs\\update.json - signed with the update key (tools\\update-key.py) - is committed and
-    pushed: installed copies of Lyra find the new version there (GitHub Pages)
+    pushed: installed copies of Lyra find the new version there (GitHub Pages); with it
+    docs\\releases.json, the notes of every version for the website's "What's new"
 """
 import glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, time, zipfile
 
@@ -40,6 +41,20 @@ def update_key():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def write_releases(ver):
+    """docs/releases.json: the website's "What's new" - this version's notes added (or replaced)."""
+    out = os.path.join(LYRA, "docs", "releases.json")
+    try: items = json.load(open(out, encoding="utf-8"))
+    except (OSError, ValueError): items = []
+    notes_file = os.path.join(LYRA, "release-notes", ver + ".md")
+    notes = open(notes_file, encoding="utf-8").read().replace("\r\n", "\n").strip() if os.path.exists(notes_file) else ""
+    items = [r for r in items if r.get("version") != ver]
+    items.append({"version": ver, "date": time.strftime("%Y-%m-%d"), "notes": notes})
+    items.sort(key=lambda r: [int(x) for x in re.findall(r"\d+", r["version"])], reverse=True)
+    open(out, "w", encoding="utf-8", newline="\n").write(json.dumps(items, ensure_ascii=False, indent=1) + "\n")
+    return out
 
 
 def write_manifest(ver, setup, out=None):
@@ -164,7 +179,7 @@ def main():
 
     step("6/6 update manifest -> docs/update.json")
     m = write_manifest(ver, setup)
-    run(["git", "add", m], cwd=LYRA)
+    run(["git", "add", m, write_releases(ver)], cwd=LYRA)
     run(["git", "commit", "-q", "-m", "Lyra %s: update manifest" % ver], cwd=LYRA)
     run(["git", "push", "-q"], cwd=LYRA)
     step("done: https://github.com/%s/releases/tag/%s" % (REPO, tag))
