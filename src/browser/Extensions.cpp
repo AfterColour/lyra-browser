@@ -24,6 +24,7 @@
 #include <WebKit/WKPageNavigationClient.h>
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKContextPrivate.h>
+#include <WebKit/WKSecurityOriginRef.h>
 #include <WebKit/WKPageConfigurationRef.h>
 #include <WebKit/WKPreferencesRefPrivate.h>
 #include <shobjidl.h>
@@ -61,12 +62,13 @@ struct Extension {
     std::string optionsPage;
     std::vector<Ruleset> rulesets;
     std::vector<std::string> war;        // web_accessible_resources (globs, relative)
+    bool firefoxBuild = false;           // made for Firefox (browser_specific_settings.gecko)
 };
 
 std::vector<Extension> s_exts;
 std::vector<ExtensionInfo> s_infos;
 std::set<std::wstring> s_worldsWithHandler;
-struct HandlerCtx { std::wstring id; bool content = true; };      // whose script sent a message, and from where
+struct HandlerCtx { std::wstring id; bool content = true; bool tabFrame = false; };   // tabFrame: one of its pages inside a tab      // whose script sent a message, and from where
 std::map<std::wstring, std::unique_ptr<HandlerCtx>> s_handlerIds;    // context of each world's handler
 std::map<std::wstring, std::map<std::string, std::string>> s_session; // storage.session, per extension
 std::string s_apiJs;
@@ -142,8 +144,10 @@ void AddPatterns(const JsonValue* list, std::vector<std::string>& out) {
     if (!list || !list->isArray()) return;
     for (auto& v : list->items) {
         if (!v.isString()) continue;
-        if (v.s == "<all_urls>") { out.push_back("http://*/*"); out.push_back("https://*/*"); out.push_back("file:///*"); }
-        else out.push_back(v.s);
+        // (not file://: Chrome needs the user's leave for it, and Lyra's own pages - start page,
+        // welcome - are files)
+        if (v.s == "<all_urls>") { out.push_back("http://*/*"); out.push_back("https://*/*"); }
+        else if (v.s.rfind("file:", 0) != 0) out.push_back(v.s);
     }
 }
 
@@ -243,6 +247,8 @@ bool LoadExtension(const std::wstring& dir, Extension& ext, std::string* error) 
         }
     }
     info.contentScripts = (int)ext.scripts.size();
+    for (const char* key : { "browser_specific_settings", "applications" })
+        if (const JsonValue* b = m.get(key)) if (b->get("gecko")) ext.firefoxBuild = true;
     if (const JsonValue* war = m.get("web_accessible_resources"))
         for (auto& w : war->items) {
             if (w.isString()) ext.war.push_back(w.s);
@@ -648,6 +654,24 @@ void AddAllScripts(WKUserContentControllerRef controller) {
     ExtensionStoreAddScript(controller);   // "Add to Lyra" on the stores' pages
     LoadApi();
     if (s_apiJs.empty()) return;
+    // Extensions' own pages inside tabs (a password manager's menu in a page's iframe, an extension's
+    // page opened in a tab): their full API in the page's world, answered by one handler there.
+    static WKUserContentControllerRef s_frameHandlerOn = nullptr;
+    static HandlerCtx s_frameCtx{ L"", false, true };
+    if (s_frameHandlerOn != controller) {
+        s_frameHandlerOn = controller;
+        WKStringRef name = WKStringCreateWithUTF8CString("lyraExt");
+        WKUserContentControllerAddScriptMessageHandler(controller, name, OnMessage, &s_frameCtx);
+        WKRelease(name);
+    }
+    for (Extension& e : s_exts) {
+        if (!e.info.enabled) continue;
+        ContentScript frames;
+        frames.matches.push_back(ToUtf8(std::wstring(kExtScheme) + L"://" + e.info.id + L"/*"));
+        frames.atStart = true;
+        frames.allFrames = true;
+        AddScript(controller, "(" + s_apiJs + ")(" + ExtJson(e, "extension") + ");", frames, L"");
+    }
     for (Extension& e : s_exts) {
         if (!e.info.enabled) continue;
         std::vector<std::pair<ContentScript, bool>> all;     // (script, in the page's own world)
@@ -802,9 +826,9 @@ void EvalInWorld(WKPageRef page, const std::wstring& world, const std::string& s
                  WKFrameInfoRef frame = nullptr) {
     if (!page) { if (callback) callback(nullptr, nullptr, context); return; }
     WKStringRef s = WKStringCreateWithUTF8CStringWithLength(script.data(), script.size());
-    WKStringRef w = WKStringCreateWithUTF8CString(ToUtf8(world).c_str());
+    WKStringRef w = world.empty() ? nullptr : WKStringCreateWithUTF8CString(ToUtf8(world).c_str());   // none: the page's own world
     WKPageEvaluateJavaScriptInFrameInWorld(page, frame, s, w, context, callback);
-    WKRelease(w);
+    if (w) WKRelease(w);
     WKRelease(s);
 }
 
@@ -1003,6 +1027,7 @@ void ToEnd(const std::wstring& extId, const PortEnd& end, const std::string& scr
     Extension* e = Find(extId);
     if (!e || !end.page) { if (callback) callback(nullptr, nullptr, context); return; }
     if (end.content) { EvalInWorld(end.page, World(*e), script, context, callback, end.frame); return; }
+    if (end.frame) { EvalInWorld(end.page, L"", script, context, callback, end.frame); return; }   // its page inside a tab
     auto it = s_hosts.find(extId);
     if (it != s_hosts.end() && it->second->bgPage == end.page) ToBackground(*it->second, script);
     else Eval(end.page, script);
@@ -1408,6 +1433,9 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         if (ctx.content) {
             if (Tab* t = TabOfPage(fromPage)) opener.tabId = t->id;
             if (fromFrame && !mainFrame) { opener.frame = fromFrame; WKRetain(fromFrame); }
+        } else if (ctx.tabFrame) {                           // its page inside a tab: answered in that frame
+            if (Tab* t = TabOfPage(fromPage)) opener.tabId = t->id;
+            if (fromFrame) { opener.frame = fromFrame; WKRetain(fromFrame); }
         }
         const JsonValue* tabId = msg.get("tabId");
         const bool toTab = tabId && tabId->type == JsonValue::Number;
@@ -1424,7 +1452,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
             answer = "{\"value\":{\"id\":" + std::to_string(id) + ",\"alone\":true}}";
             return;
         }
-        const std::string sender = toTab ? SenderJson(*e, false, nullptr, true) : SenderJson(*e, ctx.content, fromPage, mainFrame);
+        const std::string sender = toTab ? SenderJson(*e, false, nullptr, true) : SenderJson(*e, ctx.content || ctx.tabFrame, fromPage, mainFrame);
         s_ports[id] = Port{ e->info.id, opener, receivers };
         const std::string script = PortScript("__lyraPortConnect", id, JsonQuote(msg.str("name")) + "," + sender);
         for (const PortEnd& r : receivers) {
@@ -1440,7 +1468,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         auto it = s_ports.find(id);
         if (it == s_ports.end()) return;
         Port& p = it->second;
-        auto same = [&](const PortEnd& end) { return end.page == fromPage && end.content == ctx.content; };
+        auto same = [&](const PortEnd& end) { return end.page == fromPage && end.content == ctx.content && (!ctx.tabFrame || end.frame); };
         const bool fromOpener = same(p.opener);
         if (op == "port.post") {
             const std::string script = PortScript("__lyraPortMessage", id, messageJson);
@@ -1524,20 +1552,22 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         Tab* t = TabById(msg.get("tabId"));
         if (!t || !t->page) { answer = "{\"error\":\"No tab with this id.\"}"; return; }
         const bool css = op == "scripting.insertCSS";
+        const bool mainWorld = msg.str("world") == "MAIN";
         std::string script;
         if (css) {
             const std::string text = msg.str("css") + Files(*e, msg.get("files"));
             script = std::string(kCssInjector) + "(" + JsonQuote(text) + ")";
         } else {
             const std::string code = msg.get("code") && msg.get("code")->isString() ? msg.str("code") : Files(*e, msg.get("files"));
-            // The extension's API first if no content script of it ran in this page yet.
-            const std::string api = "if (!globalThis.__lyraExtension) { globalThis.__lyraExtension = true; (" + LoadApi() + ")(" + ExtJson(*e, "content") + "); }\n";
+            // The extension's API first if no content script of it ran in this page yet (not in the
+            // page's own world, world: "MAIN": the page must not get it).
+            const std::string api = mainWorld ? std::string() : "if (!globalThis.__lyraExtension) { globalThis.__lyraExtension = true; (" + LoadApi() + ")(" + ExtJson(*e, "content") + "); }\n";
             script = api + "(() => { try { const r = (0, eval)(" + JsonQuote(code) + "); return JSON.stringify({ r: r === undefined ? null : r }); } "
                      "catch (e) { return JSON.stringify({ e: String(e && e.message || e) }); } })()";
         }
         const int callId = NewCall(reply, 1);
         deferred = true;
-        EvalInWorld(t->page, World(*e), script, new ScriptCall{ callId, css }, OnScriptDone);
+        EvalInWorld(t->page, mainWorld ? std::wstring() : World(*e), script, new ScriptCall{ callId, css }, OnScriptDone);
         return;
     }
     if (op == "debug.log") {
@@ -1620,10 +1650,34 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     answer = "{\"error\":\"" + op + " is not supported yet\"}";
 }
 
+// An extension's page inside a tab: which extension, from the frame's origin as the engine reports
+// it (a site's own frames, which can reach this handler too, are turned away).
+bool TabFrameExtension(WKScriptMessageRef message, std::wstring& id) {
+    WKFrameInfoRef frame = WKScriptMessageGetFrameInfo(message);
+    if (!frame) return false;
+    WKSecurityOriginRef origin = WKFrameInfoCopySecurityOrigin(frame);
+    if (!origin) return false;
+    std::wstring protocol, host;
+    if (WKStringRef s = WKSecurityOriginCopyProtocol(origin)) { protocol = WKStr(s); WKRelease(s); }
+    if (WKStringRef s = WKSecurityOriginCopyHost(origin)) { host = WKStr(s); WKRelease(s); }
+    WKRelease(origin);
+    if (_wcsicmp(protocol.c_str(), kExtScheme) != 0 || host.empty()) return false;
+    for (const Extension& x : s_exts)
+        if (_wcsicmp(x.info.id.c_str(), host.c_str()) == 0) { id = x.info.id; return true; }
+    return false;
+}
+
 void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void* context) {
     const ULONGLONG started = GetTickCount64();
     std::string answer;
     bool deferred = false;
+    HandlerCtx frameCtx;
+    if (context && ((const HandlerCtx*)context)->tabFrame) {
+        frameCtx.content = false;
+        frameCtx.tabFrame = true;
+        if (!TabFrameExtension(message, frameCtx.id)) context = nullptr;
+        else context = &frameCtx;
+    }
     if (!context) answer = "{\"error\":\"extension not found\"}";
     else HandleMessage(*(const HandlerCtx*)context, message, reply, answer, deferred);
     const ULONGLONG took = GetTickCount64() - started;
@@ -1671,6 +1725,18 @@ Host& EnsureHost(const Extension& e) {
     WKPageConfigurationSetUserContentController(h.conf, h.ucc);
     SetSchemeHandler(h.conf, kFromExtensionPage);
     return h;
+}
+
+// Pages of an extension made for Chrome say they are Chrome: some find out which browser they run
+// in from the user agent and stop when it is none they know (Bitwarden: " Chrome/" or Safari's own
+// extension API). Those made for Firefox keep WebKit's.
+void ExtensionUserAgent(const Host& h, WKPageRef page) {
+    const Extension* e = Find(h.id);
+    if (!e || e->firefoxBuild || !page) return;
+    WKStringRef ua = WKStringCreateWithUTF8CString("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                                   "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Lyra");
+    WKPageSetCustomUserAgent(page, ua);
+    WKRelease(ua);
 }
 
 void OnBackgroundLoaded(WKPageRef, WKNavigationRef, WKTypeRef, const void* context) {
@@ -1750,6 +1816,7 @@ void StartBackground(const Extension& e, const std::wstring& installReason, bool
     h.bgView = WKViewCreate(r, h.conf, s_hostWnd);
     if (!h.bgView) return;
     h.bgPage = WKViewGetPage(h.bgView);
+    ExtensionUserAgent(h, h.bgPage);
     h.bgReady = false;
     h.installReason = installReason;
     h.atStartup = atStartup;
@@ -1831,6 +1898,7 @@ HWND OpenExtensionWindow(Host& h, const std::wstring& url, const std::wstring& t
     SetWindowLongPtrW(wnd, GWLP_USERDATA, (LONG_PTR)view);
     WKViewSetIsInWindow(view, true);
     h.windows.push_back(wnd);
+    ExtensionUserAgent(h, WKViewGetPage(view));
     WKURLRef u = WKURLCreateWithUTF8CString(ToUtf8(url).c_str());
     WKPageLoadURL(WKViewGetPage(view), u);
     WKRelease(u);
@@ -2029,6 +2097,7 @@ void OpenPopup(const Extension& e, const std::wstring& url, const RectF& anchor)
     s_popup.anchor = anchor;
     s_popup.shown = false;
     WKPageRef page = WKViewGetPage(view);
+    ExtensionUserAgent(h, page);
     WKPageNavigationClientV0 nc = {};
     nc.base.version = 0;
     nc.didFinishNavigation = OnPopupLoaded;
@@ -2129,7 +2198,7 @@ void ExtensionsOnTabActivated(Tab* t) {
 void ExtensionsOnTabCommitted(Tab* t) {
     if (!t || s_ports.empty()) return;
     const unsigned long long id = t->id;
-    DropPorts([id](const PortEnd& end) { return end.content && end.tabId == id; });
+    DropPorts([id](const PortEnd& end) { return (end.content || end.frame) && end.tabId == id; });
 }
 
 void ExtensionsOnTabRemoved(unsigned long long id) {
@@ -2141,7 +2210,7 @@ void ExtensionsOnTabRemoved(unsigned long long id) {
             if (k.size() > suffix.size() && k.compare(k.size() - suffix.size(), std::string::npos, suffix) == 0) it = a.values.erase(it);
             else ++it;
         }
-    if (!s_ports.empty()) DropPorts([id](const PortEnd& end) { return end.content && end.tabId == id; });
+    if (!s_ports.empty()) DropPorts([id](const PortEnd& end) { return (end.content || end.frame) && end.tabId == id; });
     if (s_hosts.empty()) return;
     Broadcast("tabs.onRemoved", "[" + std::to_string(id) + ",{\"windowId\":1,\"isWindowClosing\":false}]");
 }

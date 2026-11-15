@@ -26,7 +26,7 @@ function (EXT) {
   if (EXT.context === "extension" && handler && !globalThis.__lyraConsole) {
     globalThis.__lyraConsole = true;
     let budget = 100;
-    const text = (a) => { try { return a instanceof Error ? (a.stack || String(a)) : typeof a === "object" ? JSON.stringify(a) : String(a); } catch (e) { return String(a); } };
+    const text = (a) => { try { return a instanceof Error ? String(a) + (a.stack ? " @ " + a.stack.split("\n").slice(0, 4).join(" < ") : "") : typeof a === "object" ? JSON.stringify(a) : String(a); } catch (e) { return String(a); } };
     const send = (level, args) => {
       if (budget-- <= 0) return;
       try { handler.postMessage(JSON.stringify({ op: "debug.log", level, text: args.map(text).join(" ").slice(0, 600), url: location.pathname })); } catch (e) {}
@@ -164,6 +164,16 @@ function (EXT) {
     if (error) runtime.lastError = { message: error };
     try { port.onDisconnect._fire(port); } finally { runtime.lastError = undefined; }
   };
+  const NO_NATIVE = "Specified native messaging host not found.";
+  Object.assign(runtime, {
+    connectNative: () => {
+      const port = makePort("");
+      port.postMessage = () => {};
+      setTimeout(() => portGone(port, NO_NATIVE), 0);
+      return port;
+    },
+    sendNativeMessage: (...args) => withCallback(Promise.reject(new Error(NO_NATIVE)), splitCallback(args)),
+  });
   // (what arrives for a port before this side knows its id: kept a moment)
   const later = (id, f) => {
     if (!early.has(id)) { early.set(id, []); setTimeout(() => early.delete(id), 10000); }
@@ -331,8 +341,10 @@ function (EXT) {
         inj = inj || {};
         const target = inj.target || {};
         const code = inj.func ? "(" + inj.func.toString() + ").apply(null, " + JSON.stringify(inj.args || []) + ")" : undefined;
-        return withCallback(call("scripting.executeScript", { tabId: target.tabId, code, files: inj.files }), cb);
+        return withCallback(call("scripting.executeScript", { tabId: target.tabId, code, files: inj.files, world: inj.world || "ISOLATED" }), cb);
       },
+      ExecutionWorld: { ISOLATED: "ISOLATED", MAIN: "MAIN" },
+      StyleOrigin: { AUTHOR: "AUTHOR", USER: "USER" },
       insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files }), cb),
       removeCSS: stub(undefined),
       registerContentScripts: (scripts, cb) => withCallback(call("scripting.registerContentScripts", { scripts: scripts || [] }).then(() => undefined), cb),

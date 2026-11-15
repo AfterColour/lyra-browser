@@ -173,6 +173,10 @@
              transition: opacity .35s var(--ease), transform .45s var(--ease); }
   .eng.open .ds { opacity: 1; transform: none; transition-delay: .08s; }
   .later { margin-top: 14px; font-size: 12.5px; color: var(--text3); }
+  .pms { max-width: 860px; margin-left: auto; margin-right: auto; }
+  .pms .eng { width: calc((100% - 10px) / 2); }
+  .pms .eng .mono img.own { opacity: 1; transform: none; left: 4px; top: 4px; width: 28px; height: 28px; }
+  .pms .eng .mono.none { background: rgba(255, 255, 255, .10) !important; color: var(--text2); font-size: 18px; }
 
   /* bookmarks import */
   .list { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 560px; }
@@ -252,7 +256,15 @@
     <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
   </section>
 
-  <section class="step" data-step="4">
+  <section class="step wide" data-step="4">
+    <h2 id="tP"></h2>
+    <p class="lead" id="lP"></p>
+    <div class="engines pms" id="pms"></div>
+    <div class="later" id="laterP"></div>
+    <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
+  </section>
+
+  <section class="step" data-step="5">
     <h2 id="t3"></h2>
     <p class="lead" id="l3"></p>
     <div class="list" id="importers"></div>
@@ -261,7 +273,7 @@
     <div class="actions"><button class="ghost" data-back></button><button class="primary" data-next></button></div>
   </section>
 
-  <section class="step" data-step="5">
+  <section class="step" data-step="6">
     <svg class="trace" viewBox="40 24 180 200" aria-hidden="true">
       <path d="M134,110 C150,90 166,66 160,44 C156,32 140,28 128,38 C116,50 112,80 106,112 C100,144 94,176 82,200 C74,214 54,222 46,208 C40,196 60,190 82,198 C112,208 140,214 166,210 C182,206 196,200 204,190"/>
       <circle cx="160" cy="44" r="6" style="animation-delay:.4s"/>
@@ -296,6 +308,7 @@ const state = {
   fav: q.get("fav") !== "0",
   freq: q.get("freq") === "1",
   engine: q.has("engine") ? +q.get("engine") : 0,   // index in Lyra's list; -1: a custom address
+  pm: q.has("pm") ? +q.get("pm") : 0,               // passwords: 0 Lyra, 1 Bitwarden, 2 Proton Pass, 3 none
 };
 const systemRu = q.get("sysru") === "1", systemDark = q.get("sysdark") === "1";
 const still = q.get("anim") === "0" || matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -324,6 +337,14 @@ const T = {
       ["Ecosia", "Its profits plant trees. Results from Bing and Google.", "Results from Bing and Google; its profits go to planting trees. Says it anonymises searches within a week and builds no lasting profiles."],
       ["Yandex", "Best for Russian-language search. Keeps your data.", "Strong with Russian-language queries and services in Russia. Keeps search data for personalisation and ads; as a Russian company it must hand data to authorities when required."],
     ],
+    tP: "Where should your passwords live?", lP: "Lyra can save your sign-ins itself, or you can use a password manager you already trust.",
+    laterP: "A password manager is added from Chrome Web Store after you confirm, and Lyra stops offering to save passwords itself. You can change this in Settings.",
+    pms: [
+      ["Lyra", "Built in. Your passwords stay on this computer.", "Kept on this computer, encrypted for your Windows account, and filled in only on their own site. No account needed; they do not sync to your other devices."],
+      ["Bitwarden", "Open source and free. Syncs across your devices.", "An open-source password manager with a free plan. Your vault is end-to-end encrypted and syncs across devices and browsers. Needs a Bitwarden account; Lyra adds its extension."],
+      ["Proton Pass", "From Proton. Encrypted, with email aliases.", "From the makers of Proton Mail, based in Switzerland. End-to-end encrypted, syncs across devices, has a free plan and can hide your email address behind aliases. Needs a Proton account; Lyra adds its extension."],
+      ["Don't save", "Lyra won't offer to save passwords.", "Lyra will neither save nor fill in passwords. You can turn this on later in Settings > Privacy and Security."],
+    ],
     t3: "Bring your bookmarks along?", l3: "Lyra found these browsers on this computer.",
     l3none: "No other browsers found - a clean start, then.",
     importedN: (n, b) => n > 0 ? n + " bookmarks came over from " + b + "." : "No bookmarks were found in " + b + ".",
@@ -348,6 +369,14 @@ const T = {
       ["Ecosia", "Прибыль идёт на посадку деревьев. Результаты Bing и Google.", "Результаты Bing и Google, прибыль идёт на посадку деревьев. По их словам, обезличивает запросы в течение недели и не строит постоянных профилей."],
       ["Яндекс", "Лучший для русскоязычного поиска. Хранит ваши данные.", "Силён в русскоязычных запросах и сервисах по России. Хранит данные поиска для персонализации и рекламы; как российская компания обязан передавать данные властям по требованию."],
     ],
+    tP: "Где хранить пароли?", lP: "Lyra может сохранять пароли сама, а можно подключить менеджер паролей, которому вы уже доверяете.",
+    laterP: "Менеджер паролей устанавливается из Chrome Web Store после вашего подтверждения, и Lyra перестаёт сама предлагать сохранить пароль. Это можно поменять в настройках.",
+    pms: [
+      ["Lyra", "Встроенный. Пароли остаются на этом компьютере.", "Хранятся на этом компьютере, зашифрованы для вашей учётной записи Windows и подставляются только на своём сайте. Аккаунт не нужен; на другие устройства не синхронизируются."],
+      ["Bitwarden", "Открытый и бесплатный. Синхронизация между устройствами.", "Менеджер паролей с открытым кодом и бесплатным тарифом. Хранилище зашифровано сквозным шифрованием и синхронизируется между устройствами и браузерами. Нужен аккаунт Bitwarden; Lyra установит его расширение."],
+      ["Proton Pass", "От Proton. Шифрование и почтовые псевдонимы.", "От создателей Proton Mail, Швейцария. Сквозное шифрование, синхронизация между устройствами, есть бесплатный тариф; умеет прятать ваш адрес почты за псевдонимами. Нужен аккаунт Proton; Lyra установит его расширение."],
+      ["Не сохранять", "Lyra не будет предлагать сохранить пароли.", "Lyra не будет ни сохранять, ни подставлять пароли. Включить можно позже: Настройки > Конфиденциальность и безопасность."],
+    ],
     t3: "Перенесём ваши закладки?", l3: "Lyra нашла на этом компьютере такие браузеры.",
     l3none: "Других браузеров не нашлось - начнём с чистого листа.",
     importedN: (n, b) => n > 0 ? "Перенесено закладок из " + b + ": " + n + "." : "В " + b + " закладок не нашлось.",
@@ -364,7 +393,7 @@ const $ = (id) => document.getElementById(id);
 function setup(extra) {
   location.href = "lyra://setup?language=" + state.lang + "&themeMode=" + state.theme + "&layout=" + state.layout +
                   "&density=" + state.density + "&fav=" + (state.fav ? 1 : 0) + "&freq=" + (state.freq ? 1 : 0) +
-                  (state.engine >= 0 ? "&engine=" + state.engine : "") + (extra || "");
+                  (state.engine >= 0 ? "&engine=" + state.engine : "") + "&pm=" + state.pm + (extra || "");
 }
 
 // ---- steps ------------------------------------------------------------------------
@@ -393,12 +422,17 @@ for (let i = 0; i < steps.length; i++) {
   c.setAttribute("cx", 8 + i * 216 / (steps.length - 1)); c.setAttribute("cy", 8); c.setAttribute("r", 3.5);
   $("pstars").appendChild(c);
 }
-document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => go(cur + 1)));
+const pmStep = steps.findIndex((s) => s.querySelector("#pms"));
+function next() {
+  if (cur === pmStep && (state.pm === 1 || state.pm === 2)) setup("&live=1&pmInstall=1");
+  go(cur + 1);
+}
+document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", next));
 document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => go(cur - 1)));
 $("finish").addEventListener("click", () => setup("&done=1"));
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && document.activeElement && document.activeElement.tagName === "BUTTON") return;
-  if (e.key === "Enter" || e.key === "ArrowRight") { cur === steps.length - 1 ? setup("&done=1") : go(cur + 1); }
+  if (e.key === "Enter" || e.key === "ArrowRight") { cur === steps.length - 1 ? setup("&done=1") : next(); }
   else if (e.key === "ArrowLeft") go(cur - 1);
 });
 
@@ -538,6 +572,51 @@ function render() {
   });
   edgeFade();
 
+  // Passwords
+  $("tP").textContent = t.tP; $("lP").textContent = t.lP; $("laterP").textContent = t.laterP;
+  const pmBox = $("pms");
+  const pmOpen = new Set([...pmBox.querySelectorAll(".eng.open")].map((e) => +e.dataset.i));
+  pmBox.textContent = "";
+  const PM_COLORS = ["#7C5CFF", "#175DDC", "#6D4AFF", ""];
+  const PM_SITES = ["", "https://bitwarden.com/", "https://proton.me/pass", ""];
+  t.pms.forEach(([name, short, full], i) => {
+    const c = document.createElement("div");
+    c.className = "eng" + (pmOpen.has(i) ? " open" : ""); c.tabIndex = 0; c.dataset.i = i;
+    c.setAttribute("role", "button");
+    c.setAttribute("aria-pressed", String(state.pm === i));
+    c.style.setProperty("--i", i);
+    c.innerHTML = '<span class="mono"><b></b></span><span class="txt"><span class="nm"><span></span>' +
+                  '<span class="tick">&#10003;</span></span><span class="sh"></span>' +
+                  '<button type="button" class="more"><span></span>' + CHEVRON + '</button>' +
+                  '<span class="fold"><div><div class="ds"></div></div></span></span>';
+    const mono = c.querySelector(".mono");
+    if (i === 0) { const img = new Image(); img.src = "lyra-icon.png"; img.className = "own"; mono.appendChild(img); mono.style.background = "#1B1530"; }
+    else if (i === 3) { mono.classList.add("none"); mono.querySelector("b").textContent = "\u2014"; }
+    else { mono.style.background = PM_COLORS[i]; mono.querySelector("b").textContent = name[0]; engineIcon(mono, PM_SITES[i], 0); }
+    c.querySelector(".nm span").textContent = name;
+    c.querySelector(".sh").textContent = short;
+    c.querySelector(".ds").textContent = full;
+    const more = c.querySelector(".more");
+    const label = () => (more.firstChild.textContent = c.classList.contains("open") ? t.less : t.more);
+    label();
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = !c.classList.contains("open");
+      pmBox.querySelectorAll(".eng.open").forEach((o) => { if (o !== c) { o.classList.remove("open"); o.querySelector(".more span").textContent = t.more; } });
+      c.classList.toggle("open", opening);
+      label();
+    });
+    const pick = () => {
+      if (state.pm === i) return;
+      state.pm = i;
+      pmBox.querySelectorAll(".eng").forEach((e) => e.setAttribute("aria-pressed", String(+e.dataset.i === i)));
+      setup("&live=1");
+    };
+    c.addEventListener("click", pick);
+    c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(); } });
+    pmBox.appendChild(c);
+  });
+
   // Bookmarks import
   $("l3").textContent = importers.length ? t.l3 : t.l3none;
   const list = $("importers");
@@ -591,7 +670,7 @@ const sky = {
 })();
 
 render();
-const startStep = q.has("step") ? +q.get("step") : 0;
+const startStep = !q.has("step") ? 0 : q.get("step") === "bookmarks" ? Math.max(0, steps.findIndex((s) => s.querySelector("#importers"))) : +q.get("step");
 if (startStep) { document.documentElement.classList.add("still"); go(startStep);
                  requestAnimationFrame(() => requestAnimationFrame(() => { if (!still) document.documentElement.classList.remove("still"); })); }
 else setTimeout(() => go(0), 120);

@@ -10,6 +10,7 @@
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "core/Localization.h"
+#include "browser/ExtensionStore.h"
 #include "core/Settings.h"
 #include "core/StringUtils.h"
 #include "core/Url.h"
@@ -103,6 +104,7 @@ std::wstring StartPageUrl(bool welcome) {
         for (int i = 0; i < kEngineCount; ++i) if (g_searchEngine == kEngines[i].url) engine = i;
         url += L"&engine=" + std::to_wstring(engine);
         url += L"&importers=" + ToWide(UrlEncode(ToUtf8(ImportersJson())));
+        url += L"&pm=" + std::to_wstring(ExtensionPasswordManagerChoice());   // the passwords step: what is in use now
     }
     return url;
 }
@@ -500,7 +502,7 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         const int n = BookmarkImport(from);
         int index = -1;
         if (Tab* t = FindTab(tabId, &index))
-            LoadInTab(*t, StartPageUrl(true) + L"&step=3&imported=" + std::to_wstring(n) +
+            LoadInTab(*t, StartPageUrl(true) + L"&step=bookmarks&imported=" + std::to_wstring(n) +
                           L"&from=" + ToWide(UrlEncode(ToUtf8(from))));
         return;
     }
@@ -513,6 +515,8 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         if (v >= 0 && v <= maxValue) field = v;
     };
     const int oldLanguage = g_prefs.language;
+    const int oldTheme = g_prefs.themeMode, oldLayout = g_prefs.tabLayout, oldDensity = g_prefs.density;
+    const bool oldSavePasswords = g_prefs.savePasswords;
     pick(L"language", g_prefs.language, 2);
     pick(L"themeMode", g_prefs.themeMode, 2);
     pick(L"layout", g_prefs.tabLayout, 2);
@@ -523,12 +527,23 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     if (freq >= 0) g_prefs.startFrequent = freq != 0;
     const int engine = QueryInt(query, L"engine");     // the welcome's search engine step
     if (engine >= 0 && engine < kEngineCount) g_searchEngine = kEngines[engine].url;
+    // The passwords step: Lyra's own saving only with Lyra chosen; an extension is added (asking first)
+    // when the step is left with it chosen.
+    const int pm = QueryInt(query, L"pm");
+    if (pm >= 0 && pm <= 3) g_prefs.savePasswords = pm == 0;
+    if (QueryInt(query, L"pmInstall") == 1 && (pm == 1 || pm == 2)) ExtensionInstallPasswordManager(pm);
     const bool done = QueryInt(query, L"done") == 1;
     if (done) g_prefs.onboarded = true;
     SaveSettings();
 
-    ApplyTheme(ResolveDark());
-    ApplyChromeSettings();
+    // The window's look only when it changed: ApplyChromeSettings dissolves the whole window, and the
+    // welcome sends every choice here (a search engine or password manager clicked made it stutter).
+    if (oldTheme != g_prefs.themeMode || oldLayout != g_prefs.tabLayout || oldDensity != g_prefs.density || oldLanguage != g_prefs.language) {
+        ApplyTheme(ResolveDark());
+        ApplyChromeSettings();
+    } else if (oldSavePasswords != g_prefs.savePasswords && g_hWnd) {
+        InvalidateRect(g_hWnd, nullptr, FALSE);     // (the key in the address field)
+    }
     if (oldLanguage != g_prefs.language) {
         SettingsLanguageChanged();
         if (g_hWnd) InvalidateRect(g_hWnd, nullptr, FALSE);

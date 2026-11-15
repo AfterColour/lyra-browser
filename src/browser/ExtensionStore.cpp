@@ -6,6 +6,7 @@
 #include "core/Constants.h"
 #include "core/Json.h"
 #include "core/Localization.h"
+#include "core/Settings.h"
 #include "core/StringUtils.h"
 #include "ui/Dialogs.h"
 #include "ui/MainWindow.h"
@@ -23,6 +24,10 @@
 #include <thread>
 
 namespace {
+
+// The Chrome version Lyra gives Google's update server: an extension that needs a newer Chrome
+// (minimum_chrome_version) comes back as an empty answer.
+#define kChromeVersion L"145.0.0.0"
 
 std::atomic<bool> s_busy{ false };
 
@@ -192,6 +197,14 @@ void Fetch(std::wstring url, std::wstring amoSlug, std::wstring from) {
             const bool xpi = !amoSlug.empty() || _wcsicmp(PathFindExtensionW(plain.c_str()), L".xpi") == 0;
             f->path = TempFile(xpi ? L".xpi" : L".crx");
             f->ok = HttpFetch(url, nullptr, f->path, 0, nullptr, err);
+            if (f->ok) {                    // Google answers an empty file for a too old Chrome
+                WIN32_FILE_ATTRIBUTE_DATA a = {};
+                if (!GetFileAttributesExW(f->path.c_str(), GetFileExInfoStandard, &a) || (!a.nFileSizeLow && !a.nFileSizeHigh)) {
+                    f->ok = false;
+                    err = Tr(L"the store gave no file (the extension may need a newer browser version)",
+                             L"\u043c\u0430\u0433\u0430\u0437\u0438\u043d \u043d\u0435 \u043e\u0442\u0434\u0430\u043b \u0444\u0430\u0439\u043b (\u0432\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0440\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u0438\u044e \u043d\u0443\u0436\u043d\u0430 \u0431\u043e\u043b\u0435\u0435 \u043d\u043e\u0432\u0430\u044f \u0432\u0435\u0440\u0441\u0438\u044f \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0430)");
+                }
+            }
             if (!f->ok) { f->err = err; DeleteFileW(f->path.c_str()); }
         }
         Log("extensions: download %ls %s%ls", url.c_str(), f->ok ? "done" : "failed: ", f->ok ? L"" : f->err.c_str());
@@ -298,7 +311,7 @@ void OnStoreMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, c
     if (body && WKGetTypeID(body) == WKStringGetTypeID() && JsonParse(ToUtf8(WKStr((WKStringRef)body)), msg) && msg.isObject()) {
         const std::string store = msg.str("store"), id = msg.str("id");
         if (store == "cws" && id.size() == 32 && id.find_first_not_of("abcdefghijklmnop") == std::string::npos) {
-            Fetch(L"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0.0.0"
+            Fetch(L"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" kChromeVersion L""
                   L"&acceptformat=crx2,crx3&x=id%3D" + ToWide(id) + L"%26uc", L"", Tr(L"From Chrome Web Store.", L"Из Chrome Web Store."));
         } else if (store == "amo" && !id.empty() && id.size() < 200) {
             Fetch(L"", ToWide(id), Tr(L"From Firefox Add-ons.", L"Из Firefox Add-ons."));
@@ -346,6 +359,8 @@ void ExtensionStoreAddScript(WKUserContentControllerRef controller) {
 bool ExtensionIsPackage(const std::wstring& url, const std::wstring& mime) {
     if (_wcsicmp(mime.c_str(), L"application/x-xpinstall") == 0 || _wcsicmp(mime.c_str(), L"application/x-chrome-extension") == 0)
         return true;
+    // Google's update server answers a .crx without a type or a file name
+    if (_wcsnicmp(url.c_str(), L"https://clients2.google.com/service/update2/crx", 47) == 0) return true;
     std::wstring path = url.substr(0, url.find_first_of(L"?#"));
     if (path.size() < 5) return false;
     const std::wstring tail = path.substr(path.size() - 4);
@@ -360,6 +375,36 @@ void ExtensionInstallFromUrl(const std::wstring& url) {
 
 void ExtensionInstallFromPath(const std::wstring& path) {
     InstallAsking(path, std::wstring(Tr(L"From the file ", L"Из файла ")) + PathFindFileNameW(path.c_str()) + L".");
+}
+
+namespace {
+struct PasswordManager { const char* cwsId; const wchar_t* name; };
+const PasswordManager kPasswordManagers[] = {
+    { "nngceckbapebfimnlniiiahkandclblb", L"Bitwarden" },
+    { "ghmbeldphafepmbegfdlkpapadhbakde", L"Proton Pass" },
+};
+const ExtensionInfo* Installed(const wchar_t* name) {
+    for (const ExtensionInfo& e : ExtensionsList())
+        if (_wcsnicmp(e.name.c_str(), name, wcslen(name)) == 0) return &e;
+    return nullptr;
+}
+}  // namespace
+
+void ExtensionInstallPasswordManager(int which) {
+    if (which < 1 || which > 2) return;
+    const PasswordManager& pm = kPasswordManagers[which - 1];
+    if (const ExtensionInfo* e = Installed(pm.name)) {
+        if (!e->enabled) ExtensionSetEnabled(e->id, true);
+        return;
+    }
+    Fetch(L"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" kChromeVersion
+          L"&acceptformat=crx2,crx3&x=id%3D" + ToWide(pm.cwsId) + L"%26uc", L"", Tr(L"From Chrome Web Store.", L"\u0418\u0437 Chrome Web Store."));
+}
+
+int ExtensionPasswordManagerChoice() {
+    for (int i = 0; i < 2; ++i)
+        if (const ExtensionInfo* e = Installed(kPasswordManagers[i].name)) if (e->enabled) return i + 1;
+    return g_prefs.savePasswords ? 0 : 3;
 }
 
 void ExtensionStoreMessage(WPARAM, LPARAM lParam) {
