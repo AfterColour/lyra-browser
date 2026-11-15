@@ -1,6 +1,7 @@
 // Lyra — контекстное меню страницы: по-русски, в порядке как в других браузерах, с пунктами Lyra.
 #include "browser/ContextMenu.h"
 #include "browser/SplitView.h"
+#include "browser/Extensions.h"
 #include "app/Log.h"
 #include "browser/PictureInPicture.h"
 #include "browser/Tab.h"
@@ -42,10 +43,15 @@ enum : WKContextMenuItemTag {
 // What the menu is about: filled when it is built, used when an item is chosen.
 struct MenuContext {
     unsigned long long tabId = 0;
-    std::wstring link, linkLabel, image, media;
+    std::wstring link, linkLabel, image, media, selectionText, pageUrl;
     bool editable = false, selection = false;
 };
 MenuContext s_menu;
+
+// Extensions' items in the menu shown now: command id - kExtCommand = index.
+constexpr UINT kExtCommand = 0xA000;
+std::vector<std::pair<std::wstring, std::string>> s_extCommands;
+void RequestMenuSelection(Tab& t);
 
 // The items of the menu that is about to be shown (ContextMenuShow), and where.
 WKArrayRef s_pendingItems = nullptr;
@@ -234,6 +240,7 @@ void OnGetMenu(WKPageRef, WKArrayRef proposed, WKArrayRef* newMenu, WKHitTestRes
     if (!t || !hit) { if (proposed) WKRetain(proposed); *newMenu = proposed; return; }
     s_menu = MenuContext();
     s_menu.tabId = t->id;
+    s_menu.pageUrl = t->url;
     s_menu.link = UrlString(WKHitTestResultCopyAbsoluteLinkURL(hit));
     s_menu.linkLabel = TrimWs(String(WKHitTestResultCopyLinkLabel(hit)));
     s_menu.image = UrlString(WKHitTestResultCopyAbsoluteImageURL(hit));
@@ -254,7 +261,10 @@ void OnGetMenu(WKPageRef, WKArrayRef proposed, WKArrayRef* newMenu, WKHitTestRes
     if (items) WKRetain(items);
     GetCursorPos(&s_pendingPt);
     *newMenu = WKArrayCreate(nullptr, 0);               // WebKit adopts the array
-    PostMessageW(g_hWnd, WM_APP_PAGE_MENU, 0, 0);
+    // Extensions' items may show the selected text ("Search for "%s"") and get it when chosen: the
+    // menu waits for it (a few milliseconds).
+    if ((s_menu.selection || s_menu.editable) && ExtensionsHaveMenus()) RequestMenuSelection(*t);
+    else PostMessageW(g_hWnd, WM_APP_PAGE_MENU, 0, 0);
 }
 
 const wchar_t* IconFor(WKContextMenuItemTag tag, const std::wstring& title) {
@@ -309,6 +319,44 @@ void OnSelectionForSearch(WKTypeRef result, WKErrorRef, void* ctx) {
     if (text.empty()) return;
     if (text.size() > 300) text.resize(300);
     OpenInNewTab(g_searchEngine + ToWide(UrlEncode(ToUtf8(text))), false, t->privateTab);
+}
+
+void OnSelectionForMenu(WKTypeRef result, WKErrorRef, void* ctx) {
+    if ((unsigned long long)(uintptr_t)ctx == s_menu.tabId && result && WKGetTypeID(result) == WKStringGetTypeID())
+        s_menu.selectionText = TrimWs(WKStr((WKStringRef)result));
+    PostMessageW(g_hWnd, WM_APP_PAGE_MENU, 0, 0);
+}
+
+void RequestMenuSelection(Tab& t) {
+    WKStringRef js = WKStringCreateWithUTF8CString(kSelectionJs);
+    WKPageEvaluateJavaScriptInMainFrame(t.page, js, (void*)(uintptr_t)t.id, OnSelectionForMenu);
+    WKRelease(js);
+}
+
+ExtensionMenuContext ExtContext() {
+    ExtensionMenuContext c;
+    c.pageUrl = s_menu.pageUrl;
+    c.link = s_menu.link;
+    c.linkText = s_menu.linkLabel;
+    c.image = s_menu.image;
+    c.media = s_menu.media;
+    c.editable = s_menu.editable;
+    c.selectionText = s_menu.selectionText;
+    c.selection = s_menu.selection || !s_menu.selectionText.empty();
+    return c;
+}
+
+void AddExtEntry(HMENU parent, const ExtensionMenuEntry& e) {
+    if (e.separator) { AppendMenuW(parent, MF_SEPARATOR, 0, nullptr); return; }
+    if (!e.children.empty()) {
+        HMENU sub = CreatePopupMenu();
+        for (auto& c : e.children) AddExtEntry(sub, c);
+        AppendMenuW(parent, MF_POPUP | (e.enabled ? 0 : MF_GRAYED), (UINT_PTR)sub, e.title.c_str());
+        return;
+    }
+    const UINT id = kExtCommand + (UINT)s_extCommands.size();
+    s_extCommands.push_back({ e.extId, e.itemId });
+    AppendMenuW(parent, MF_STRING | (e.enabled ? 0 : MF_GRAYED) | (e.checkable && e.checked ? MF_CHECKED : 0), id, e.title.c_str());
 }
 
 void OnItemSelected(WKPageRef, WKContextMenuItemRef item, const void* clientInfo) {
@@ -376,11 +424,26 @@ void ContextMenuShow() {
         AppendMenuW(m, flags, (UINT_PTR)tag, title.c_str());
         if (const wchar_t* icon = IconFor(tag, title)) MenuSetIcon(m, (UINT)tag, icon);
     }
+    // Extensions' items: one item of an extension as it is, more in a submenu with its name.
+    s_extCommands.clear();
+    const ExtensionMenuContext ec = ExtContext();
+    const auto groups = ExtensionMenus(ec);
+    if (!groups.empty() && GetMenuItemCount(m) > 0) AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    for (auto& g : groups) {
+        if (g.items.size() == 1) { AddExtEntry(m, g.items[0]); continue; }
+        HMENU sub = CreatePopupMenu();
+        for (auto& e : g.items) AddExtEntry(sub, e);
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, g.name.c_str());
+    }
     HMENU chosen = nullptr;
     int pos = -1;
-    MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, s_pendingPt.x, s_pendingPt.y, g_hWnd, &chosen, &pos);
+    const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, s_pendingPt.x, s_pendingPt.y, g_hWnd, &chosen, &pos);
+    if (cmd >= (int)kExtCommand && cmd - kExtCommand < s_extCommands.size()) {
+        const auto [extId, itemId] = s_extCommands[cmd - kExtCommand];
+        ExtensionMenuClicked(extId, itemId, ec, tabId);
+    }
     // WebKit reads the item (its id and title) from the menu and position it is given.
-    if (chosen && pos >= 0 && FindTab(tabId) && IsWindow(view)) SendMessageW(view, WM_MENUCOMMAND, (WPARAM)pos, (LPARAM)chosen);
+    else if (chosen && pos >= 0 && FindTab(tabId) && IsWindow(view)) SendMessageW(view, WM_MENUCOMMAND, (WPARAM)pos, (LPARAM)chosen);
     DestroyMenu(m);
     WKRelease(items);
 }

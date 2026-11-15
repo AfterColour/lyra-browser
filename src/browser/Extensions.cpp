@@ -305,7 +305,7 @@ bool PrivateFile(std::wstring rel) {
     CharLowerBuffW(rel.data(), (DWORD)rel.size());
     if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, L".tmp") == 0) return true;
     if (rel.find(L'\\') != std::wstring::npos) return false;
-    return rel == L"lyra.ini" || rel.rfind(L"storage-", 0) == 0 || rel.rfind(L"dnr-", 0) == 0 || rel == L"registered-scripts.json";
+    return rel == L"lyra.ini" || rel.rfind(L"storage-", 0) == 0 || rel.rfind(L"dnr-", 0) == 0 || rel == L"registered-scripts.json" || rel == L"menus.json";
 }
 
 bool GlobMatch(const char* p, const char* s) {               // '*' matches anything, also "/"
@@ -960,6 +960,179 @@ void Broadcast(const std::string& name, const std::string& argsJson) {
     for (auto& [id, h] : s_hosts) ExtensionPagesEvent(*h, script);
 }
 
+// ---- context menu items (chrome.contextMenus) -------------------------------------------------
+// Kept in menus.json: extensions create them once, in runtime.onInstalled, and expect them back
+// after a restart (as Chrome keeps them). An install or update starts them over.
+struct MenuItem {
+    std::string id, parentId, type = "normal", title;
+    bool numeric = false, checked = false, enabled = true, visible = true;
+    std::vector<std::string> contexts, documentUrlPatterns, targetUrlPatterns;
+};
+std::map<std::wstring, std::vector<MenuItem>> s_menus;
+std::set<std::wstring> s_menusLoaded;
+
+std::wstring MenusFile(const Extension& e) { return e.info.dir + L"\\menus.json"; }
+
+void StringList(const JsonValue* v, std::vector<std::string>& out) {
+    out.clear();
+    if (!v) return;
+    if (v->isString()) out.push_back(v->s);
+    else if (v->isArray()) for (auto& x : v->items) if (x.isString()) out.push_back(x.s);
+}
+
+void ApplyMenuProps(MenuItem& m, const JsonValue& p) {
+    if (p.get("type")) m.type = p.str("type", "normal");
+    if (p.get("title")) m.title = p.str("title");
+    if (const JsonValue* v = p.get("parentId")) m.parentId = v->isString() ? v->s : v->raw == "null" ? std::string() : v->raw;
+    if (p.get("checked")) m.checked = p.flag("checked");
+    if (p.get("enabled")) m.enabled = p.flag("enabled");
+    if (p.get("visible")) m.visible = p.flag("visible");
+    if (p.get("contexts")) StringList(p.get("contexts"), m.contexts);
+    if (p.get("documentUrlPatterns")) StringList(p.get("documentUrlPatterns"), m.documentUrlPatterns);
+    if (p.get("targetUrlPatterns")) StringList(p.get("targetUrlPatterns"), m.targetUrlPatterns);
+}
+
+std::string JsonStrings(const std::vector<std::string>& v) {
+    std::string s = "[";
+    for (auto& x : v) { if (s.size() > 1) s += ","; s += JsonQuote(x); }
+    return s + "]";
+}
+
+std::vector<MenuItem>& Menus(const Extension& e) {
+    auto& list = s_menus[e.info.id];
+    if (s_menusLoaded.insert(e.info.id).second) {
+        JsonValue v;
+        if (JsonParse(ReadText(MenusFile(e)), v) && v.isArray())
+            for (auto& x : v.items) {
+                if (!x.isObject() || x.str("id").empty()) continue;
+                MenuItem m;
+                m.id = x.str("id");
+                m.numeric = x.flag("numeric");
+                ApplyMenuProps(m, x);
+                list.push_back(std::move(m));
+            }
+    }
+    return list;
+}
+
+void SaveMenus(const Extension& e) {
+    const bool t = true;
+    std::string s = "[";
+    for (auto& m : s_menus[e.info.id]) {
+        if (s.size() > 1) s += ",";
+        s += "{\"id\":" + JsonQuote(m.id) + ",\"numeric\":" + (m.numeric ? "true" : "false") + ",\"parentId\":" + JsonQuote(m.parentId) +
+             ",\"type\":" + JsonQuote(m.type) + ",\"title\":" + JsonQuote(m.title) + ",\"checked\":" + (m.checked ? "true" : "false") +
+             ",\"enabled\":" + (m.enabled ? "true" : "false") + ",\"visible\":" + (m.visible ? "true" : "false") +
+             ",\"contexts\":" + JsonStrings(m.contexts) + ",\"documentUrlPatterns\":" + JsonStrings(m.documentUrlPatterns) +
+             ",\"targetUrlPatterns\":" + JsonStrings(m.targetUrlPatterns) + "}";
+    }
+    (void)t;
+    WriteFileAtomic(MenusFile(e), s + "]");
+}
+
+void ForgetMenus(const Extension& e) {
+    s_menus.erase(e.info.id);
+    s_menusLoaded.insert(e.info.id);
+    DeleteFileW(MenusFile(e).c_str());
+}
+
+std::string MenusOp(const Extension& e, const JsonValue& msg, const std::string& op) {
+    auto& list = Menus(e);
+    auto find = [&](const std::string& id) -> int {
+        for (size_t i = 0; i < list.size(); ++i) if (list[i].id == id) return (int)i;
+        return -1;
+    };
+    const std::string id = msg.str("id");
+    const JsonValue* props = msg.get("props");
+    auto notFound = [&](const std::string& what) { return "{\"error\":" + JsonQuote("Cannot find menu item with id " + what) + "}"; };
+    if (op == "menus.create") {
+        if (id.empty() || !props || !props->isObject()) return "{\"error\":\"bad menu item\"}";
+        MenuItem m;
+        m.id = id;
+        m.numeric = msg.flag("numeric");
+        ApplyMenuProps(m, *props);
+        if (!m.parentId.empty() && find(m.parentId) < 0) return notFound(m.parentId);
+        // The same id again (an extension that creates its items at every start): replaced.
+        if (int i = find(id); i >= 0) list[i] = std::move(m); else list.push_back(std::move(m));
+    } else if (op == "menus.update") {
+        const int i = find(id);
+        if (i < 0) return notFound(id);
+        if (props && props->isObject()) ApplyMenuProps(list[i], *props);
+    } else if (op == "menus.remove") {
+        if (find(id) < 0) return notFound(id);
+        std::set<std::string> gone = { id };
+        for (bool more = true; more;) {          // and everything under it
+            more = false;
+            for (auto& m : list) if (!m.parentId.empty() && gone.count(m.parentId) && gone.insert(m.id).second) more = true;
+        }
+        list.erase(std::remove_if(list.begin(), list.end(), [&](const MenuItem& m) { return gone.count(m.id) != 0; }), list.end());
+    } else if (op == "menus.removeAll") {
+        list.clear();
+    } else {
+        return "{\"error\":\"unknown operation\"}";
+    }
+    SaveMenus(e);
+    return "{\"value\":null}";
+}
+
+bool MenuShows(const MenuItem& m, const ExtensionMenuContext& c, bool inherit) {
+    if (!m.visible) return false;
+    const bool special = !c.link.empty() || !c.image.empty() || !c.media.empty() || c.editable || c.selection;
+    bool any = inherit && m.contexts.empty();
+    const std::vector<std::string> page = { "page" };
+    for (auto& s : m.contexts.empty() ? page : m.contexts) {
+        if (s == "all") any = true;
+        else if (s == "page" && !special) any = true;
+        else if (s == "selection" && c.selection) any = true;
+        else if (s == "link" && !c.link.empty()) any = true;
+        else if (s == "image" && !c.image.empty()) any = true;
+        else if ((s == "video" || s == "audio") && !c.media.empty()) any = true;
+        else if (s == "editable" && c.editable) any = true;
+    }
+    if (!any) return false;
+    if (!m.documentUrlPatterns.empty()) {
+        bool ok = false;
+        for (auto& p : m.documentUrlPatterns) if (MatchUrl(p, ToUtf8(c.pageUrl))) ok = true;
+        if (!ok) return false;
+    }
+    const std::wstring& target = !c.link.empty() ? c.link : !c.image.empty() ? c.image : c.media;
+    if (!m.targetUrlPatterns.empty() && !target.empty()) {
+        bool ok = false;
+        for (auto& p : m.targetUrlPatterns) if (MatchUrl(p, ToUtf8(target))) ok = true;
+        if (!ok) return false;
+    }
+    return true;
+}
+
+std::wstring MenuTitle(const MenuItem& m, const ExtensionMenuContext& c) {
+    std::wstring title = ToWide(m.title);
+    const size_t at = title.find(L"%s");
+    if (at != std::wstring::npos) {
+        std::wstring sel = c.selectionText;
+        for (auto& ch : sel) if (ch == L'\n' || ch == L'\r' || ch == L'\t') ch = L' ';
+        if (sel.size() > 32) sel = sel.substr(0, 32) + L"\x2026";
+        title.replace(at, 2, sel);
+    }
+    return title;
+}
+
+void MenuChildren(const std::vector<MenuItem>& list, const std::string& parent, const ExtensionMenuContext& c,
+                  const std::wstring& extId, std::vector<ExtensionMenuEntry>& out, int depth) {
+    for (auto& m : list) {
+        if (m.parentId != parent || !MenuShows(m, c, !parent.empty())) continue;
+        ExtensionMenuEntry entry;
+        entry.extId = extId;
+        entry.itemId = m.id;
+        entry.separator = m.type == "separator";
+        entry.checkable = m.type == "checkbox" || m.type == "radio";
+        entry.checked = m.checked;
+        entry.enabled = m.enabled;
+        entry.title = MenuTitle(m, c);
+        if (depth < 4) MenuChildren(list, m.id, c, extId, entry.children, depth + 1);
+        out.push_back(std::move(entry));
+    }
+}
+
 // storage.onChanged everywhere the extension runs: its pages and its scripts in every tab.
 void StorageChanged(const Extension& e, const std::string& changes, const std::string& area) {
     if (changes == "{}") return;
@@ -1494,6 +1667,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     if (ctx.content) { answer = "{\"error\":\"" + op + " is not available to content scripts\"}"; return; }
 
     // ---- the extension's own pages from here on ----
+    if (op.rfind("menus.", 0) == 0) { answer = MenusOp(*e, msg, op); return; }
     if (op == "tabs.query") { answer = "{\"value\":" + TabsQuery(msg.get("info") ? *msg.get("info") : JsonValue()) + "}"; return; }
     if (op == "tabs.get") {
         Tab* t = TabById(msg.get("tabId"));
@@ -1818,6 +1992,7 @@ void StartBackground(const Extension& e, const std::wstring& installReason, bool
     h.bgPage = WKViewGetPage(h.bgView);
     ExtensionUserAgent(h, h.bgPage);
     h.bgReady = false;
+    if (!installReason.empty()) ForgetMenus(e);   // (an install or update creates them again)
     h.installReason = installReason;
     h.atStartup = atStartup;
     auto& navId = s_navIds[e.info.id];
@@ -2239,6 +2414,8 @@ void ExtensionRemove(const std::wstring& id) {
     s_dnr.erase(id);
     s_stores.erase(id);
     s_registered.erase(id);
+    s_menus.erase(id);
+    s_menusLoaded.erase(id);
     s_registeredLoaded.erase(id);
     std::error_code ec;
     fs::remove_all(e->info.dir, ec);
@@ -2463,4 +2640,65 @@ void ExtensionSetPinned(const std::wstring& id, bool pinned) {
     WritePrivateProfileStringW(L"Lyra", L"Toolbar", pinned ? L"1" : L"0", (e->info.dir + L"\\lyra.ini").c_str());
     SettingsRefresh();
     if (g_hWnd) RefreshLayout();
+}
+
+// ---- context menu items --------------------------------------------------------------------------
+bool ExtensionsHaveMenus() {
+    for (auto& e : s_exts) if (e.info.enabled && !Menus(e).empty()) return true;
+    return false;
+}
+
+std::vector<ExtensionMenuGroup> ExtensionMenus(const ExtensionMenuContext& c) {
+    std::vector<ExtensionMenuGroup> groups;
+    for (auto& e : s_exts) {
+        if (!e.info.enabled) continue;
+        auto& list = Menus(e);
+        if (list.empty()) continue;
+        ExtensionMenuGroup g;
+        g.extId = e.info.id;
+        g.name = e.info.name;
+        MenuChildren(list, "", c, e.info.id, g.items, 0);
+        while (!g.items.empty() && g.items.back().separator) g.items.pop_back();
+        while (!g.items.empty() && g.items.front().separator) g.items.erase(g.items.begin());
+        if (!g.items.empty()) groups.push_back(std::move(g));
+    }
+    return groups;
+}
+
+void ExtensionMenuClicked(const std::wstring& extId, const std::string& itemId, const ExtensionMenuContext& c, unsigned long long tabId) {
+    Extension* e = Find(extId);
+    if (!e || !e->info.enabled) return;
+    auto& list = Menus(*e);
+    auto it = std::find_if(list.begin(), list.end(), [&](const MenuItem& m) { return m.id == itemId; });
+    if (it == list.end()) return;
+    MenuItem& m = *it;
+    const bool was = m.checked;
+    if (m.type == "checkbox") m.checked = !m.checked;
+    else if (m.type == "radio") {
+        // the radio items next to it (same parent, no other kind in between) are its group
+        const size_t at = it - list.begin();
+        for (size_t i = at; i-- > 0;) { if (list[i].parentId != m.parentId) continue; if (list[i].type != "radio") break; list[i].checked = false; }
+        for (size_t i = at + 1; i < list.size(); ++i) { if (list[i].parentId != m.parentId) continue; if (list[i].type != "radio") break; list[i].checked = false; }
+        m.checked = true;
+    }
+    if (m.type == "checkbox" || m.type == "radio") SaveMenus(*e);
+    auto idJson = [&](const MenuItem* x, const std::string& id) { return x && x->numeric ? id : JsonQuote(id); };
+    const MenuItem* parent = nullptr;
+    for (auto& x : list) if (x.id == m.parentId) parent = &x;
+    std::string info = "{\"menuItemId\":" + idJson(&m, m.id) + ",\"editable\":" + (c.editable ? "true" : "false") +
+                       ",\"pageUrl\":" + JsonQuote(ToUtf8(c.pageUrl)) + ",\"frameId\":0";
+    if (!m.parentId.empty()) info += ",\"parentMenuItemId\":" + idJson(parent, m.parentId);
+    if (!c.link.empty()) info += ",\"linkUrl\":" + JsonQuote(ToUtf8(c.link));
+    if (!c.image.empty()) info += ",\"srcUrl\":" + JsonQuote(ToUtf8(c.image)) + ",\"mediaType\":\"image\"";
+    else if (!c.media.empty()) info += ",\"srcUrl\":" + JsonQuote(ToUtf8(c.media)) + ",\"mediaType\":\"video\"";
+    if (!c.selectionText.empty()) info += ",\"selectionText\":" + JsonQuote(ToUtf8(c.selectionText));
+    if (m.type == "checkbox" || m.type == "radio")
+        info += std::string(",\"wasChecked\":") + (was ? "true" : "false") + ",\"checked\":" + (m.checked ? "true" : "false");
+    info += "}";
+    Tab* t = FindTab(tabId);
+    const std::string tab = t ? TabJson(*t) : "null";
+    Log("extensions: menu item %s of %ls chosen", itemId.c_str(), extId.c_str());
+    auto h = s_hosts.find(extId);
+    if (h == s_hosts.end()) return;
+    ExtensionPagesEvent(*h->second, "globalThis.__lyraEvent && __lyraEvent('contextMenus.onClicked',[" + info + "," + tab + "])");
 }

@@ -65,3 +65,19 @@ std::vector<ExtensionButton> ExtensionButtons();
 void ExtensionButtonClick(int index);       // index into ExtensionButtons() and g_L.ext
 void ExtensionButtonMenu(int index);        // right click: options, hide, manage, remove
 void ExtensionSetPinned(const std::wstring& id, bool pinned);
+
+// Context menu items of extensions (chrome.contextMenus): what the page's menu shows, and a choice.
+struct ExtensionMenuContext {
+    std::wstring pageUrl, link, linkText, image, media, selectionText;
+    bool editable = false, selection = false;
+};
+struct ExtensionMenuEntry {
+    std::wstring extId, title;
+    std::string itemId;
+    bool separator = false, checkable = false, checked = false, enabled = true;
+    std::vector<ExtensionMenuEntry> children;
+};
+struct ExtensionMenuGroup { std::wstring extId, name; std::vector<ExtensionMenuEntry> items; };
+bool ExtensionsHaveMenus();
+std::vector<ExtensionMenuGroup> ExtensionMenus(const ExtensionMenuContext& c);
+void ExtensionMenuClicked(const std::wstring& extId, const std::string& itemId, const ExtensionMenuContext& c, unsigned long long tabId);

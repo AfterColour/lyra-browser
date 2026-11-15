@@ -478,10 +478,41 @@ const dnr = {
       },
       onAlarm,
     };
+    // Context menu items live in Lyra (kept across restarts); onclick (Manifest V2) stays here.
+    const menuClicks = new Map();
+    const menuCall = (op, data, cb) => {
+      const p = withCallback(call("menus." + op, data), cb);
+      if (!cb && p && p.catch) p.catch(() => {});
+      return p;
+    };
+    const menuProps = (id, props) => {
+      props = Object.assign({}, props || {});
+      if (isFunction(props.onclick)) menuClicks.set(String(id), props.onclick);
+      delete props.onclick; delete props.id; delete props.icons;
+      return props;
+    };
     const menus = {
-      create: (props, cb) => { if (isFunction(cb)) setTimeout(cb, 0); return (props && props.id) || Math.floor(Math.random() * 1e9); },
-      update: stub(undefined), remove: stub(undefined), removeAll: stub(undefined),
+      create: (props, cb) => {
+        const numeric = !props || props.id === undefined || props.id === null;
+        const id = numeric ? Math.floor(Math.random() * 2e9) : props.id;
+        menuCall("create", { id: String(id), numeric, props: menuProps(id, props) }, cb);
+        return id;
+      },
+      update: (id, props, cb) => menuCall("update", { id: String(id), props: menuProps(id, props) }, cb),
+      remove: (id, cb) => { menuClicks.delete(String(id)); return menuCall("remove", { id: String(id) }, cb); },
+      removeAll: (cb) => { menuClicks.clear(); return menuCall("removeAll", {}, cb); },
+      refresh: () => {},
       onClicked: makeEvent("contextMenus.onClicked"), onShown: makeEvent(), onHidden: makeEvent(),
+      ContextType: { ALL: "all", PAGE: "page", FRAME: "frame", SELECTION: "selection", LINK: "link", EDITABLE: "editable",
+                     IMAGE: "image", VIDEO: "video", AUDIO: "audio", LAUNCHER: "launcher", BROWSER_ACTION: "browser_action",
+                     PAGE_ACTION: "page_action", ACTION: "action" },
+      ItemType: { NORMAL: "normal", CHECKBOX: "checkbox", RADIO: "radio", SEPARATOR: "separator" },
+      ACTION_MENU_TOP_LEVEL_LIMIT: 6,
+    };
+    menus.onClicked.addListener((info, tab) => { const f = menuClicks.get(String(info.menuItemId)); if (f) f(info, tab); });
+    const grantedPermissions = (p) => {
+      const have = EXT.manifest.permissions || [];
+      return ((p && p.permissions) || []).every((x) => have.includes(x));
     };
     const quiet = () => ({ addListener() {}, removeListener() {}, hasListener: () => false, hasListeners: () => false });
     Object.assign(api, {
@@ -489,7 +520,11 @@ const dnr = {
       action, browserAction: action, pageAction: action,
       contextMenus: menus, menus,
       permissions: {
-        contains: stub(true), request: stub(true), remove: stub(true),
+        // API permissions: those the manifest asks for (optional ones are never granted: no prompt yet;
+        // saying yes to "nativeMessaging" made Bitwarden look for its desktop app every 10 s). Sites: yes.
+        contains: (p, cb) => withCallback(Promise.resolve(grantedPermissions(p)), cb),
+        request: (p, cb) => withCallback(Promise.resolve(grantedPermissions(p)), cb),
+        remove: stub(true),
         getAll: stub({ permissions: EXT.manifest.permissions || [], origins: EXT.manifest.host_permissions || [] }),
         onAdded: makeEvent(), onRemoved: makeEvent(),
       },
