@@ -496,9 +496,12 @@ void Enqueue(const std::wstring& id, bool download) {
     }
 }
 
+std::map<std::wstring, WKUserContentFilterRef> s_extFilters;   // extensions' rules, always on
+
 void RefreshController() {
     if (!s_controller) return;
     WKUserContentControllerRemoveAllUserContentFilters(s_controller);
+    for (auto& [id, filter] : s_extFilters) WKUserContentControllerAddUserContentFilter(s_controller, filter);
     if (!g_prefs.adBlock) return;
     for (auto& [id, filter] : s_filters) WKUserContentControllerAddUserContentFilter(s_controller, filter);
 }
@@ -573,7 +576,118 @@ std::wstring SiteKey(const std::wstring& url) {
     return host;
 }
 
+// ---- extensions' rule lists ----------------------------------------------------------------
+// Each list is stored as "ext-<extension>-<hash of its JSON>": an unchanged list is only looked up
+// at the next start; the identifier in use is kept in Extensions.ini so a replaced one is removed.
+std::map<std::wstring, std::wstring> s_extWanted;             // extension -> identifier wanted now
+
+struct ExtContext { std::wstring extId, ident; std::string json, fallback; };
+
+std::wstring ExtListsIni() { return Dir() + L"\\Extensions.ini"; }
+
+void SetExtFilter(const std::wstring& extId, WKUserContentFilterRef filter) {
+    auto it = s_extFilters.find(extId);
+    if (it != s_extFilters.end()) { WKRelease(it->second); s_extFilters.erase(it); }
+    if (filter) { WKRetain(filter); s_extFilters[extId] = filter; }
+    RefreshController();
+}
+
+void StoreDone(WKUserContentFilterRef filter, WKUserContentExtensionStoreResult, void*) { if (filter) WKRelease(filter); }
+
+void RemoveStored(const std::wstring& ident) {
+    if (ident.empty() || !s_store) return;
+    WKStringRef id = WKStringCreateWithUTF8CString(ToUtf8(ident).c_str());
+    WKUserContentExtensionStoreRemove(s_store, id, nullptr, StoreDone);
+    WKRelease(id);
+}
+
+// The identifier now in use for an extension; the one before is removed from the store.
+void ExtInUse(const std::wstring& extId, const std::wstring& ident) {
+    wchar_t old[256] = {};
+    GetPrivateProfileStringW(L"Lists", extId.c_str(), L"", old, 256, ExtListsIni().c_str());
+    if (*old && ident != old) RemoveStored(old);
+    WritePrivateProfileStringW(L"Lists", extId.c_str(), ident.empty() ? nullptr : ident.c_str(), ExtListsIni().c_str());
+}
+
+void CompileExt(ExtContext* ctx);
+
+void OnExtCompiled(WKUserContentFilterRef filter, WKUserContentExtensionStoreResult result, void* context) {
+    std::unique_ptr<ExtContext> ctx((ExtContext*)context);
+    const bool current = s_extWanted.count(ctx->extId) && s_extWanted[ctx->extId] == ctx->ident;
+    if (result == kWKUserContentExtensionStoreSuccess && filter) {
+        if (current) {
+            Log("adblock: compiled the rules of extension %ls", ctx->extId.c_str());
+            SetExtFilter(ctx->extId, filter);
+            ExtInUse(ctx->extId, ctx->ident);
+        } else {
+            RemoveStored(ctx->ident);
+        }
+        WKRelease(filter);
+        return;
+    }
+    if (filter) WKRelease(filter);
+    Log("adblock: compiling the rules of extension %ls FAILED (result %u)%s", ctx->extId.c_str(), (unsigned)result,
+        ctx->fallback.empty() ? "" : ", trying without its regular expressions");
+    if (!current || ctx->fallback.empty()) return;
+    ctx->json.swap(ctx->fallback);
+    ctx->fallback.clear();
+    ctx->ident += L"-f";
+    s_extWanted[ctx->extId] = ctx->ident;
+    CompileExt(ctx.release());
+}
+
+void CompileExt(ExtContext* ctx) {
+    WKStringRef id = WKStringCreateWithUTF8CString(ToUtf8(ctx->ident).c_str());
+    WKStringRef json = WKStringCreateWithUTF8CStringWithLength(ctx->json.data(), ctx->json.size());
+    WKUserContentExtensionStoreCompile(s_store, id, json, ctx, OnExtCompiled);
+    WKRelease(json);
+    WKRelease(id);
+}
+
+void OnExtLookup(WKUserContentFilterRef filter, WKUserContentExtensionStoreResult result, void* context) {
+    std::unique_ptr<ExtContext> ctx((ExtContext*)context);
+    if (!s_extWanted.count(ctx->extId) || s_extWanted[ctx->extId] != ctx->ident) { if (filter) WKRelease(filter); return; }
+    if (result == kWKUserContentExtensionStoreSuccess && filter) {
+        SetExtFilter(ctx->extId, filter);
+        ExtInUse(ctx->extId, ctx->ident);
+        WKRelease(filter);
+        return;
+    }
+    if (filter) WKRelease(filter);
+    // (the -f variant of an earlier start, when the full list had failed: tried after the full one)
+    CompileExt(ctx.release());
+}
+
 } // namespace
+
+void AdBlockSetExtensionRules(const std::wstring& extId, std::string json, std::string fallback, unsigned long long hash) {
+    if (!s_store) return;
+    if (json.empty()) {
+        s_extWanted.erase(extId);
+        SetExtFilter(extId, nullptr);
+        ExtInUse(extId, L"");
+        return;
+    }
+    unsigned long long h = hash;
+    if (!h) { h = 1469598103934665603ULL; for (unsigned char c : json) h = (h ^ c) * 1099511628211ULL; }
+    wchar_t hex[20];
+    swprintf(hex, 20, L"%016llx", h);
+    std::wstring safe;
+    for (wchar_t c : extId) safe += (iswalnum(c) || c == L'-' || c == L'_' || c == L'.') ? c : L'_';
+    const std::wstring ident = L"ext-" + safe + L"-" + hex;
+    if (s_extWanted.count(extId) && (s_extWanted[extId] == ident || s_extWanted[extId] == ident + L"-f") && s_extFilters.count(extId)) return;
+    // the full list failed at an earlier start: its fallback straight away
+    wchar_t inUse[256] = {};
+    GetPrivateProfileStringW(L"Lists", extId.c_str(), L"", inUse, 256, ExtListsIni().c_str());
+    auto* ctx = new ExtContext{ extId, ident, std::move(json), std::move(fallback) };
+    if (!ctx->fallback.empty() && ident + L"-f" == inUse) { ctx->ident = inUse; ctx->json.swap(ctx->fallback); ctx->fallback.clear(); }
+    s_extWanted[extId] = ctx->ident;
+    WKStringRef id = WKStringCreateWithUTF8CString(ToUtf8(ctx->ident).c_str());
+    WKUserContentExtensionStoreLookup(s_store, id, ctx, OnExtLookup);
+    WKRelease(id);
+}
+
+bool AdBlockUrlFilter(const std::string& pattern, std::string& regex) { return PatternToRegex(pattern, regex); }
 
 void AdBlockInit() {
     CreateDirectoryW(g_settingsDir.c_str(), nullptr);
@@ -598,6 +712,8 @@ void AdBlockInit() {
 void AdBlockShutdown() {
     for (auto& [id, filter] : s_filters) WKRelease(filter);
     s_filters.clear();
+    for (auto& [id, filter] : s_extFilters) WKRelease(filter);
+    s_extFilters.clear();
     if (s_controller) { WKRelease(s_controller); s_controller = nullptr; }
     if (s_store) { WKRelease(s_store); s_store = nullptr; }
 }

@@ -19,6 +19,7 @@
 #pragma once
 
 #include "common/Platform.h"
+#include <WebKit/WKBase.h>
 #include <functional>
 
 struct ExtensionInfo {
@@ -32,6 +33,7 @@ struct ExtensionInfo {
     bool pinned = true;                     // ...shown on the toolbar
 };
 
+void ExtensionsSetupPageConfiguration(WKPageConfigurationRef conf);   // tabs: extensions' files their pages may load
 void ExtensionsInit();                                  // after AdBlockInit (the shared user content controller)
 const std::vector<ExtensionInfo>& ExtensionsList();
 void ExtensionSetEnabled(const std::wstring& id, bool enabled);
@@ -48,6 +50,7 @@ void ExtensionsOnTabUpdated(Tab* t);                     // loading, address or 
 void ExtensionsOnTabActivated(Tab* t);
 void ExtensionsOnTabCommitted(Tab* t);            // a new page: its scripts' ports are gone
 void ExtensionsOnTabRemoved(unsigned long long id);
+void ExtensionsDnrReady(LPARAM lParam);    // WM_APP_DNR: an extension's network rules are converted
 
 // The extensions' toolbar buttons (left of the downloads button), in order, for the open tab.
 struct ExtensionButton {

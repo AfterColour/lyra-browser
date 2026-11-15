@@ -17,6 +17,12 @@ void AdBlockAddUserScript(const char* source, bool mainFrameOnly);
 // Extensions add their content scripts (in worlds of their own) each time the list is rebuilt.
 void AdBlockSetExtraUserScripts(void (*add)(WKUserContentControllerRef));
 void AdBlockRefreshUserScripts();
+// Extensions' network rules (declarativeNetRequest, as WebKit JSON from browser/ExtensionDnr.cpp):
+// compiled into the same store, kept until the rules change, and on whatever Settings > Ad
+// blocking says. Empty json: the extension's list goes. `fallback` is compiled if `json` fails.
+void AdBlockSetExtensionRules(const std::wstring& extId, std::string json, std::string fallback, unsigned long long hash = 0);
+// An address pattern of a filter list or a urlFilter ("||ads.example^") as a WebKit url-filter.
+bool AdBlockUrlFilter(const std::string& pattern, std::string& regex);
 void AdBlockSetEnabled(bool enabled);        // Settings > Privacy
 void AdBlockUpdateNow();                     // download and compile the lists again
 void AdBlockListsReady(LPARAM);              // WM_APP_ADBLOCK (main thread)

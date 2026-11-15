@@ -537,11 +537,13 @@ void BuildPages() {
             []() { ExtensionInstallFromFolder(); }));
         p.rows.push_back(RCustom(L"note",
             Tr(L"Extensions support is new. Working: changing pages, the background part, messages and ports, tabs, storage, "
-               L"the toolbar button with its pop-up. Not yet: network filters (webRequest, declarativeNetRequest), "
-               L"context menu items, bookmarks, history and cookies, so some extensions work only in part.",
+               L"the toolbar button with its pop-up, network rules (declarativeNetRequest, as in uBlock Origin Lite). "
+               L"Not yet: webRequest (blockers built on it, such as the full uBlock Origin), context menu items, bookmarks, "
+               L"history and cookies, so some extensions work only in part.",
                L"Поддержка расширений только появилась. Работают: изменение страниц, фоновая часть, сообщения и порты, вкладки, хранилище, "
-               L"кнопка на панели со всплывающим окном. Пока нет: сетевых фильтров (webRequest, declarativeNetRequest), "
-               L"пунктов в контекстном меню, закладок, истории и cookie, поэтому некоторые расширения работают не полностью.")));
+               L"кнопка на панели со всплывающим окном, сетевые правила (declarativeNetRequest, как в uBlock Origin Lite). "
+               L"Пока нет: webRequest (на нём построены блокировщики вроде полного uBlock Origin), пунктов в контекстном меню, "
+               L"закладок, истории и cookie, поэтому некоторые расширения работают не полностью.")));
         g_pages.push_back(std::move(p));
     }
     {   // Keyboard

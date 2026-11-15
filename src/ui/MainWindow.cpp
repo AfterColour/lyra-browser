@@ -811,6 +811,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_EXT_INSTALL:
         ExtensionStoreMessage(wParam, lParam);
         return 0;
+    case WM_APP_DNR:
+        ExtensionsDnrReady(lParam);
+        return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);
         return 0;

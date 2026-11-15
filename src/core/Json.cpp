@@ -9,6 +9,7 @@ struct Parser {
     const std::string& t;
     size_t p = 0;
     std::string error;
+    int buildDepth = 1 << 30;           // objects and arrays this deep keep only their type and raw text
 
     explicit Parser(const std::string& text) : t(text) {}
 
@@ -73,12 +74,63 @@ struct Parser {
         return true;
     }
 
+    // Over a value without building it (for JsonObjectMembers).
+    bool skipString() {
+        if (t[p] != '"') return fail("string expected");
+        for (++p; p < t.size() && t[p] != '"'; ++p)
+            if (t[p] == '\\') ++p;
+        if (p >= t.size()) return fail("unterminated string");
+        ++p;
+        return true;
+    }
+
+    bool skipValue(int depth) {
+        if (depth > 200) return fail("too deep");
+        skip();
+        if (p >= t.size()) return fail("value expected");
+        const char c = t[p];
+        if (c == '{' || c == '[') {
+            const char close = c == '{' ? '}' : ']';
+            ++p;
+            skip();
+            if (p < t.size() && t[p] == close) { ++p; return true; }
+            for (;;) {
+                if (c == '{') {
+                    skip();
+                    if (p >= t.size() || !skipString()) return fail("member name expected");
+                    skip();
+                    if (p >= t.size() || t[p] != ':') return fail("':' expected");
+                    ++p;
+                }
+                if (!skipValue(depth + 1)) return false;
+                skip();
+                if (p < t.size() && t[p] == ',') {
+                    ++p;
+                    skip();
+                    if (p < t.size() && t[p] == close) { ++p; return true; }
+                    continue;
+                }
+                if (p < t.size() && t[p] == close) { ++p; return true; }
+                return fail("',' or a closing bracket expected");
+            }
+        }
+        if (c == '"') return skipString();
+        JsonValue scalar;
+        return value(scalar, depth);
+    }
+
     bool value(JsonValue& v, int depth) {
         if (depth > 200) return fail("too deep");
         skip();
         if (p >= t.size()) return fail("value expected");
         const size_t start = p;
         const char c = t[p];
+        if ((c == '{' || c == '[') && depth >= buildDepth) {
+            if (!skipValue(depth)) return false;
+            v.type = c == '{' ? JsonValue::Object : JsonValue::Array;
+            v.raw = t.substr(start, p - start);
+            return true;
+        }
         if (c == '{') {
             v.type = JsonValue::Object;
             ++p;
@@ -159,10 +211,14 @@ bool JsonValue::flag(const std::string& key, bool fallback) const {
     return v && v->type == Bool ? v->b : fallback;
 }
 
-bool JsonParse(const std::string& text, JsonValue& out, std::string* error) {
-    std::string body = text;
-    if (body.size() >= 3 && (unsigned char)body[0] == 0xEF && (unsigned char)body[1] == 0xBB && (unsigned char)body[2] == 0xBF) body.erase(0, 3);
+bool JsonParse(const std::string& text, JsonValue& out, std::string* error) { return JsonParseShallow(text, out, 1 << 30, error); }
+
+bool JsonParseShallow(const std::string& text, JsonValue& out, int buildDepth, std::string* error) {
+    const bool bom = text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF;
+    const std::string stripped = bom ? text.substr(3) : std::string();
+    const std::string& body = bom ? stripped : text;
     Parser parser(body);
+    parser.buildDepth = buildDepth;
     out = JsonValue();
     bool ok = parser.value(out, 0);
     if (ok) {
@@ -171,6 +227,36 @@ bool JsonParse(const std::string& text, JsonValue& out, std::string* error) {
     }
     if (!ok && error) *error = parser.error;
     return ok;
+}
+
+bool JsonObjectMembers(const std::string& text, std::vector<std::pair<std::string, std::string>>& out, std::string* error) {
+    size_t start = 0;
+    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) start = 3;
+    Parser parser(text);
+    parser.p = start;
+    out.clear();
+    auto fail = [&](const char* what) { parser.fail(what); if (error) *error = parser.error; return false; };
+    parser.skip();
+    if (parser.p >= text.size() || text[parser.p] != '{') return fail("object expected");
+    ++parser.p;
+    parser.skip();
+    if (parser.p < text.size() && text[parser.p] == '}') return true;
+    for (;;) {
+        parser.skip();
+        std::string key;
+        if (parser.p >= text.size() || !parser.string(key)) return fail("member name expected");
+        parser.skip();
+        if (parser.p >= text.size() || text[parser.p] != ':') return fail("':' expected");
+        ++parser.p;
+        parser.skip();
+        const size_t from = parser.p;
+        if (!parser.skipValue(1)) { if (error) *error = parser.error; return false; }
+        out.emplace_back(std::move(key), text.substr(from, parser.p - from));
+        parser.skip();
+        if (parser.p < text.size() && text[parser.p] == ',') { ++parser.p; continue; }
+        if (parser.p < text.size() && text[parser.p] == '}') return true;
+        return fail("',' or '}' expected");
+    }
 }
 
 std::string JsonQuote(const std::string& s) {

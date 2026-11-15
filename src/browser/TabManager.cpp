@@ -242,6 +242,7 @@ static WKPageConfigurationRef CreatePageConfiguration() {
     if (g_dataStore) WKPageConfigurationSetWebsiteDataStore(conf, g_dataStore);
     if (WKUserContentControllerRef content = AdBlockUserContentController())
         WKPageConfigurationSetUserContentController(conf, content);
+    ExtensionsSetupPageConfiguration(conf);       // lyra-extension:// files for extensions' scripts and pages
     return conf;
 }
 

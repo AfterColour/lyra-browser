@@ -22,6 +22,23 @@ function (EXT) {
   };
   const isFunction = (f) => typeof f === "function";
 
+  // Errors and warnings of the extension's own pages go to Lyra's log (tabs.log), at most 100 per page.
+  if (EXT.context === "extension" && handler && !globalThis.__lyraConsole) {
+    globalThis.__lyraConsole = true;
+    let budget = 100;
+    const text = (a) => { try { return a instanceof Error ? (a.stack || String(a)) : typeof a === "object" ? JSON.stringify(a) : String(a); } catch (e) { return String(a); } };
+    const send = (level, args) => {
+      if (budget-- <= 0) return;
+      try { handler.postMessage(JSON.stringify({ op: "debug.log", level, text: args.map(text).join(" ").slice(0, 600), url: location.pathname })); } catch (e) {}
+    };
+    for (const level of ["error", "warn"]) {
+      const original = console[level].bind(console);
+      console[level] = (...args) => { send(level, args); original(...args); };
+    }
+    addEventListener("error", (e) => send("uncaught", [e.error || e.message]));
+    addEventListener("unhandledrejection", (e) => send("rejection", [e.reason]));
+  }
+
   // ---- events --------------------------------------------------------------------------------
   const events = {};
   const makeEvent = (name) => {
@@ -318,7 +335,10 @@ function (EXT) {
       },
       insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files }), cb),
       removeCSS: stub(undefined),
-      registerContentScripts: stub(undefined), getRegisteredContentScripts: stub([]), unregisterContentScripts: stub(undefined), updateContentScripts: stub(undefined),
+      registerContentScripts: (scripts, cb) => withCallback(call("scripting.registerContentScripts", { scripts: scripts || [] }).then(() => undefined), cb),
+      getRegisteredContentScripts: (...args) => { const cb = splitCallback(args); const f = args[0] || {}; return withCallback(call("scripting.getRegisteredContentScripts", { ids: Array.isArray(f.ids) ? f.ids : null }), cb); },
+      unregisterContentScripts: (...args) => { const cb = splitCallback(args); const f = args[0] || {}; return withCallback(call("scripting.unregisterContentScripts", { ids: Array.isArray(f.ids) ? f.ids : null }).then(() => undefined), cb); },
+      updateContentScripts: (scripts, cb) => withCallback(call("scripting.updateContentScripts", { scripts: scripts || [] }).then(() => undefined), cb),
     };
     // The toolbar button: Lyra draws it (icon, badge, title) and opens its pop-up. Values with a
     // tabId are for that tab only.
@@ -372,7 +392,40 @@ function (EXT) {
       onClicked: makeEvent("action.onClicked"),
       onUserSettingsChanged: makeEvent(),
     };
-    // Alarms live in the background page, which Lyra keeps running.
+    // declarativeNetRequest: Lyra turns the rules into WebKit content blockers (browser/ExtensionDnr.cpp).
+const dnrRules = (session) => ({
+  update: (o, cb) => withCallback(call("dnr.updateRules", { session, add: (o || {}).addRules || [], remove: (o || {}).removeRuleIds || [] }).then(() => undefined), cb),
+  get: (...args) => { const cb = splitCallback(args); const f = args[0] || {}; return withCallback(call("dnr.getRules", { session, ids: Array.isArray(f.ruleIds) ? f.ruleIds : null }), cb); },
+});
+const dnr = {
+  updateDynamicRules: dnrRules(false).update,
+  getDynamicRules: dnrRules(false).get,
+  updateSessionRules: dnrRules(true).update,
+  getSessionRules: dnrRules(true).get,
+  updateEnabledRulesets: (o, cb) => withCallback(call("dnr.updateEnabledRulesets", { enable: (o || {}).enableRulesetIds || [], disable: (o || {}).disableRulesetIds || [] }).then(() => undefined), cb),
+  getEnabledRulesets: (cb) => withCallback(call("dnr.getEnabledRulesets"), cb),
+  updateStaticRules: (o, cb) => withCallback(call("dnr.updateStaticRules", { rulesetId: (o || {}).rulesetId || "", enable: (o || {}).enableRuleIds || [], disable: (o || {}).disableRuleIds || [] }).then(() => undefined), cb),
+  getDisabledRuleIds: (o, cb) => withCallback(call("dnr.getDisabledRuleIds", { rulesetId: (o || {}).rulesetId || "" }), cb),
+  isRegexSupported: (o, cb) => withCallback(call("dnr.isRegexSupported", { regex: (o || {}).regex || "" }), cb),
+  getAvailableStaticRuleCount: (cb) => withCallback(Promise.resolve(300000), cb),
+  getMatchedRules: (...args) => withCallback(Promise.resolve({ rulesInfo: [] }), splitCallback(args)),
+  setExtensionActionOptions: (...args) => withCallback(Promise.resolve(), splitCallback(args)),
+  testMatchOutcome: (...args) => withCallback(Promise.resolve({ matchedRules: [] }), splitCallback(args)),
+  onRuleMatchedDebug: makeEvent(),
+  GUARANTEED_MINIMUM_STATIC_RULES: 30000, MAX_NUMBER_OF_RULES: 30000, MAX_NUMBER_OF_DYNAMIC_RULES: 30000,
+  MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 30000, MAX_NUMBER_OF_UNSAFE_DYNAMIC_RULES: 5000, MAX_NUMBER_OF_SESSION_RULES: 5000,
+  MAX_NUMBER_OF_UNSAFE_SESSION_RULES: 5000, MAX_NUMBER_OF_REGEX_RULES: 1000, MAX_NUMBER_OF_STATIC_RULESETS: 100,
+  MAX_NUMBER_OF_ENABLED_STATIC_RULESETS: 50, MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL: 20, GETMATCHEDRULES_QUOTA_INTERVAL: 10,
+  DYNAMIC_RULESET_ID: "_dynamic", SESSION_RULESET_ID: "_session",
+  RuleActionType: { BLOCK: "block", REDIRECT: "redirect", ALLOW: "allow", UPGRADE_SCHEME: "upgradeScheme", MODIFY_HEADERS: "modifyHeaders", ALLOW_ALL_REQUESTS: "allowAllRequests" },
+  ResourceType: { MAIN_FRAME: "main_frame", SUB_FRAME: "sub_frame", STYLESHEET: "stylesheet", SCRIPT: "script", IMAGE: "image", FONT: "font", OBJECT: "object", XMLHTTPREQUEST: "xmlhttprequest", PING: "ping", CSP_REPORT: "csp_report", MEDIA: "media", WEBSOCKET: "websocket", WEBTRANSPORT: "webtransport", WEBBUNDLE: "webbundle", OTHER: "other" },
+  DomainType: { FIRST_PARTY: "firstParty", THIRD_PARTY: "thirdParty" },
+  HeaderOperation: { APPEND: "append", SET: "set", REMOVE: "remove" },
+  RequestMethod: { CONNECT: "connect", DELETE: "delete", GET: "get", HEAD: "head", OPTIONS: "options", PATCH: "patch", POST: "post", PUT: "put", OTHER: "other" },
+  UnsupportedRegexReason: { SYNTAX_ERROR: "syntaxError", MEMORY_LIMIT_EXCEEDED: "memoryLimitExceeded" },
+};
+
+// Alarms live in the background page, which Lyra keeps running.
     const alarmTimers = new Map(), alarmInfo = new Map();
     const onAlarm = makeEvent("alarms.onAlarm");
     const stopAlarm = (name) => { const t = alarmTimers.get(name); clearTimeout(t); clearInterval(t); alarmTimers.delete(name); };
@@ -432,7 +485,7 @@ function (EXT) {
       notifications: { create: (...a) => withCallback(Promise.resolve(String(typeof a[0] === "string" ? a[0] : Date.now())), splitCallback(a)), clear: stub(true), getAll: stub({}), onClicked: makeEvent(), onClosed: makeEvent(), onButtonClicked: makeEvent() },
       webNavigation: { onBeforeNavigate: quiet(), onCommitted: quiet(), onCompleted: quiet(), onDOMContentLoaded: quiet(), onErrorOccurred: quiet(), onHistoryStateUpdated: quiet(), onReferenceFragmentUpdated: quiet(), onCreatedNavigationTarget: quiet(), getFrame: stub(null), getAllFrames: stub([]) },
       webRequest: { onBeforeRequest: quiet(), onBeforeSendHeaders: quiet(), onSendHeaders: quiet(), onHeadersReceived: quiet(), onResponseStarted: quiet(), onCompleted: quiet(), onErrorOccurred: quiet(), onBeforeRedirect: quiet(), onAuthRequired: quiet(), handlerBehaviorChanged: stub(undefined) },
-      declarativeNetRequest: { updateDynamicRules: stub(undefined), getDynamicRules: stub([]), updateSessionRules: stub(undefined), getSessionRules: stub([]), updateEnabledRulesets: stub(undefined), getEnabledRulesets: stub([]), isRegexSupported: stub({ isSupported: true }), MAX_NUMBER_OF_DYNAMIC_RULES: 30000 },
+      declarativeNetRequest: dnr,
       idle: { queryState: stub("active"), setDetectionInterval() {}, onStateChanged: makeEvent() },
       offscreen: { createDocument: stub(undefined), closeDocument: stub(undefined), hasDocument: stub(false) },
       sidePanel: { setOptions: stub(undefined), setPanelBehavior: stub(undefined), open: stub(undefined) },

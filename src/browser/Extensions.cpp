@@ -3,6 +3,7 @@
 #include "app/Log.h"
 #include "browser/AdBlock.h"
 #include "browser/ExtensionStore.h"
+#include "browser/ExtensionDnr.h"
 #include "core/Constants.h"
 #include "core/Json.h"
 #include "core/Localization.h"
@@ -22,10 +23,15 @@
 #include <WebKit/WKScriptMessageRef.h>
 #include <WebKit/WKPageNavigationClient.h>
 #include <WebKit/WKFrameInfoRef.h>
+#include <WebKit/WKContextPrivate.h>
+#include <WebKit/WKPageConfigurationRef.h>
+#include <WebKit/WKPreferencesRefPrivate.h>
 #include <shobjidl.h>
 #include <filesystem>
 #include <functional>
 #include <set>
+#include <mutex>
+#include <thread>
 
 namespace fs = std::filesystem;
 extern HWND g_setHwnd;
@@ -38,6 +44,12 @@ struct ContentScript {
     bool atStart = false, allFrames = false;
 };
 
+struct Ruleset {                         // declarative_net_request.rule_resources
+    std::string id;
+    std::wstring path;                   // relative, native separators
+    bool enabled = false;               // on by default
+};
+
 struct Extension {
     ExtensionInfo info;
     std::string manifestText, messagesText = "{}", lang = "en";
@@ -47,6 +59,8 @@ struct Extension {
     std::wstring defaultTitle;
     std::string defaultPopup;            // relative to the extension
     std::string optionsPage;
+    std::vector<Ruleset> rulesets;
+    std::vector<std::string> war;        // web_accessible_resources (globs, relative)
 };
 
 std::vector<Extension> s_exts;
@@ -229,6 +243,21 @@ bool LoadExtension(const std::wstring& dir, Extension& ext, std::string* error) 
         }
     }
     info.contentScripts = (int)ext.scripts.size();
+    if (const JsonValue* war = m.get("web_accessible_resources"))
+        for (auto& w : war->items) {
+            if (w.isString()) ext.war.push_back(w.s);
+            else if (const JsonValue* res = w.get("resources")) for (auto& r : res->items) if (r.isString()) ext.war.push_back(r.s);
+        }
+    for (auto& w : ext.war) while (!w.empty() && w[0] == '/') w.erase(0, 1);
+    if (const JsonValue* dnr = m.get("declarative_net_request"))
+        if (const JsonValue* list = dnr->get("rule_resources"))
+            for (auto& r : list->items) {
+                const std::string id = r.str("id");
+                std::string path = r.str("path");
+                while (!path.empty() && path[0] == '/') path.erase(0, 1);      // ("/rulesets/main/easylist.json")
+                if (id.empty() || path.empty() || !SafeRelative(ToWide(path))) continue;
+                ext.rulesets.push_back({ id, Native(ToWide(path)), r.flag("enabled") });
+            }
     info.enabled = GetPrivateProfileIntW(L"Lyra", L"Enabled", 1, (dir + L"\\lyra.ini").c_str()) != 0;
     return true;
 }
@@ -257,31 +286,176 @@ Extension* Find(const std::wstring& id) {
     return nullptr;
 }
 
+// ---- lyra-extension://<id>/<path>: the extension's files ------------------------------------------
+// Its pages load from here (so "/js/x.js" means the extension's own folder, as in Chrome), and web
+// pages get the files it lets them have (web_accessible_resources, e.g. images its content scripts
+// put in), plus its .html pages (opened in a tab). Lyra's own files in the folder are never served.
+const wchar_t kExtScheme[] = L"lyra-extension";
+enum : intptr_t { kFromExtensionPage = 1, kFromWebPage = 2 };
+
+std::wstring ExtBase(const Extension& e) { return std::wstring(kExtScheme) + L"://" + e.info.id + L"/"; }
+
+bool PrivateFile(std::wstring rel) {
+    CharLowerBuffW(rel.data(), (DWORD)rel.size());
+    if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, L".tmp") == 0) return true;
+    if (rel.find(L'\\') != std::wstring::npos) return false;
+    return rel == L"lyra.ini" || rel.rfind(L"storage-", 0) == 0 || rel.rfind(L"dnr-", 0) == 0 || rel == L"registered-scripts.json";
+}
+
+bool GlobMatch(const char* p, const char* s) {               // '*' matches anything, also "/"
+    if (!*p) return !*s;
+    if (*p == '*') return GlobMatch(p + 1, s) || (*s && GlobMatch(p, s + 1));
+    return *s && *p == *s && GlobMatch(p + 1, s + 1);
+}
+
+std::string MimeOf(const std::wstring& path) {
+    std::wstring ext = path.substr(path.find_last_of(L'.') == std::wstring::npos ? path.size() : path.find_last_of(L'.'));
+    CharLowerBuffW(ext.data(), (DWORD)ext.size());
+    static const std::pair<const wchar_t*, const char*> kTypes[] = {
+        { L".html", "text/html; charset=utf-8" }, { L".htm", "text/html; charset=utf-8" },
+        { L".js", "text/javascript; charset=utf-8" }, { L".mjs", "text/javascript; charset=utf-8" },
+        { L".css", "text/css; charset=utf-8" }, { L".json", "application/json; charset=utf-8" },
+        { L".txt", "text/plain; charset=utf-8" }, { L".svg", "image/svg+xml" }, { L".xml", "text/xml; charset=utf-8" },
+        { L".png", "image/png" }, { L".gif", "image/gif" }, { L".jpg", "image/jpeg" }, { L".jpeg", "image/jpeg" },
+        { L".webp", "image/webp" }, { L".ico", "image/x-icon" }, { L".woff", "font/woff" }, { L".woff2", "font/woff2" },
+        { L".ttf", "font/ttf" }, { L".otf", "font/otf" }, { L".wasm", "application/wasm" }, { L".mp3", "audio/mpeg" },
+        { L".mp4", "video/mp4" }, { L".webm", "video/webm" }, { L".ogg", "audio/ogg" }, { L".wav", "audio/wav" },
+    };
+    for (auto& [e, m] : kTypes) if (ext == e) return m;
+    return "application/octet-stream";
+}
+
+void OnExtensionScheme(WKURLSchemeTaskRef task, WKURLRef url, WKStringRef, WKURLRef frameURL, const void* context) {
+    auto text = [](WKURLRef u) {
+        std::wstring s;
+        if (u) if (WKStringRef w = WKURLCopyString(u)) { s = WKStr(w); WKRelease(w); }
+        return s;
+    };
+    auto finish = [&](int status, const std::string& mime, const std::string& body) {
+        static const bool logIt = GetEnvironmentVariableW(L"LYRA_EXT_SCHEME_LOG", nullptr, 0) > 0;   // every request, for debugging
+        if (logIt) Log("extensions: scheme %d %zu %ls (from %ls)", status, body.size(), text(url).c_str(), text(frameURL).c_str());
+        WKStringRef m = WKStringCreateWithUTF8CString(mime.c_str());
+        WKURLSchemeTaskFinish(task, status, m, body.data(), body.size());
+        WKRelease(m);
+    };
+    const std::wstring u = text(url), from = text(frameURL);
+    const std::wstring prefix = std::wstring(kExtScheme) + L"://";
+    if (_wcsnicmp(u.c_str(), prefix.c_str(), prefix.size()) != 0) return finish(404, "text/plain", "");
+    const std::wstring rest = u.substr(prefix.size());
+    const size_t slash = rest.find(L'/');
+    const std::wstring id = rest.substr(0, slash);
+    std::string raw = ToUtf8(slash == std::wstring::npos ? L"" : rest.substr(slash + 1));
+    raw = raw.substr(0, raw.find_first_of("?#"));
+    std::string decoded;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '%' && i + 2 < raw.size() && isxdigit((unsigned char)raw[i + 1]) && isxdigit((unsigned char)raw[i + 2])) {
+            decoded += (char)strtol(raw.substr(i + 1, 2).c_str(), nullptr, 16);
+            i += 2;
+        } else decoded += raw[i];
+    }
+    const Extension* e = nullptr;
+    for (const Extension& x : s_exts) if (_wcsicmp(x.info.id.c_str(), id.c_str()) == 0) e = &x;
+    const std::wstring path = ToWide(decoded);
+    if (!e || !e->info.enabled || path.empty() || !SafeRelative(path)) return finish(404, "text/plain", "");
+    const std::wstring native = Native(path);
+    if (PrivateFile(native)) return finish(404, "text/plain", "");
+    if ((intptr_t)context == kFromWebPage) {
+        const std::wstring own = ExtBase(*e);
+        bool allowed = _wcsnicmp(from.c_str(), own.c_str(), own.size()) == 0;     // its own page in a tab
+        if (!allowed) allowed = std::any_of(e->war.begin(), e->war.end(), [&](const std::string& g) { return GlobMatch(g.c_str(), decoded.c_str()); });
+        if (!allowed) {
+            const std::string mime = MimeOf(native);
+            allowed = mime.rfind("text/html", 0) == 0;                             // an extension page opened in a tab
+        }
+        if (!allowed) return finish(404, "text/plain", "");
+    }
+    const std::wstring file = e->info.dir + L"\\" + native;
+    const DWORD attr = GetFileAttributesW(file.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) return finish(404, "text/plain", "");
+    finish(200, MimeOf(native), ReadText(file, 512u << 20));
+}
+
+void SetSchemeHandler(WKPageConfigurationRef conf, intptr_t from) {
+    WKStringRef scheme = WKStringCreateWithUTF8CString(ToUtf8(kExtScheme).c_str());
+    WKPageConfigurationSetURLSchemeHandler(conf, scheme, OnExtensionScheme, nullptr, (const void*)from);
+    WKRelease(scheme);
+}
+
 // ---- storage ----------------------------------------------------------------------------------
 using Store = std::map<std::string, std::string>;      // key -> value as JSON text
 
 std::wstring StoreFile(const Extension& e, const std::string& area) { return e.info.dir + L"\\storage-" + ToWide(area) + L".json"; }
 
-Store LoadStore(const Extension& e, const std::string& area) {
-    Store s;
+// The areas are read from disk once and then kept in memory (an extension may keep megabytes there
+// and ask many times a second); changes go to disk from a writer thread, 300 ms later, the last
+// version of each file only.
+std::map<std::wstring, std::map<std::string, Store>> s_stores;   // extension -> area -> items
+
+std::mutex s_writeMutex;
+std::map<std::wstring, std::string> s_pendingWrites;          // file -> its new content
+bool s_writerRunning = false;
+
+void QueueWrite(const std::wstring& path, std::string data) {
+    std::lock_guard<std::mutex> lock(s_writeMutex);
+    s_pendingWrites[path] = std::move(data);
+    if (s_writerRunning) return;
+    s_writerRunning = true;
+    std::thread([] {
+        for (;;) {
+            Sleep(300);
+            std::map<std::wstring, std::string> batch;
+            {
+                std::lock_guard<std::mutex> lock(s_writeMutex);
+                if (s_pendingWrites.empty()) { s_writerRunning = false; return; }
+                batch.swap(s_pendingWrites);
+            }
+            for (auto& [path, data] : batch) WriteFileAtomic(path, data);
+        }
+    }).detach();
+}
+
+void FlushWrites() {                                          // at exit: what is still waiting
+    for (int i = 0; i < 100; ++i) {
+        std::map<std::wstring, std::string> batch;
+        {
+            std::lock_guard<std::mutex> lock(s_writeMutex);
+            if (!s_writerRunning && s_pendingWrites.empty()) return;
+            batch.swap(s_pendingWrites);
+        }
+        for (auto& [path, data] : batch) WriteFileAtomic(path, data);
+        Sleep(20);                                            // (the writer thread may be in the middle of one)
+    }
+}
+
+Store& StoreOf(const Extension& e, const std::string& area) {
     if (area == "session") return s_session[e.info.id];
-    JsonValue v;
-    if (JsonParse(ReadText(StoreFile(e, area)), v) && v.isObject())
-        for (auto& m : v.members) s[m.first] = m.second.raw;
+    auto& areas = s_stores[e.info.id];
+    auto it = areas.find(area);
+    if (it != areas.end()) return it->second;
+    Store& s = areas[area];
+    std::vector<std::pair<std::string, std::string>> members;
+    if (JsonObjectMembers(ReadText(StoreFile(e, area)), members))
+        for (auto& [k, v] : members) s[k] = std::move(v);
     return s;
 }
 
-void SaveStore(const Extension& e, const std::string& area, const Store& s) {
-    if (area == "session") { s_session[e.info.id] = s; return; }
-    std::string out = "{";
-    for (auto& [k, v] : s) { if (out.size() > 1) out += ","; out += JsonQuote(k) + ":" + v; }
-    WriteFileAtomic(StoreFile(e, area), out + "}");
+void SaveStore(const Extension& e, const std::string& area) {
+    if (area == "session") return;
+    const Store& s = StoreOf(e, area);
+    size_t size = 2;
+    for (auto& [k, v] : s) size += k.size() + v.size() + 4;
+    std::string out;
+    out.reserve(size + 16);
+    out += "{";
+    for (auto& [k, v] : s) { if (out.size() > 1) out += ","; out += JsonQuote(k); out += ":"; out += v; }
+    out += "}";
+    QueueWrite(StoreFile(e, area), std::move(out));
 }
 
 std::string Storage(Extension& e, const JsonValue& msg, const std::string& op) {
     const std::string area = msg.str("area", "local");
     if (area != "local" && area != "sync" && area != "session" && area != "managed") return "{\"error\":\"unknown storage area\"}";
-    Store store = LoadStore(e, area);
+    Store& store = StoreOf(e, area);
     const JsonValue* keys = msg.get("keys");
     if (op == "storage.get") {
         std::string out = "{";
@@ -331,7 +505,7 @@ std::string Storage(Extension& e, const JsonValue& msg, const std::string& op) {
     } else {
         return "{\"error\":\"unknown operation\"}";
     }
-    SaveStore(e, area, store);
+    SaveStore(e, area);
     return "{\"value\":" + changes + "}}";
 }
 
@@ -351,14 +525,14 @@ WKArrayRef StringArray(const std::vector<std::string>& list) {
 
 void AddScript(WKUserContentControllerRef controller, const std::string& source, const ContentScript& s, const std::wstring& world) {
     WKStringRef src = WKStringCreateWithUTF8CStringWithLength(source.data(), source.size());
-    WKStringRef w = WKStringCreateWithUTF8CString(ToUtf8(world).c_str());
+    WKStringRef w = world.empty() ? nullptr : WKStringCreateWithUTF8CString(ToUtf8(world).c_str());   // none: the page's own world
     WKArrayRef allow = StringArray(s.matches), block = StringArray(s.excludes);
     WKUserScriptRef script = WKUserScriptCreateWithSourceInWorld(src, s.atStart ? kWKInjectAtDocumentStart : kWKInjectAtDocumentEnd, !s.allFrames, w, allow, block);
     WKUserContentControllerAddUserScript(controller, script);
     WKRelease(script);
     WKRelease(allow);
     WKRelease(block);
-    WKRelease(w);
+    if (w) WKRelease(w);
     WKRelease(src);
 }
 
@@ -368,13 +542,123 @@ const char kCssInjector[] =
     "if(document.documentElement)add();else new MutationObserver(function(r,o){if(document.documentElement){o.disconnect();add();}})"
     ".observe(document,{childList:true});})";
 
+// ---- scripting.registerContentScripts: content scripts an extension adds while it runs ------------
+// They join the manifest's (AddAllScripts), from the next page load on. Those that persist across
+// sessions (the default) are kept in registered-scripts.json; world "MAIN" runs in the page's own world.
+struct Registered { std::string id, raw; bool persist = true; };
+std::map<std::wstring, std::vector<Registered>> s_registered;
+std::set<std::wstring> s_registeredLoaded;
+
+std::wstring RegisteredFile(const Extension& e) { return e.info.dir + L"\\registered-scripts.json"; }
+
+std::vector<Registered>& RegisteredScripts(const Extension& e) {
+    auto& list = s_registered[e.info.id];
+    if (s_registeredLoaded.insert(e.info.id).second) {
+        JsonValue v;
+        if (JsonParse(ReadText(RegisteredFile(e)), v) && v.isArray())
+            for (auto& s : v.items) if (s.isObject() && !s.str("id").empty()) list.push_back({ s.str("id"), s.raw, true });
+    }
+    return list;
+}
+
+void SaveRegistered(const Extension& e) {
+    std::string s = "[";
+    for (auto& r : s_registered[e.info.id]) if (r.persist) { if (s.size() > 1) s += ","; s += r.raw; }
+    WriteFileAtomic(RegisteredFile(e), s + "]");
+}
+
+bool RegisteredToContent(const JsonValue& s, ContentScript& c, bool& mainWorld) {
+    AddPatterns(s.get("matches"), c.matches);
+    AddPatterns(s.get("excludeMatches"), c.excludes);
+    auto files = [](const JsonValue* list, std::vector<std::wstring>& out) {
+        if (!list || !list->isArray()) return;
+        for (auto& v : list->items) {
+            if (!v.isString()) continue;
+            std::string p = v.s;
+            while (!p.empty() && p[0] == '/') p.erase(0, 1);
+            if (SafeRelative(ToWide(p))) out.push_back(ToWide(p));
+        }
+    };
+    files(s.get("js"), c.js);
+    files(s.get("css"), c.css);
+    c.atStart = s.str("runAt") == "document_start";
+    c.allFrames = s.flag("allFrames");
+    mainWorld = s.str("world") == "MAIN";
+    return !c.matches.empty() && (!c.js.empty() || !c.css.empty());
+}
+
+std::string ScriptError(const std::string& text) { return "{\"error\":" + JsonQuote(text) + "}"; }
+
+std::string ScriptingRegistered(const Extension& e, const JsonValue& msg, const std::string& op) {
+    auto& list = RegisteredScripts(e);
+    std::set<std::string> ids;
+    const JsonValue* filter = msg.get("ids");
+    const bool filtered = filter && filter->isArray();
+    if (filtered) for (auto& v : filter->items) if (v.isString()) ids.insert(v.s);
+    if (op == "scripting.getRegisteredContentScripts") {
+        std::string s = "[";
+        for (auto& r : list) if (!filtered || ids.count(r.id)) { if (s.size() > 1) s += ","; s += r.raw; }
+        return "{\"value\":" + s + "]}";
+    }
+    if (op == "scripting.unregisterContentScripts") {
+        for (auto& id : ids)
+            if (std::none_of(list.begin(), list.end(), [&](const Registered& r) { return r.id == id; }))
+                return ScriptError("Nonexistent script ID '" + id + "'");
+        list.erase(std::remove_if(list.begin(), list.end(), [&](const Registered& r) { return !filtered || ids.count(r.id); }), list.end());
+    } else {
+        const JsonValue* scripts = msg.get("scripts");
+        if (!scripts || !scripts->isArray()) return ScriptError("scripts must be an array");
+        const bool update = op == "scripting.updateContentScripts";
+        std::vector<Registered> next = list;
+        for (auto& s : scripts->items) {
+            const std::string id = s.str("id");
+            if (id.empty() || id[0] == '_') return ScriptError("Invalid script ID '" + id + "'");
+            auto it = std::find_if(next.begin(), next.end(), [&](const Registered& r) { return r.id == id; });
+            if (!update && it != next.end()) return ScriptError("Duplicate script ID '" + id + "'");
+            if (update && it == next.end()) return ScriptError("Script with ID '" + id + "' does not exist or is not fully registered");
+            std::string raw = s.raw;
+            if (update) {                                 // the members given replace the old ones
+                JsonValue old;
+                JsonParse(it->raw, old);
+                std::string merged = "{";
+                auto add = [&](const std::string& k, const std::string& v) { if (merged.size() > 1) merged += ","; merged += JsonQuote(k) + ":" + v; };
+                for (auto& [k, v] : old.members) if (!s.get(k)) add(k, v.raw);
+                for (auto& [k, v] : s.members) add(k, v.raw);
+                raw = merged + "}";
+            }
+            JsonValue parsed;
+            JsonParse(raw, parsed);
+            ContentScript c;
+            bool mainWorld = false;
+            if (!RegisteredToContent(parsed, c, mainWorld))
+                return ScriptError("Script with ID '" + id + "' must specify both matches and at least one js or css file.");
+            Registered r{ id, raw, parsed.flag("persistAcrossSessions", true) };
+            if (it != next.end()) *it = r;
+            else next.push_back(r);
+        }
+        list.swap(next);
+    }
+    SaveRegistered(e);
+    AdBlockRefreshUserScripts();                          // pages loaded from now on get them
+    return "{\"value\":null}";
+}
+
 // Called by AdBlock.cpp whenever it rebuilds the shared list of user scripts.
 void AddAllScripts(WKUserContentControllerRef controller) {
     ExtensionStoreAddScript(controller);   // "Add to Lyra" on the stores' pages
     LoadApi();
     if (s_apiJs.empty()) return;
     for (Extension& e : s_exts) {
-        if (!e.info.enabled || e.scripts.empty()) continue;
+        if (!e.info.enabled) continue;
+        std::vector<std::pair<ContentScript, bool>> all;     // (script, in the page's own world)
+        for (const ContentScript& s : e.scripts) all.push_back({ s, false });
+        for (const Registered& r : RegisteredScripts(e)) {
+            JsonValue v;
+            ContentScript c;
+            bool mainWorld = false;
+            if (JsonParse(r.raw, v) && RegisteredToContent(v, c, mainWorld)) all.push_back({ std::move(c), mainWorld });
+        }
+        if (all.empty()) continue;
         const std::wstring world = World(e);
         if (!s_worldsWithHandler.count(world)) {
             auto& ctx = s_handlerIds[world];
@@ -387,22 +671,26 @@ void AddAllScripts(WKUserContentControllerRef controller) {
             s_worldsWithHandler.insert(world);
         }
         const std::string ext = ExtJson(e, "content");
-        for (const ContentScript& s : e.scripts) {
+        for (const auto& [s, mainWorld] : all) {
+            const std::wstring into = mainWorld ? std::wstring() : world;
             // 1: the API (once per page and world) and the styles; then each script on its own,
             // in order, in the same world (as Chrome runs them).
-            std::string head = "if (!globalThis.__lyraExtension) { globalThis.__lyraExtension = true; (" + s_apiJs + ")(" + ext + "); }\n";
+            std::string head = mainWorld ? std::string() : "if (!globalThis.__lyraExtension) { globalThis.__lyraExtension = true; (" + s_apiJs + ")(" + ext + "); }\n";
             for (const std::wstring& css : s.css) head += std::string(kCssInjector) + "(" + JsonQuote(ReadText(e.info.dir + L"\\" + Native(css))) + ");\n";
-            AddScript(controller, head, s, world);
+            if (!head.empty()) AddScript(controller, head, s, into);
             for (const std::wstring& js : s.js) {
                 std::string code = ReadText(e.info.dir + L"\\" + Native(js));
                 if (code.size() >= 3 && (unsigned char)code[0] == 0xEF) code.erase(0, 3);
-                AddScript(controller, code + "\n//# sourceURL=" + ToUtf8(FileUrl(e.info.dir + L"\\" + Native(js))), s, world);
+                AddScript(controller, code + "\n//# sourceURL=" + ToUtf8(FileUrl(e.info.dir + L"\\" + Native(js))), s, into);
             }
         }
     }
 }
 
+void DnrSyncAll();
+
 void Changed() {
+    DnrSyncAll();                         // extensions' network rules
     AdBlockRefreshUserScripts();          // pages loaded from now on get the new set
     SettingsRefresh();
     if (g_hWnd) RefreshLayout();          // the toolbar buttons
@@ -458,7 +746,7 @@ std::string LoadApi() {
 }
 
 std::string ExtJson(const Extension& e, const char* context) {
-    return "{\"id\":" + JsonQuote(ToUtf8(e.info.id)) + ",\"base\":" + JsonQuote(ToUtf8(FileUrl(e.info.dir + L"\\"))) +
+    return "{\"id\":" + JsonQuote(ToUtf8(e.info.id)) + ",\"base\":" + JsonQuote(ToUtf8(ExtBase(e))) +
            ",\"manifest\":" + e.manifestText + ",\"messages\":" + e.messagesText +
            ",\"lang\":" + JsonQuote(UiRussian() ? "ru" : "en") + ",\"context\":\"" + context + "\"}";
 }
@@ -611,7 +899,7 @@ std::wstring ResolveExtensionUrl(const Extension& e, const std::string& url) {
     if (url.find("://") != std::string::npos || url.rfind("about:", 0) == 0 || url.rfind("data:", 0) == 0) return ToWide(url);
     std::wstring rel = ToWide(url);
     while (!rel.empty() && rel[0] == L'/') rel.erase(0, 1);
-    return FileUrl(e.info.dir + L"\\") + rel;
+    return ExtBase(e) + rel;
 }
 
 void LoadUrl(Tab& t, const std::wstring& url) {
@@ -795,7 +1083,7 @@ std::string SenderJson(const Extension& e, bool content, WKPageRef fromPage, boo
         if (Tab* tab = TabOfPage(fromPage))
             sender += ",\"tab\":" + TabJson(*tab) + ",\"url\":" + JsonQuote(ToUtf8(tab->url)) + ",\"frameId\":" + (mainFrame ? "0" : "1") +
                       ",\"origin\":" + JsonQuote(ToUtf8(tab->url));
-    } else sender += ",\"url\":" + JsonQuote(ToUtf8(FileUrl(e.info.dir + L"\\")));
+    } else sender += ",\"url\":" + JsonQuote(ToUtf8(ExtBase(e)));
     return sender + "}";
 }
 
@@ -889,12 +1177,196 @@ bool ButtonAnchor(const std::wstring& id, RectF& anchor);
 
 HWND OpenExtensionWindow(Host& h, const std::wstring& url, const std::wstring& title);
 
+// ---- declarativeNetRequest: rulesets, dynamic and session rules -> WebKit content blockers ------
+// The rules are converted in the background (browser/ExtensionDnr.cpp), then compiled and put in
+// front of every page (browser/AdBlock.cpp). State: dnr-state.json (rulesets on, rules off) and
+// dnr-dynamic.json in the extension's folder; session rules only in memory.
+struct DnrState {
+    bool loaded = false;
+    std::set<std::string> enabled;                              // static rulesets on
+    std::map<std::string, std::set<long long>> disabled;        // per ruleset: rule ids off
+    std::vector<std::pair<long long, std::string>> dynamicRules, sessionRules;   // id, rule as JSON
+    unsigned changes = 0;
+};
+std::map<std::wstring, DnrState> s_dnr;
+std::map<std::wstring, std::string> s_dnrApplied;             // extension -> what its list was built from
+std::map<std::wstring, unsigned> s_dnrGen;
+struct DnrJob { std::wstring extId; unsigned gen; DnrResult result; };
+
+std::wstring DnrStateFile(const Extension& e) { return e.info.dir + L"\\dnr-state.json"; }
+std::wstring DnrDynamicFile(const Extension& e) { return e.info.dir + L"\\dnr-dynamic.json"; }
+
+void ParseRules(const std::string& text, std::vector<std::pair<long long, std::string>>& out) {
+    JsonValue v;
+    if (!JsonParse(text, v) || !v.isArray()) return;
+    for (auto& r : v.items) if (r.isObject() && r.get("id")) out.push_back({ (long long)r.get("id")->n, r.raw });
+}
+
+std::string JoinRules(const std::vector<std::pair<long long, std::string>>& rules) {
+    std::string s = "[";
+    for (auto& [id, r] : rules) { if (s.size() > 1) s += ","; s += r; }
+    return s + "]";
+}
+
+DnrState& Dnr(const Extension& e) {
+    DnrState& st = s_dnr[e.info.id];
+    if (st.loaded) return st;
+    st.loaded = true;
+    JsonValue v;
+    const bool saved = JsonParse(ReadText(DnrStateFile(e)), v) && v.isObject();
+    if (saved && v.get("enabled")) { for (auto& id : v.get("enabled")->items) if (id.isString()) st.enabled.insert(id.s); }
+    else for (auto& rs : e.rulesets) if (rs.enabled) st.enabled.insert(rs.id);
+    if (saved)
+        if (const JsonValue* d = v.get("disabled"))
+            for (auto& [rs, ids] : d->members) for (auto& id : ids.items) st.disabled[rs].insert((long long)id.n);
+    ParseRules(ReadText(DnrDynamicFile(e)), st.dynamicRules);
+    return st;
+}
+
+void SaveDnrState(const Extension& e, const DnrState& st) {
+    std::string s = "{\"enabled\":[";
+    bool first = true;
+    for (auto& id : st.enabled) { s += (first ? "" : ",") + JsonQuote(id); first = false; }
+    s += "],\"disabled\":{";
+    first = true;
+    for (auto& [rs, ids] : st.disabled) {
+        if (ids.empty()) continue;
+        s += (first ? "" : ",") + JsonQuote(rs) + ":[";
+        bool f = true;
+        for (long long id : ids) { s += (f ? "" : ",") + std::to_string(id); f = false; }
+        s += "]";
+        first = false;
+    }
+    WriteFileAtomic(DnrStateFile(e), s + "}}");
+}
+
+// What the extension's list is built from; when that changed it is converted (in the background)
+// and compiled again.
+void DnrSync(const Extension& e) {
+    DnrState& st = Dnr(e);
+    std::vector<DnrSource> src;
+    std::string sig;
+    if (e.info.enabled) {
+        for (auto& rs : e.rulesets)
+            if (st.enabled.count(rs.id)) {
+                src.push_back({ e.info.dir + L"\\" + rs.path, "", st.disabled[rs.id] });
+                sig += rs.id + ",";
+            }
+        if (!st.dynamicRules.empty()) src.push_back({ L"", JoinRules(st.dynamicRules), {} });
+        if (!st.sessionRules.empty()) src.push_back({ L"", JoinRules(st.sessionRules), {} });
+    }
+    if (!src.empty()) sig += "|" + ToUtf8(e.info.version) + "|" + std::to_string(st.changes);
+    auto it = s_dnrApplied.find(e.info.id);
+    if (it == s_dnrApplied.end() ? sig.empty() : it->second == sig) return;
+    s_dnrApplied[e.info.id] = sig;
+    const unsigned gen = ++s_dnrGen[e.info.id];
+    if (src.empty()) { AdBlockSetExtensionRules(e.info.id, "", ""); return; }
+    const std::wstring id = e.info.id, dir = e.info.dir;
+    std::thread([id, dir, src, gen] {
+        auto* job = new DnrJob{ id, gen, DnrConvert(src, dir) };
+        if (!g_hWnd || !PostMessageW(g_hWnd, WM_APP_DNR, 0, (LPARAM)job)) delete job;
+    }).detach();
+}
+
+void DnrSyncAll() {
+    for (const Extension& e : s_exts) DnrSync(e);
+    for (auto it = s_dnrApplied.begin(); it != s_dnrApplied.end();) {      // removed extensions
+        if (Find(it->first)) { ++it; continue; }
+        ++s_dnrGen[it->first];
+        AdBlockSetExtensionRules(it->first, "", "");
+        it = s_dnrApplied.erase(it);
+    }
+}
+
+std::string DnrError(const std::string& text) { return "{\"error\":" + JsonQuote(text) + "}"; }
+
+std::string DnrOp(const Extension& e, const JsonValue& msg, const std::string& op) {
+    DnrState& st = Dnr(e);
+    if (op == "dnr.isRegexSupported")
+        return DnrRegexSupported(msg.str("regex")) ? "{\"value\":{\"isSupported\":true}}"
+                                                   : "{\"value\":{\"isSupported\":false,\"reason\":\"syntaxError\"}}";
+    if (op == "dnr.getEnabledRulesets") {
+        std::string s = "[";
+        for (auto& rs : e.rulesets) if (st.enabled.count(rs.id)) { if (s.size() > 1) s += ","; s += JsonQuote(rs.id); }
+        return "{\"value\":" + s + "]}";
+    }
+    if (op == "dnr.updateEnabledRulesets") {
+        auto known = [&](const std::string& id) { for (auto& rs : e.rulesets) if (rs.id == id) return true; return false; };
+        std::vector<std::string> on, off;
+        for (const char* key : { "enable", "disable" })
+            if (const JsonValue* list = msg.get(key))
+                for (auto& v : list->items) {
+                    if (!v.isString() || !known(v.s)) return DnrError("Invalid ruleset id: " + v.s + ".");
+                    (key[0] == 'e' ? on : off).push_back(v.s);
+                }
+        for (auto& id : off) st.enabled.erase(id);
+        for (auto& id : on) st.enabled.insert(id);
+        ++st.changes;
+        SaveDnrState(e, st);
+        DnrSync(e);
+        return "{\"value\":null}";
+    }
+    if (op == "dnr.updateStaticRules") {
+        std::set<long long>& off = st.disabled[msg.str("rulesetId")];
+        if (const JsonValue* list = msg.get("disable")) for (auto& v : list->items) off.insert((long long)v.n);
+        if (const JsonValue* list = msg.get("enable")) for (auto& v : list->items) off.erase((long long)v.n);
+        ++st.changes;
+        SaveDnrState(e, st);
+        DnrSync(e);
+        return "{\"value\":null}";
+    }
+    if (op == "dnr.getDisabledRuleIds") {
+        std::string s = "[";
+        for (long long id : st.disabled[msg.str("rulesetId")]) { if (s.size() > 1) s += ","; s += std::to_string(id); }
+        return "{\"value\":" + s + "]}";
+    }
+    const bool session = msg.flag("session");
+    auto& rules = session ? st.sessionRules : st.dynamicRules;
+    if (op == "dnr.getRules") {
+        std::set<long long> only;
+        const JsonValue* ids = msg.get("ids");
+        const bool filter = ids && ids->isArray();
+        if (filter) for (auto& v : ids->items) only.insert((long long)v.n);
+        std::string s = "[";
+        for (auto& [id, r] : rules) if (!filter || only.count(id)) { if (s.size() > 1) s += ","; s += r; }
+        return "{\"value\":" + s + "]}";
+    }
+    if (op == "dnr.updateRules") {
+        std::set<long long> remove;
+        if (const JsonValue* list = msg.get("remove")) for (auto& v : list->items) remove.insert((long long)v.n);
+        std::vector<std::pair<long long, std::string>> next;
+        std::set<long long> ids;
+        for (auto& [id, r] : rules) if (!remove.count(id)) { next.push_back({ id, r }); ids.insert(id); }
+        if (const JsonValue* list = msg.get("add"))
+            for (auto& r : list->items) {
+                const JsonValue* idv = r.isObject() ? r.get("id") : nullptr;
+                if (!idv || idv->type != JsonValue::Number || idv->n < 1) return DnrError("Rules must have a positive integer id.");
+                const long long id = (long long)idv->n;
+                const std::string name = "Rule with id " + std::to_string(id);
+                if (!ids.insert(id).second) return DnrError(name + " does not have a unique ID.");
+                const JsonValue* a = r.get("action");
+                if (!a || a->str("type").empty()) return DnrError(name + " does not specify the action type.");
+                if (const JsonValue* c = r.get("condition"))
+                    if (!c->str("regexFilter").empty() && !DnrRegexSupported(c->str("regexFilter")))
+                        return DnrError(name + " specified a non-supported regexFilter.");
+                next.push_back({ id, r.raw });
+            }
+        rules.swap(next);
+        if (!session) WriteFileAtomic(DnrDynamicFile(e), JoinRules(rules));
+        ++st.changes;
+        DnrSync(e);
+        return "{\"value\":null}";
+    }
+    return "{\"error\":\"unknown operation\"}";
+}
+
 void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompletionListenerRef reply, std::string& answer, bool& deferred) {
     Extension* e = Find(ctx.id);
     WKTypeRef body = WKScriptMessageGetBody(message);
     if (!e || !e->info.enabled) { answer = "{\"error\":\"the extension is off\"}"; return; }
     JsonValue msg;
-    if (!body || WKGetTypeID(body) != WKStringGetTypeID() || !JsonParse(ToUtf8(WKStr((WKStringRef)body)), msg) || !msg.isObject()) {
+    // (4 levels: msg.add[i].condition.regexFilter; deeper lists such as requestDomains stay text)
+    if (!body || WKGetTypeID(body) != WKStringGetTypeID() || !JsonParseShallow(ToUtf8(WKStr((WKStringRef)body)), msg, 4) || !msg.isObject()) {
         answer = "{\"error\":\"bad message\"}";
         return;
     }
@@ -1042,7 +1514,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     if (op == "tabs.sendMessage") {
         Tab* t = TabById(msg.get("tabId"));
         if (!t || !t->page || e->scripts.empty()) { answer = kNoReceiver; return; }
-        const std::string sender = "{\"id\":" + JsonQuote(ToUtf8(e->info.id)) + ",\"url\":" + JsonQuote(ToUtf8(FileUrl(e->info.dir + L"\\"))) + "}";
+        const std::string sender = "{\"id\":" + JsonQuote(ToUtf8(e->info.id)) + ",\"url\":" + JsonQuote(ToUtf8(ExtBase(*e))) + "}";
         const int callId = NewCall(reply, 1);
         deferred = true;
         EvalInWorld(t->page, World(*e), DeliverScript(callId, messageJson, sender), (void*)(intptr_t)callId, OnTabDelivered);
@@ -1066,6 +1538,17 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         const int callId = NewCall(reply, 1);
         deferred = true;
         EvalInWorld(t->page, World(*e), script, new ScriptCall{ callId, css }, OnScriptDone);
+        return;
+    }
+    if (op == "debug.log") {
+        Log("extensions: %ls %s %s: %s", e->info.id.c_str(), msg.str("url").c_str(), msg.str("level").c_str(), msg.str("text").substr(0, 600).c_str());
+        answer = "{\"value\":null}";
+        return;
+    }
+    if (op.rfind("dnr.", 0) == 0) { answer = DnrOp(*e, msg, op); return; }
+    if (op == "scripting.registerContentScripts" || op == "scripting.getRegisteredContentScripts" ||
+        op == "scripting.unregisterContentScripts" || op == "scripting.updateContentScripts") {
+        answer = ScriptingRegistered(*e, msg, op);
         return;
     }
     if (op == "action.set") {
@@ -1138,12 +1621,19 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
 }
 
 void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void* context) {
+    const ULONGLONG started = GetTickCount64();
     std::string answer;
     bool deferred = false;
     if (!context) answer = "{\"error\":\"extension not found\"}";
     else HandleMessage(*(const HandlerCtx*)context, message, reply, answer, deferred);
+    const ULONGLONG took = GetTickCount64() - started;
+    if (took >= 30) {
+        WKTypeRef body = WKScriptMessageGetBody(message);
+        const std::string text = body && WKGetTypeID(body) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)body)) : std::string();
+        Log("extensions: slow message (%llu ms, %zu bytes in, %zu out): %.120s", took, text.size(), answer.size(), text.c_str());
+    }
     if (deferred) return;
-    WKStringRef r = WKStringCreateWithUTF8CString(answer.c_str());
+    WKStringRef r = WKStringCreateWithUTF8CStringWithLength(answer.data(), answer.size());
     WKCompletionListenerComplete(reply, r);
     WKRelease(r);
 }
@@ -1161,7 +1651,8 @@ Host& EnsureHost(const Extension& e) {
     if (!s_extPrefs) {
         s_extPrefs = WKPreferencesCreate();
         WKPreferencesSetFileAccessFromFileURLsAllowed(s_extPrefs, true);
-        WKPreferencesSetUniversalAccessFromFileURLsAllowed(s_extPrefs, true);   // fetch() to the sites it works with
+        WKPreferencesSetUniversalAccessFromFileURLsAllowed(s_extPrefs, true);
+        WKPreferencesSetWebSecurityEnabled(s_extPrefs, false);   // fetch() to the sites it works with, as Chrome lets it
     }
     h.ucc = WKUserContentControllerCreate();
     const std::string source = "(" + LoadApi() + ")(" + ExtJson(e, "extension") + ");";
@@ -1178,6 +1669,7 @@ Host& EnsureHost(const Extension& e) {
     WKPageConfigurationSetPreferences(h.conf, s_extPrefs);
     if (g_dataStore) WKPageConfigurationSetWebsiteDataStore(h.conf, g_dataStore);
     WKPageConfigurationSetUserContentController(h.conf, h.ucc);
+    SetSchemeHandler(h.conf, kFromExtensionPage);
     return h;
 }
 
@@ -1218,7 +1710,7 @@ std::wstring BackgroundUrl(const Extension& e) {
     } else return L"";
     const std::wstring file = e.info.dir + L"\\_lyra_background.html";
     WriteFileAtomic(file, html);
-    return FileUrl(file);
+    return ExtBase(e) + L"_lyra_background.html";
 }
 
 void StopBackground(const std::wstring& id) {
@@ -1586,12 +2078,29 @@ std::map<unsigned long long, TabSeen> s_tabSeen;
 
 }  // namespace
 
+void ExtensionsSetupPageConfiguration(WKPageConfigurationRef conf) { SetSchemeHandler(conf, kFromWebPage); }
+
 void ExtensionsInit() {
     CreateDirectoryW(Root().c_str(), nullptr);
+    // Extensions' files are as safe as the page's own (no mixed-content block) and not held back by a site's CSP.
+    WKStringRef scheme = WKStringCreateWithUTF8CString(ToUtf8(kExtScheme).c_str());
+    WKContextRegisterURLSchemeAsSecure(g_context, scheme);
+    WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(g_context, scheme);
+    WKRelease(scheme);
     LoadAll();
     Log("extensions: %zu installed", s_exts.size());
     AdBlockSetExtraUserScripts(AddAllScripts);
     for (const Extension& e : s_exts) StartBackground(e, InstallReason(e), true);
+    DnrSyncAll();
+}
+
+void ExtensionsDnrReady(LPARAM lParam) {
+    std::unique_ptr<DnrJob> job((DnrJob*)lParam);   // (its strings are moved on: 20 MB for a big blocker)
+    if (s_dnrGen[job->extId] != job->gen) return;          // rules changed again meanwhile
+    DnrResult& r = job->result;
+    Log("extensions: network rules of %ls: %d, converted %d, skipped %d -> %zu WebKit rules, %llu ms", job->extId.c_str(),
+        r.rules, r.converted, r.skipped, r.webkitRules, r.ms);
+    AdBlockSetExtensionRules(job->extId, std::move(r.json), std::move(r.fallback), r.hash);
 }
 
 void ExtensionsOnTabCreated(Tab* t) {
@@ -1638,6 +2147,7 @@ void ExtensionsOnTabRemoved(unsigned long long id) {
 }
 
 void ExtensionsShutdown() {
+    FlushWrites();
     for (auto& [id, h] : s_hosts) StopBackground(id);
     if (s_hostWnd) { DestroyWindow(s_hostWnd); s_hostWnd = nullptr; }
 }
@@ -1657,6 +2167,10 @@ void ExtensionRemove(const std::wstring& id) {
     Extension* e = Find(id);
     if (!e) return;
     StopBackground(id);
+    s_dnr.erase(id);
+    s_stores.erase(id);
+    s_registered.erase(id);
+    s_registeredLoaded.erase(id);
     std::error_code ec;
     fs::remove_all(e->info.dir, ec);
     Log("extensions: removed %ls", id.c_str());
@@ -1665,6 +2179,7 @@ void ExtensionRemove(const std::wstring& id) {
 }
 
 bool ExtensionInstall(const std::wstring& path, std::wstring& err, const std::function<bool(const ExtensionInfo&)>& confirm) {
+    FlushWrites();                        // (a newer version takes over the storage files)
     const std::wstring tmp = g_settingsDir + L"\\Extensions.new";
     std::error_code ec;
     fs::remove_all(tmp, ec);
@@ -1711,7 +2226,7 @@ bool ExtensionInstall(const std::wstring& path, std::wstring& err, const std::fu
         if (!confirm(probe.info)) { err.clear(); fs::remove_all(tmp, ec); return false; }
     }
     // a newer version replaces the old one but keeps its data and whether it is on
-    for (const wchar_t* keep : { L"lyra.ini", L"storage-local.json", L"storage-sync.json" })
+    for (const wchar_t* keep : { L"lyra.ini", L"storage-local.json", L"storage-sync.json", L"dnr-state.json", L"dnr-dynamic.json" })
         if (GetFileAttributesW((dir + L"\\" + keep).c_str()) != INVALID_FILE_ATTRIBUTES)
             CopyFileW((dir + L"\\" + keep).c_str(), (src + L"\\" + keep).c_str(), FALSE);
     StopBackground(id);
@@ -1724,6 +2239,10 @@ bool ExtensionInstall(const std::wstring& path, std::wstring& err, const std::fu
     }
     fs::remove_all(tmp, ec);
     Log("extensions: installed %ls %ls (%ls)", probe.info.name.c_str(), probe.info.version.c_str(), id.c_str());
+    s_dnr.erase(id);                      // read again from the files kept
+    s_stores.erase(id);
+    s_registered.erase(id);               // (registered scripts do not survive an update)
+    s_registeredLoaded.erase(id);
     LoadAll();
     if (Extension* e = Find(id)) StartBackground(*e, InstallReason(*e), false);
     Changed();
