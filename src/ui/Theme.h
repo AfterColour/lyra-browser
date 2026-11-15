@@ -26,6 +26,7 @@ struct Theme {
     Color toolbar, tabbar, tabActive, tabHover, tabBorder, sep;
     Color pill, pillHover, pillFocus;
     Color text, text2, icon, iconDis, accent, hover, pressed;
+    Color popup;                    // menus and small popups
     int   progressAlpha = 70;
 };
 extern Theme g_th;

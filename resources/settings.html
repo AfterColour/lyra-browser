@@ -247,11 +247,11 @@ const q0 = new URLSearchParams(location.search);
 
 const STR = {
   en: { search: "Search settings", results: "Search results", none: "Nothing matches", noneHint: "Try other words.", back: "Back", open: "Open",
-        night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture",
+        night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture", theme: "Theme",
         dim: "Darken", dimD: "Makes the wallpaper darker so the widgets stand out.", auto: "Automatic", free: "Free",
         autoD: "Widgets line up by themselves and close the gaps.", freeD: "Widgets stay exactly where you put them.", details: "Details" },
   ru: { search: "Поиск настроек", results: "Результаты поиска", none: "Ничего не найдено", noneHint: "Попробуйте другие слова.", back: "Назад", open: "Открыть",
-        night: "Ночное небо", aurora: "Сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка",
+        night: "Ночное небо", aurora: "Сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка", theme: "Тема",
         dim: "Затемнение", dimD: "Делает обои темнее, чтобы виджеты были заметнее.", auto: "Автоматически", free: "Свободно",
         autoD: "Виджеты выстраиваются сами и закрывают пустоты.", freeD: "Виджеты остаются ровно там, где вы их оставили.", details: "Подробнее" }
 };
@@ -529,12 +529,14 @@ function wallpaperRow(r) {
   };
   BUILTIN.forEach((id) => add(id, "wp-" + id + (id === "morning" ? " light" : ""), s()[id]));
   add("bing", "", s().bing); add("file", "", s().file);
+  if (wpParams().get("themewp")) add("theme", "", s().theme);
   const pick = (key) => {
     const c = ensureStart(), dim = c.wallpaper.dim || 0;
     if (key === "file") {
       if (!wpParams().get("custom") || c.wallpaper.kind === "file") { send("start-file"); return; }
       c.wallpaper = { kind: "file", dim };
     } else if (key === "bing") c.wallpaper = { kind: "bing", dim };
+    else if (key === "theme") c.wallpaper = { kind: "theme", dim };
     else c.wallpaper = { kind: "builtin", id: key, dim };
     mark(); saveStart();
   };
@@ -548,6 +550,7 @@ function wallpaperRow(r) {
     };
     set("bing", q.get("bing") === "1" ? dir + "bing.jpg?v=" + (q.get("bv") || 0) : "");
     set("file", q.get("custom") ? dir + encodeURIComponent(q.get("custom")) + "?v=" + (q.get("cv") || 0) : "");
+    if (tiles.theme) set("theme", q.get("themewp") ? dir + encodeURIComponent(q.get("themewp")) + "?v=" + (q.get("tv") || 0) : "");
   };
   const mark = () => {
     const w = ensureStart().wallpaper, key = w.kind === "builtin" ? w.id : w.kind;

@@ -55,7 +55,7 @@ POINT s_openPt = {};
 int s_subLevel = -1, s_subItem = -1;       // a submenu waiting to open (kTimerSub)
 std::unique_ptr<Font> s_fText, s_fKeys, s_fIcon, s_fIconSm;
 
-Color MenuBg() { return g_dark ? Color(255, 41, 43, 48) : Color(255, 255, 255, 255); }
+Color MenuBg() { return g_th.popup; }
 Color WithAlpha(const Color& c, float a) {
     return Color((BYTE)std::lround(c.GetA() * std::clamp(a, 0.f, 1.f)), c.GetR(), c.GetG(), c.GetB());
 }

@@ -22,6 +22,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
+#include "browser/VivaldiTheme.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
@@ -184,7 +185,7 @@ void BuildPages() {
         p.rows.push_back(RCards(Tr(L"Theme", L"Тема"), 0,
             { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Light", L"Светлая"), Tr(L"Dark", L"Тёмная") },
             []() { return g_prefs.themeMode; },
-            [theme](int i) { g_prefs.themeMode = i; theme(); }));
+            [theme](int i) { g_prefs.themeMode = i; if (g_prefs.vivaldiTheme) VivaldiThemeSetOn(false); theme(); }));
         p.rows.push_back(RHeader(Tr(L"Accent color", L"Акцентный цвет")));
         std::vector<Color> colors;
         colors.push_back(WindowsAccentColor());
@@ -194,7 +195,24 @@ void BuildPages() {
               Tr(L"Pink", L"Розовый"), Tr(L"Red", L"Красный"), Tr(L"Orange", L"Оранжевый"),
               Tr(L"Yellow", L"Жёлтый"), Tr(L"Green", L"Зелёный"), Tr(L"Graphite", L"Графит") },
             []() { return g_prefs.accent; },
-            [theme](int i) { g_prefs.accent = i; theme(); }));
+            [theme](int i) { g_prefs.accent = i; if (g_prefs.vivaldiTheme) VivaldiThemeSetOn(false); theme(); }));
+        p.rows.push_back(RHeader(Tr(L"Vivaldi themes", L"\u0422\u0435\u043c\u044b Vivaldi")));
+        if (VivaldiThemeGet().valid) {
+            const std::wstring name = VivaldiThemeGet().name;
+            p.rows.push_back(RToggle(name.c_str(),
+                Tr(L"Its colors for the tab strip, toolbar and menus, and its picture as the start page wallpaper.",
+                   L"\u0415\u0451 \u0446\u0432\u0435\u0442\u0430 \u0434\u043b\u044f \u043f\u0430\u043d\u0435\u043b\u0435\u0439 \u0438 \u043c\u0435\u043d\u044e, \u0430 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0430 \u2014 \u043e\u0431\u043e\u0438 \u0441\u0442\u0430\u0440\u0442\u043e\u0432\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b."),
+                &g_prefs.vivaldiTheme, []() { VivaldiThemeSetOn(g_prefs.vivaldiTheme); }));
+        }
+        p.rows.push_back(RButton(Tr(L"Find a theme", L"\u041d\u0430\u0439\u0442\u0438 \u0442\u0435\u043c\u0443"),
+            Tr(L"themes.vivaldi.net opens in a tab: \u201cDownload theme\u201d there puts the theme on in Lyra.",
+               L"\u041e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f themes.vivaldi.net: \u043a\u043d\u043e\u043f\u043a\u0430 \u00ab\u0421\u043a\u0430\u0447\u0430\u0442\u044c \u0442\u0435\u043c\u0443\u00bb \u0442\u0430\u043c \u0441\u0440\u0430\u0437\u0443 \u0432\u043a\u043b\u044e\u0447\u0438\u0442 \u0435\u0451 \u0432 Lyra."),
+            Tr(L"Open", L"\u041e\u0442\u043a\u0440\u044b\u0442\u044c"),
+            []() { CreateTab(L"https://themes.vivaldi.net/"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
+        p.rows.push_back(RButton(Tr(L"Install from a file", L"\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 \u0444\u0430\u0439\u043b\u0430"),
+            Tr(L"A theme exported from Vivaldi (.zip).", L"\u0422\u0435\u043c\u0430, \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u0430\u044f \u0438\u0437 Vivaldi (.zip)."),
+            Tr(L"Choose\x2026", L"\u0412\u044b\u0431\u0440\u0430\u0442\u044c\x2026"),
+            []() { VivaldiThemePickFile(); }));
         p.rows.push_back(RHeader(Tr(L"Toolbar", L"Панели")));
         p.rows.push_back(RSegmented(Tr(L"Toolbar size", L"Размер панелей"),
             Tr(L"Compact leaves the most room for pages.", L"Компактный оставляет больше места страницам."),

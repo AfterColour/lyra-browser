@@ -1,6 +1,7 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/ContextMenu.h"
 #include "browser/PageClients.h"
+#include "browser/VivaldiTheme.h"
 #include "browser/DevProbe.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
@@ -190,6 +191,12 @@ static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKF
         TabCtx* c = (TabCtx*)ci;
         if (c && g_hWnd && !g_closing)
             PostMessageW(g_hWnd, WM_APP_LYRA_URL, (WPARAM)c->id, (LPARAM)new std::wstring(url));
+        return;
+    }
+    // "Download theme" on themes.vivaldi.net: Lyra installs the theme instead of saving the .zip.
+    if (VivaldiThemeIsInstallUrl(url)) {
+        WKFramePolicyListenerIgnore(listener);
+        VivaldiThemeDownload(url);
         return;
     }
     // Sites the user turned ad blocking off for: the page loads without the content blockers.

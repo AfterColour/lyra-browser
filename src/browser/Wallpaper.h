@@ -13,3 +13,8 @@ void StartConfigSave(const std::string& utf8Json);
 std::wstring WallpaperParams();                       // &wpdir=..&custom=..&bing=..&bingInfo=..&wpv=..
 void WallpaperBingEnsure();                           // fetch today's picture if it is the wallpaper
 bool WallpaperPickFile();                             // false: cancelled
+// theme.<ext>: the picture of the Vivaldi theme ("" removes it); the page offers it as "theme".
+void WallpaperSetThemePicture(const std::wstring& src);
+// The wallpaper chosen in start.json ("builtin", "bing", "file", "theme"), and changing it.
+std::string StartWallpaperKind();
+void StartWallpaperSet(const std::string& kind, const std::string& id = "");

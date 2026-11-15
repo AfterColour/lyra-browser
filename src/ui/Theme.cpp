@@ -1,5 +1,6 @@
 // Lyra — цвета интерфейса, акцент, светлая/тёмная тема, оформление заголовка окна (DWM).
 #include "ui/Theme.h"
+#include "browser/VivaldiTheme.h"
 #include "ui/Crossfade.h"
 #include "ui/Chrome.h"
 #include "browser/StartPage.h"
@@ -62,6 +63,7 @@ static Theme MakeTheme(bool dark) {
         t.pressed   = Color(40, 255, 255, 255);
         t.progressAlpha = 75;
     }
+    t.popup        = dark ? Color(41, 43, 48) : Color(255, 255, 255);
     t.badgeText    = Color(255, 255, 255);
     t.closeHover   = Color(196, 43, 28);
     t.closePressed = Color(170, 38, 25);
@@ -100,6 +102,7 @@ void EnableDarkMenus() {
 }
 
 bool ResolveDark() {
+    if (VivaldiThemeOn()) return VivaldiThemeGet().dark;
     return g_prefs.themeMode == 2 || (g_prefs.themeMode == 0 && SystemUsesDarkMode());
 }
 
@@ -133,7 +136,7 @@ bool MicaSupported() {
 bool MicaActive() {
     HIGHCONTRASTW hc = { sizeof(hc) };
     if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON)) return false;
-    return g_prefs.mica && MicaSupported();
+    return g_prefs.mica && MicaSupported() && !VivaldiThemeOn();      // a theme brings its own colours
 }
 
 void ApplyBackdrop(HWND hwnd, int type, MARGINS margins) {
@@ -159,6 +162,37 @@ static Color ReadableAccent(const Color& c, bool dark) {
     return Color((BYTE)(c.GetR() * k), (BYTE)(c.GetG() * k), (BYTE)(c.GetB() * k));
 }
 
+static Color Mix(const Color& a, const Color& b, float t) {
+    auto m = [t](BYTE x, BYTE y) { return (BYTE)std::lround(x + (y - x) * t); };
+    return Color(m(a.GetR(), b.GetR()), m(a.GetG(), b.GetG()), m(a.GetB(), b.GetB()));
+}
+static Color WithAlpha(const Color& c, BYTE a) { return Color(a, c.GetR(), c.GetG(), c.GetB()); }
+static float Lum(const Color& c) { return (0.2126f * c.GetR() + 0.7152f * c.GetG() + 0.0722f * c.GetB()) / 255.f; }
+
+// A Vivaldi theme's five colours spread over Lyra's palette: background (or the accent, when the
+// theme puts it on the window) for the chrome, foreground for text and icons, highlight as the
+// accent, the accent colour for the active tab.
+static void ApplyVivaldiColors(Theme& t, const VivaldiTheme& v) {
+    const Color frame = v.accentOnWindow ? v.accent : v.bg;
+    t.frame = t.toolbar = frame;
+    t.tabbar = v.accentOnWindow ? v.accent : Mix(v.bg, Color(0, 0, 0), v.dark ? 0.25f : 0.06f);
+    t.page = v.hasWindow ? v.window : v.bg;
+    t.field = t.pill = t.pillFocus = Mix(frame, v.fg, 0.10f);
+    t.fieldBorder = t.tabBorder = Mix(frame, v.fg, 0.20f);
+    t.pillHover = Mix(frame, v.fg, 0.15f);
+    t.tabActive = (!v.accentOnWindow && std::fabs(Lum(v.accent) - Lum(frame)) > 0.04f) ? v.accent : Mix(frame, v.fg, 0.14f);
+    t.tabHover = WithAlpha(v.fg, 22);
+    t.sep = Mix(frame, v.fg, 0.12f);
+    t.text = v.fg;
+    t.text2 = Mix(v.fg, frame, 0.35f);
+    t.icon = Mix(v.fg, frame, 0.10f);
+    t.iconDis = Mix(v.fg, frame, 0.62f);
+    t.accent = v.highlight;
+    t.hover = WithAlpha(v.fg, v.dark ? 26 : 22);
+    t.pressed = WithAlpha(v.fg, v.dark ? 44 : 38);
+    t.popup = Mix(v.bg, v.fg, 0.06f);
+}
+
 void ApplyDwm(HWND hwnd) {
     if (!hwnd) return;
     BOOL d = g_dark ? TRUE : FALSE;
@@ -175,14 +209,20 @@ void ApplyDwm(HWND hwnd) {
 
 void ApplyTheme(bool dark) {
     if (g_hWnd) CrossfadeBegin();         // light/dark and accent changes dissolve too
+    const bool vivaldi = VivaldiThemeOn();
+    if (vivaldi) dark = VivaldiThemeGet().dark;
     g_dark = dark;
     g_th = MakeTheme(dark);
-    Color accent = WindowsAccentColor();
-    if (g_prefs.accent > 0 && g_prefs.accent < kAccentCount) {
-        const AccentDef& a = kAccents[g_prefs.accent];
-        accent = Color(a.r, a.g, a.b);
+    if (vivaldi) {
+        ApplyVivaldiColors(g_th, VivaldiThemeGet());
+    } else {
+        Color accent = WindowsAccentColor();
+        if (g_prefs.accent > 0 && g_prefs.accent < kAccentCount) {
+            const AccentDef& a = kAccents[g_prefs.accent];
+            accent = Color(a.r, a.g, a.b);
+        }
+        g_th.accent = ReadableAccent(accent, dark);
     }
-    g_th.accent = ReadableAccent(accent, dark);
     if (g_editBrush) DeleteObject(g_editBrush);
     g_editBrush = CreateSolidBrush(ToColorRef(g_th.pillFocus));
 

@@ -369,7 +369,7 @@ const T = {
       weather: ["Weather", "Now and the next days, for any city"], notes: ["Notes", "A small notepad, kept on this computer"],
       todo: ["To-do", "A short list of things to do"],
     },
-    walls: { night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture" },
+    walls: { night: "Night sky", aurora: "Aurora", dusk: "Dusk", ocean: "Ocean", morning: "Morning", plain: "Plain", bing: "Picture of the day", file: "Your picture", theme: "Theme" },
     wmo: { 0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Fog", 51: "Drizzle", 53: "Drizzle", 55: "Drizzle",
            61: "Rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain", 71: "Snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
            80: "Showers", 81: "Showers", 82: "Heavy showers", 85: "Snow showers", 86: "Snow showers", 95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm" },
@@ -403,7 +403,7 @@ const T = {
       weather: ["Погода", "Сейчас и на ближайшие дни, в любом городе"], notes: ["Заметки", "Маленький блокнот, хранится на этом компьютере"],
       todo: ["Задачи", "Короткий список дел"],
     },
-    walls: { night: "Ночное небо", aurora: "Северное сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка" },
+    walls: { night: "Ночное небо", aurora: "Северное сияние", dusk: "Закат", ocean: "Океан", morning: "Утро", plain: "Однотонные", bing: "Картинка дня", file: "Своя картинка", theme: "Тема" },
     wmo: { 0: "Ясно", 1: "Преимущественно ясно", 2: "Переменная облачность", 3: "Пасмурно", 45: "Туман", 48: "Туман", 51: "Морось", 53: "Морось", 55: "Морось",
            61: "Дождь", 63: "Дождь", 65: "Сильный дождь", 66: "Ледяной дождь", 67: "Ледяной дождь", 71: "Снег", 73: "Снег", 75: "Сильный снег", 77: "Снежная крупа",
            80: "Ливень", 81: "Ливень", 82: "Сильный ливень", 85: "Снегопад", 86: "Снегопад", 95: "Гроза", 96: "Гроза", 99: "Гроза" },
@@ -475,6 +475,7 @@ const BUILTIN = { night: "dark", aurora: "dark", dusk: "dark", ocean: "dark", mo
 const WPDIR = q.get("wpdir") || "";
 const customUrl = () => q.get("custom") ? WPDIR + encodeURIComponent(q.get("custom")) + "?v=" + (q.get("cv") || 0) : "";
 const bingUrl = () => q.get("bing") === "1" ? WPDIR + "bing.jpg?v=" + (q.get("bv") || 0) : "";
+const themeUrl = () => q.get("themewp") ? WPDIR + encodeURIComponent(q.get("themewp")) + "?v=" + (q.get("tv") || 0) : "";   // the Vivaldi theme's picture
 let starsMade = false;
 function applyWallpaper() {
   const wp = cfg.wallpaper, wall = $("wall");
@@ -485,7 +486,9 @@ function applyWallpaper() {
     wall.style.setProperty("--wp", "url('" + customUrl() + "')");
   } else if (wp.kind === "bing" && bingUrl()) {
     wall.style.setProperty("--wp", "url('" + bingUrl() + "')");
-  } else if (wp.kind === "bing" || wp.kind === "file") {
+  } else if (wp.kind === "theme" && themeUrl()) {
+    wall.style.setProperty("--wp", "url('" + themeUrl() + "')");
+  } else if (wp.kind === "bing" || wp.kind === "file" || wp.kind === "theme") {
     wall.className = "wp-night"; night = true;       // the picture is still on its way
   } else {
     const id = BUILTIN.hasOwnProperty(wp.id) ? wp.id : "night";
@@ -1118,6 +1121,14 @@ function renderPanel() {
     setTimeout(() => { location.href = "lyra://start-wallpaper-file"; }, 60);     // Lyra's file dialog
   });
   walls.appendChild(file);
+  if (themeUrl()) {
+    const th = el("button", "", "<span></span>");
+    th.style.backgroundImage = "url('" + themeUrl() + "')";
+    th.querySelector("span").textContent = s.walls.theme;
+    th.setAttribute("aria-pressed", String(wp.kind === "theme"));
+    th.addEventListener("click", () => pick("theme"));
+    walls.appendChild(th);
+  }
   $("dim").value = wp.dim || 0;
   $("dimValue").textContent = (wp.dim || 0) + "%";
 }

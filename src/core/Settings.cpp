@@ -62,6 +62,7 @@ void LoadSettings() {
     g_prefs.density     = std::max(0, std::min(2, geti(L"Density", 0)));
     g_prefs.tabLayout   = std::max(0, std::min(2, geti(L"TabLayout", 0)));
     g_prefs.animations  = geti(L"Animations", 1) != 0;
+    g_prefs.vivaldiTheme = geti(L"VivaldiTheme", 0) != 0;
     g_prefs.animSpeed   = std::max(25, std::min(300, geti(L"AnimationSpeed", 100)));
     g_prefs.animTabs    = geti(L"AnimateTabs", 1) != 0;
     g_prefs.animHover   = geti(L"AnimateHover", 1) != 0;
@@ -123,6 +124,7 @@ void SaveSettings() {
     puti(L"Language", g_prefs.language);
     puti(L"Theme", g_prefs.themeMode);   puti(L"AccentColor", g_prefs.accent);
     puti(L"Density", g_prefs.density);   puti(L"TabLayout", g_prefs.tabLayout);
+    puti(L"VivaldiTheme", g_prefs.vivaldiTheme);
     puti(L"Animations", g_prefs.animations); puti(L"AnimationSpeed", g_prefs.animSpeed);
     puti(L"AnimateTabs", g_prefs.animTabs);  puti(L"AnimateHover", g_prefs.animHover);
     puti(L"TabResizeDelay", g_prefs.tabResizeDelay);

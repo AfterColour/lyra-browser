@@ -36,7 +36,7 @@ static PHit s_hover, s_down;
 constexpr float kW = 380, kHeadH = 46, kRowH = 60, kFootH = 44, kPad = 16;
 constexpr int kMaxRows = 6;
 
-static Color PopupBg() { return g_dark ? Color(37, 39, 44) : Color(255, 255, 255); }
+static Color PopupBg() { return g_th.popup; }
 
 static int RowCount() { return (int)std::min<size_t>(kMaxRows, DownloadsList().size()); }
 static float BodyH() { return RowCount() ? kRowH * (float)RowCount() : kRowH; }
