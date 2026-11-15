@@ -248,6 +248,8 @@ static void OnCommand(const std::wstring& url) {
         WallpaperBingEnsure();
         RefreshStartPages();
         Push();
+    } else if (command == L"lyra://settings-perf") {     // the page's smoothness log
+        Log("page frames: page=settings&%ls", query.c_str());
     } else if (command == L"lyra://settings-theme") {
         CustomThemeActivate(Param(query, L"id"));
         Push();
@@ -293,6 +295,7 @@ static std::wstring SettingsPageUrl() {
     if (slash != std::wstring::npos) url = url.substr(0, slash + 1) + L"settings.html";
     url += L"?dark=" + std::wstring(ResolveDark() ? L"1" : L"0");
     url += L"&ru=" + std::wstring(UiRussian() ? L"1" : L"0");
+    if (GetEnvironmentVariableW(L"LYRA_PAGE_PERF", nullptr, 0)) url += L"&perf=1";   // the page's smoothness log
     return url;
 }
 

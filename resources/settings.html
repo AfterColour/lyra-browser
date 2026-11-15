@@ -293,6 +293,38 @@ function send(cmd, params) {
   document.body.appendChild(f);
   setTimeout(() => f.remove(), 1500);
 }
+
+// ---- smoothness log --------------------------------------------------------------------------
+// Only with perf=1 in the address (Lyra adds it when started with LYRA_PAGE_PERF=1): while the user
+// scrolls, moves the pointer or types (and 1.5 s after), the frames are timed; every few seconds a
+// summary of the slow ones goes to tabs.log ("page frames"). Off otherwise: timing every frame keeps
+// the page drawing at the display's full rate.
+(() => {
+  if (!new URLSearchParams(location.search).has("perf")) return;
+  let raf = 0, last = 0, until = 0, cause = "", frames = 0, slow = 0, worst = 0, causes = {};
+  const tick = (t) => {
+    if (last) {
+      const d = t - last;
+      frames++;
+      if (d > 25) { slow++; worst = Math.max(worst, d); causes[cause] = (causes[cause] || 0) + 1; }
+    }
+    last = t;
+    if (performance.now() < until && !document.hidden) raf = requestAnimationFrame(tick);
+    else { raf = 0; last = 0; }
+  };
+  const poke = (e) => {
+    cause = e.type;
+    until = performance.now() + 1500;
+    if (!raf) { last = 0; raf = requestAnimationFrame(tick); }
+  };
+  ["pointermove", "pointerdown", "wheel", "keydown", "scroll", "input"].forEach((n) => addEventListener(n, poke, { passive: true, capture: true }));
+  setInterval(() => {
+    if (!slow) { frames = 0; return; }
+    const by = Object.keys(causes).map((k) => k + ":" + causes[k]).join(" ");
+    ((q) => send("perf", q))("frames=" + frames + "&slow=" + slow + "&worst=" + Math.round(worst) + "&during=" + encodeURIComponent(by));
+    frames = slow = worst = 0; causes = {};
+  }, 5000);
+})();
 const setRow = (p, r, v) => { if (p >= 0) send("set", "p=" + p + "&r=" + r + "&v=" + v); };   // p < 0: a row of the page itself
 
 // ---- icons ---------------------------------------------------------------------------------------

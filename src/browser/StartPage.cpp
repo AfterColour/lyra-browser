@@ -78,6 +78,7 @@ std::wstring StartPageUrl(bool welcome) {
     url += L"?" + LookParams();
     url += L"&layout=" + std::to_wstring(g_prefs.tabLayout);
     url += L"&density=" + std::to_wstring(g_prefs.density);
+    if (GetEnvironmentVariableW(L"LYRA_PAGE_PERF", nullptr, 0)) url += L"&perf=1";   // the page's smoothness log
     url += L"&fav=" + std::wstring(g_prefs.startFavorites ? L"1" : L"0");
     url += L"&freq=" + std::wstring(g_prefs.startFrequent ? L"1" : L"0");
     if (g_prefs.startFrequent && !welcome)
@@ -469,6 +470,10 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
         }
         HistoryClearSince(since);
         RefreshHistoryPages();
+        return;
+    }
+    if (command == L"lyra://perf") {                 // the page's smoothness log (resources/start.html)
+        Log("page frames: %ls", query.c_str());
         return;
     }
     if (command == L"lyra://start-save") {           // the start page's layout changed
