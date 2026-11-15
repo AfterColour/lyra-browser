@@ -25,6 +25,8 @@
 #include "ui/DownloadsPopup.h"
 #include "ui/TabTransition.h"
 #include "browser/Downloads.h"
+#include "browser/Extensions.h"
+#include "browser/ExtensionStore.h"
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
@@ -601,6 +603,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Reload:   ReloadActive(true); break;
             case Hit::Star:     BookmarkCurrentPage(); break;
             case Hit::Downloads: DownloadsPopupToggle(); break;
+            case Hit::ExtAction: ExtensionButtonClick(up.index); break;
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
@@ -623,6 +626,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_RBUTTONUP: {                                 // the tab menu
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (h.kind == Hit::ExtAction) { ExtensionButtonMenu(h.index); return 0; }
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
@@ -803,6 +807,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_THEME:
         CustomThemeDownloaded(wParam, lParam);
+        return 0;
+    case WM_APP_EXT_INSTALL:
+        ExtensionStoreMessage(wParam, lParam);
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);

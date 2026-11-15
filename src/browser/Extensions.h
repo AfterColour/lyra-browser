@@ -11,10 +11,15 @@
 //     hidden, and options pages in a window of their own: the full chrome.* API there, with
 //     messages between the parts (runtime / tabs.sendMessage), tabs, windows, scripting,
 //     alarms, storage.onChanged everywhere; tab events.
-// The toolbar button and its pop-up, ports (runtime.connect) and web requests come next.
+//   - ports (runtime.connect / tabs.connect) between all of these;
+//   - the toolbar button: icon, title, badge (per tab or for all), its pop-up (sized to its
+//     content, like Chrome's) or action.onClicked.
+// Installing from Chrome Web Store / Firefox Add-ons and .crx / .xpi links: browser/ExtensionStore.h.
+// Web requests (webRequest, declarativeNetRequest) come next.
 #pragma once
 
 #include "common/Platform.h"
+#include <functional>
 
 struct ExtensionInfo {
     std::wstring id, dir, name, version, description;
@@ -23,6 +28,8 @@ struct ExtensionInfo {
     int manifestVersion = 2;
     int contentScripts = 0;                 // how many content_scripts entries
     std::vector<std::wstring> permissions;  // as listed (permissions + host_permissions)
+    bool hasAction = false;                 // a toolbar button (manifest action / browser_action / page_action)
+    bool pinned = true;                     // ...shown on the toolbar
 };
 
 void ExtensionsInit();                                  // after AdBlockInit (the shared user content controller)
@@ -31,11 +38,27 @@ void ExtensionSetEnabled(const std::wstring& id, bool enabled);
 void ExtensionRemove(const std::wstring& id);
 bool ExtensionInstallFromFile();                        // Settings: .crx / .zip / .xpi (file dialog)
 bool ExtensionInstallFromFolder();                      // Settings: an unpacked extension (folder dialog)
-bool ExtensionInstall(const std::wstring& path, std::wstring& err);   // file or folder
+bool ExtensionInstall(const std::wstring& path, std::wstring& err,  // a folder, .crx, .xpi or .zip
+                      const std::function<bool(const ExtensionInfo&)>& confirm = {});  // false: not installed, err empty
 void ExtensionsShutdown();
 // What the extensions' tabs API reports (tabs.onCreated / onUpdated / onActivated / onRemoved).
 struct Tab;
 void ExtensionsOnTabCreated(Tab* t);
 void ExtensionsOnTabUpdated(Tab* t);                     // loading, address or title changed
 void ExtensionsOnTabActivated(Tab* t);
+void ExtensionsOnTabCommitted(Tab* t);            // a new page: its scripts' ports are gone
 void ExtensionsOnTabRemoved(unsigned long long id);
+
+// The extensions' toolbar buttons (left of the downloads button), in order, for the open tab.
+struct ExtensionButton {
+    std::wstring id, title, badge;
+    Bitmap* icon = nullptr;                 // kept by Extensions.cpp; null: no icon it could read
+    Color badgeColor = Color(0, 0, 0, 0);   // alpha 0: the accent colour
+    Color badgeTextColor = Color(255, 255, 255, 255);
+    bool enabled = true;
+    bool open = false;                      // its pop-up is showing
+};
+std::vector<ExtensionButton> ExtensionButtons();
+void ExtensionButtonClick(int index);       // index into ExtensionButtons() and g_L.ext
+void ExtensionButtonMenu(int index);        // right click: options, hide, manage, remove
+void ExtensionSetPinned(const std::wstring& id, bool pinned);

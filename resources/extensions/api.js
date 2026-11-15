@@ -78,8 +78,11 @@ function (EXT) {
       else if (args.length > 1 && args[0] === EXT.id) args.shift();
       return withCallback(call("runtime.sendMessage", { message: args[0] === undefined ? null : args[0] }), callback);
     },
-    connect() {
-      return { name: "", sender: undefined, onMessage: makeEvent(), onDisconnect: makeEvent(), postMessage() {}, disconnect() {} };
+    // A long-lived connection to the extension's other side (runtime.onConnect there).
+    connect(...args) {
+      if (typeof args[0] === "string") args.shift();     // (an extension id: only this one)
+      const info = args[0] || {};
+      return openPort({ name: info.name || "" });
     },
     openOptionsPage: (cb) => withCallback(call("runtime.openOptionsPage"), cb),
     setUninstallURL: stub(undefined),
@@ -109,6 +112,78 @@ function (EXT) {
   globalThis.__lyraEvent = (name, args) => {
     const ev = events[name];
     if (ev) ev._fire(...(args || []));
+    return true;
+  };
+
+  // ---- ports (runtime.connect, tabs.connect) ---------------------------------------------------
+  // Lyra gives each port an id and carries its messages: __lyraPortConnect (a new port for
+  // runtime.onConnect here), __lyraPortMessage, __lyraPortDisconnect (the other side has gone).
+  const ports = new Map(), early = new Map();
+  const makePort = (name, sender) => {
+    const port = {
+      name: String(name || ""),
+      sender,
+      onMessage: makeEvent(),
+      onDisconnect: makeEvent(),
+      _id: null, _queue: [], _closed: false,
+      postMessage(message) {
+        if (port._closed) throw new Error("Attempting to use a disconnected port object");
+        const m = message === undefined ? null : message;
+        if (port._id === null) port._queue.push(m);
+        else call("port.post", { id: port._id, message: m }).catch(() => {});
+      },
+      disconnect() {
+        if (port._closed) return;
+        port._closed = true;
+        if (port._id !== null) { ports.delete(port._id); call("port.close", { id: port._id }).catch(() => {}); }
+      },
+    };
+    return port;
+  };
+  const portGone = (port, error) => {
+    if (port._closed) return;
+    port._closed = true;
+    ports.delete(port._id);
+    if (error) runtime.lastError = { message: error };
+    try { port.onDisconnect._fire(port); } finally { runtime.lastError = undefined; }
+  };
+  // (what arrives for a port before this side knows its id: kept a moment)
+  const later = (id, f) => {
+    if (!early.has(id)) { early.set(id, []); setTimeout(() => early.delete(id), 10000); }
+    early.get(id).push(f);
+  };
+  const openPort = (args) => {
+    const port = makePort(args.name);
+    call("port.connect", args).then((r) => {
+      port._id = r.id;
+      if (port._closed) { call("port.close", { id: r.id }).catch(() => {}); return; }
+      ports.set(r.id, port);
+      for (const m of port._queue.splice(0)) call("port.post", { id: r.id, message: m }).catch(() => {});
+      if (r.alone) { setTimeout(() => portGone(port, "Could not establish connection. Receiving end does not exist."), 0); return; }
+      const missed = early.get(r.id);
+      early.delete(r.id);
+      if (missed) for (const f of missed) f();
+    }, (e) => setTimeout(() => portGone(port, String(e && e.message || e)), 0));
+    return port;
+  };
+  globalThis.__lyraPortConnect = (id, name, sender) => {
+    if (!runtime.onConnect._listeners.size) { call("port.close", { id }).catch(() => {}); return true; }
+    const port = makePort(name, sender);
+    port._id = id;
+    ports.set(id, port);
+    runtime.onConnect._fire(port);
+    return true;
+  };
+  globalThis.__lyraPortMessage = (id, message) => {
+    const port = ports.get(id);
+    if (!port) later(id, () => globalThis.__lyraPortMessage(id, message));
+    else if (!port._closed) port.onMessage._fire(message, port);
+    return true;
+  };
+  globalThis.__lyraPortDisconnect = (id) => {
+    const port = ports.get(id);
+    if (port) portGone(port);
+    else later(id, () => globalThis.__lyraPortDisconnect(id));
     return true;
   };
 
@@ -193,6 +268,7 @@ function (EXT) {
         const cb = splitCallback(args);
         return withCallback(call("tabs.reload", { tabId: typeof args[0] === "number" ? args[0] : null }), cb);
       },
+      connect: (tabId, info) => openPort({ tabId, name: (info || {}).name || "" }),
       sendMessage: (tabId, message, ...rest) => {
         const cb = splitCallback(rest);
         return withCallback(call("tabs.sendMessage", { tabId, message: message === undefined ? null : message }), cb);
@@ -244,22 +320,57 @@ function (EXT) {
       removeCSS: stub(undefined),
       registerContentScripts: stub(undefined), getRegisteredContentScripts: stub([]), unregisterContentScripts: stub(undefined), updateContentScripts: stub(undefined),
     };
-    // The toolbar button: kept by Lyra (the button itself comes with the pop-ups).
+    // The toolbar button: Lyra draws it (icon, badge, title) and opens its pop-up. Values with a
+    // tabId are for that tab only.
+    const actionSet = (what, tabId, value, cb) => withCallback(call("action.set", { what, details: { tabId, value: value === undefined ? null : value } }), cb);
+    const actionGet = (what, d, cb) => {
+      if (isFunction(d)) { cb = d; d = {}; }
+      return withCallback(call("action.get", { what, details: d || {} }), cb);
+    };
+    const relative = (p) => typeof p === "string" ? p.split(EXT.base).join("").replace(/^\.?\//, "") : p;
+    // ImageData (or { size: ImageData }) to plain pixels Lyra can read.
+    const packImage = (img) => {
+      if (img && !img.data && typeof img === "object") {
+        const sizes = Object.keys(img).map(Number).filter((n) => n > 0).sort((a, b) => a - b);
+        img = img[sizes.find((n) => n >= 32) || sizes[sizes.length - 1]];
+      }
+      if (!img || !img.data || !img.width || !img.height) return null;
+      const d = img.data;
+      let bin = "";
+      for (let i = 0; i < d.length; i += 0x8000) bin += String.fromCharCode.apply(null, Array.prototype.slice.call(d, i, i + 0x8000));
+      return { width: img.width, height: img.height, rgba: btoa(bin) };
+    };
+    const iconValue = (d) => {
+      if (d.imageData) return packImage(d.imageData);
+      const p = d.path;
+      if (p && typeof p === "object") { const o = {}; for (const k of Object.keys(p)) o[k] = relative(p[k]); return o; }
+      return relative(p);
+    };
+    const enabler = (value) => (tabId, cb) => {
+      if (isFunction(tabId)) { cb = tabId; tabId = undefined; }
+      return actionSet("enabled", typeof tabId === "number" ? tabId : undefined, value, cb);
+    };
     const action = {
-      setBadgeText: (d, cb) => withCallback(call("action.set", { what: "badgeText", details: d || {} }), cb),
-      getBadgeText: stub(""),
-      setBadgeBackgroundColor: (d, cb) => withCallback(call("action.set", { what: "badgeColor", details: d || {} }), cb),
-      getBadgeBackgroundColor: stub([0, 0, 0, 0]),
-      setBadgeTextColor: stub(undefined),
-      setTitle: (d, cb) => withCallback(call("action.set", { what: "title", details: d || {} }), cb),
-      getTitle: stub(""),
-      setIcon: stub(undefined),
-      setPopup: (d, cb) => withCallback(call("action.set", { what: "popup", details: d || {} }), cb),
-      getPopup: stub(""),
-      enable: stub(undefined), disable: stub(undefined), isEnabledByDefault: stub(true),
+      setBadgeText: (d, cb) => { d = d || {}; return actionSet("badgeText", d.tabId, d.text == null ? null : String(d.text), cb); },
+      getBadgeText: (d, cb) => actionGet("badgeText", d, cb),
+      setBadgeBackgroundColor: (d, cb) => { d = d || {}; return actionSet("badgeColor", d.tabId, d.color, cb); },
+      getBadgeBackgroundColor: (d, cb) => actionGet("badgeColor", d, cb),
+      setBadgeTextColor: (d, cb) => { d = d || {}; return actionSet("badgeTextColor", d.tabId, d.color, cb); },
+      getBadgeTextColor: (d, cb) => actionGet("badgeTextColor", d, cb),
+      setTitle: (d, cb) => { d = d || {}; return actionSet("title", d.tabId, d.title == null ? null : String(d.title), cb); },
+      getTitle: (d, cb) => actionGet("title", d, cb),
+      setIcon: (d, cb) => { d = d || {}; return actionSet("icon", d.tabId, iconValue(d), cb); },
+      setPopup: (d, cb) => { d = d || {}; return actionSet("popup", d.tabId, d.popup == null ? null : relative(String(d.popup)), cb); },
+      getPopup: (d, cb) => actionGet("popup", d, cb),
+      enable: enabler(true), disable: enabler(false),
+      show: enabler(true), hide: enabler(false),            // (pageAction)
+      isEnabled: (d, cb) => actionGet("enabled", typeof d === "number" ? { tabId: d } : d, cb),
+      isShown: (d, cb) => actionGet("enabled", d, cb),
+      isEnabledByDefault: stub(true),
       getUserSettings: stub({ isOnToolbar: true }),
-      openPopup: stub(undefined),
+      openPopup: (o, cb) => withCallback(call("action.openPopup"), isFunction(o) ? o : cb),
       onClicked: makeEvent("action.onClicked"),
+      onUserSettingsChanged: makeEvent(),
     };
     // Alarms live in the background page, which Lyra keeps running.
     const alarmTimers = new Map(), alarmInfo = new Map();
@@ -327,6 +438,7 @@ function (EXT) {
       sidePanel: { setOptions: stub(undefined), setPanelBehavior: stub(undefined), open: stub(undefined) },
     });
     api.extension.getViews = () => [window];
+    if (window.top === window) window.close = () => { call("window.close").catch(() => {}); };
   }
 
   globalThis.chrome = api;

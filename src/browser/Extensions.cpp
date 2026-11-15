@@ -2,6 +2,7 @@
 #include "browser/Extensions.h"
 #include "app/Log.h"
 #include "browser/AdBlock.h"
+#include "browser/ExtensionStore.h"
 #include "core/Constants.h"
 #include "core/Json.h"
 #include "core/Localization.h"
@@ -9,8 +10,11 @@
 #include "core/StringUtils.h"
 #include "browser/TabManager.h"
 #include "browser/WebContext.h"
+#include "ui/Chrome.h"
 #include "ui/MainWindow.h"
+#include "ui/Menu.h"
 #include "ui/Theme.h"
+#include "ui/settings/SettingsPages.h"
 #include "ui/settings/SettingsWindow.h"
 #include <WebKit/WKPageFullScreenClient.h>      // WKCompletionListenerComplete
 #include <WebKit/WKUserContentControllerRef.h>
@@ -20,6 +24,7 @@
 #include <WebKit/WKFrameInfoRef.h>
 #include <shobjidl.h>
 #include <filesystem>
+#include <functional>
 #include <set>
 
 namespace fs = std::filesystem;
@@ -37,6 +42,11 @@ struct Extension {
     ExtensionInfo info;
     std::string manifestText, messagesText = "{}", lang = "en";
     std::vector<ContentScript> scripts;
+    bool hasAction = false;
+    std::string defaultIcon;             // JSON: the button's default_icon (or the extension's icons)
+    std::wstring defaultTitle;
+    std::string defaultPopup;            // relative to the extension
+    std::string optionsPage;
 };
 
 std::vector<Extension> s_exts;
@@ -187,6 +197,21 @@ bool LoadExtension(const std::wstring& dir, Extension& ext, std::string* error) 
             if (i.second.isString() && size > best && SafeRelative(ToWide(i.second.s))) { best = size; info.icon = dir + L"\\" + Native(ToWide(i.second.s)); }
         }
     }
+    for (const char* key : { "action", "browser_action", "page_action" }) {
+        const JsonValue* a = m.get(key);
+        if (!a || !a->isObject()) continue;
+        ext.hasAction = true;
+        if (const JsonValue* i = a->get("default_icon")) ext.defaultIcon = i->raw;
+        ext.defaultTitle = ToWide(Localize(a->str("default_title"), messages));
+        ext.defaultPopup = a->str("default_popup");
+        break;
+    }
+    if (ext.hasAction && ext.defaultIcon.empty()) if (const JsonValue* icons = m.get("icons")) ext.defaultIcon = icons->raw;
+    if (ext.defaultTitle.empty()) ext.defaultTitle = info.name;
+    ext.optionsPage = m.str("options_page");
+    if (ext.optionsPage.empty()) if (const JsonValue* ui = m.get("options_ui")) ext.optionsPage = ui->str("page");
+    info.hasAction = ext.hasAction;
+    info.pinned = GetPrivateProfileIntW(L"Lyra", L"Toolbar", 1, (dir + L"\\lyra.ini").c_str()) != 0;
     for (const char* key : { "permissions", "host_permissions", "optional_permissions" }) {
         if (const JsonValue* p = m.get(key))
             for (auto& v : p->items) if (v.isString()) info.permissions.push_back(ToWide(v.s));
@@ -345,6 +370,7 @@ const char kCssInjector[] =
 
 // Called by AdBlock.cpp whenever it rebuilds the shared list of user scripts.
 void AddAllScripts(WKUserContentControllerRef controller) {
+    ExtensionStoreAddScript(controller);   // "Add to Lyra" on the stores' pages
     LoadApi();
     if (s_apiJs.empty()) return;
     for (Extension& e : s_exts) {
@@ -379,6 +405,7 @@ void AddAllScripts(WKUserContentControllerRef controller) {
 void Changed() {
     AdBlockRefreshUserScripts();          // pages loaded from now on get the new set
     SettingsRefresh();
+    if (g_hWnd) RefreshLayout();          // the toolbar buttons
 }
 
 // ---- installing ---------------------------------------------------------------------------------
@@ -448,7 +475,6 @@ struct Host {
     bool atStartup = false;                  // started with the browser: runtime.onStartup
     std::vector<std::string> queued;         // scripts for the background page before it has loaded
     std::vector<HWND> windows;               // options pages and such (ExtWindow)
-    std::map<std::string, std::string> action;   // badge text, colour, title, pop-up set by the extension
 };
 std::map<std::wstring, std::unique_ptr<Host>> s_hosts;
 HWND s_hostWnd = nullptr;
@@ -484,11 +510,12 @@ void Eval(WKPageRef page, const std::string& script) {
     WKRelease(s);
 }
 
-void EvalInWorld(WKPageRef page, const std::wstring& world, const std::string& script, void* context, WKPageEvaluateJavaScriptFunction callback) {
+void EvalInWorld(WKPageRef page, const std::wstring& world, const std::string& script, void* context, WKPageEvaluateJavaScriptFunction callback,
+                 WKFrameInfoRef frame = nullptr) {
     if (!page) { if (callback) callback(nullptr, nullptr, context); return; }
     WKStringRef s = WKStringCreateWithUTF8CStringWithLength(script.data(), script.size());
     WKStringRef w = WKStringCreateWithUTF8CString(ToUtf8(world).c_str());
-    WKPageEvaluateJavaScriptInFrameInWorld(page, nullptr, s, w, context, callback);
+    WKPageEvaluateJavaScriptInFrameInWorld(page, frame, s, w, context, callback);
     WKRelease(w);
     WKRelease(s);
 }
@@ -663,6 +690,203 @@ std::string Files(const Extension& e, const JsonValue* files) {
     return code;
 }
 
+// ---- long-lived connections: runtime.connect / tabs.connect --------------------------------------
+// One side opens a port; the other side is every page of the extension that listens for
+// runtime.onConnect (or the extension's scripts in a tab). Messages from the opener go to all the
+// receivers, a receiver's go to the opener. A side that goes away (its page navigates, closes,
+// or it disconnects) is heard by the other side as onDisconnect.
+struct PortEnd {
+    WKPageRef page = nullptr;
+    WKFrameInfoRef frame = nullptr;      // a content script in a subframe (retained); null: the main frame
+    bool content = false;                // the extension's scripts in a web page (else one of its own pages)
+    unsigned long long tabId = 0;        // content: the tab
+};
+struct Port { std::wstring ext; PortEnd opener; std::vector<PortEnd> receivers; };
+std::map<int, Port> s_ports;
+int s_nextPort = 1;
+
+void ReleaseEnd(PortEnd& end) {
+    if (end.frame) WKRelease(end.frame);
+    end.frame = nullptr;
+}
+
+void ToEnd(const std::wstring& extId, const PortEnd& end, const std::string& script, void* context = nullptr,
+           WKPageEvaluateJavaScriptFunction callback = nullptr) {
+    Extension* e = Find(extId);
+    if (!e || !end.page) { if (callback) callback(nullptr, nullptr, context); return; }
+    if (end.content) { EvalInWorld(end.page, World(*e), script, context, callback, end.frame); return; }
+    auto it = s_hosts.find(extId);
+    if (it != s_hosts.end() && it->second->bgPage == end.page) ToBackground(*it->second, script);
+    else Eval(end.page, script);
+}
+
+std::string PortScript(const char* fn, int id, const std::string& args) {
+    return std::string("globalThis.") + fn + " ? " + fn + "(" + std::to_string(id) + (args.empty() ? "" : "," + args) + ") : false";
+}
+
+// The opener has gone: every receiver hears it.
+void ClosePort(int id) {
+    auto it = s_ports.find(id);
+    if (it == s_ports.end()) return;
+    Port p = std::move(it->second);
+    s_ports.erase(it);
+    for (auto& r : p.receivers) { ToEnd(p.ext, r, PortScript("__lyraPortDisconnect", id, "")); ReleaseEnd(r); }
+    ReleaseEnd(p.opener);
+}
+
+// A receiver has gone: once none is left the opener hears it.
+void DropReceiver(int id, size_t index) {
+    auto it = s_ports.find(id);
+    if (it == s_ports.end() || index >= it->second.receivers.size()) return;
+    Port& p = it->second;
+    ReleaseEnd(p.receivers[index]);
+    p.receivers.erase(p.receivers.begin() + (ptrdiff_t)index);
+    if (!p.receivers.empty()) return;
+    ToEnd(p.ext, p.opener, PortScript("__lyraPortDisconnect", id, ""));
+    ReleaseEnd(p.opener);
+    s_ports.erase(it);
+}
+
+// Sides that are no longer there (a page that navigated or closed): the other sides hear it.
+void DropPorts(const std::function<bool(const PortEnd&)>& gone) {
+    std::vector<int> ids;
+    for (auto& [id, p] : s_ports) ids.push_back(id);
+    for (int id : ids) {
+        auto it = s_ports.find(id);
+        if (it == s_ports.end()) continue;
+        if (gone(it->second.opener)) { it->second.opener.page = nullptr; ClosePort(id); continue; }
+        for (size_t i = it->second.receivers.size(); i-- > 0;) {
+            auto jt = s_ports.find(id);
+            if (jt == s_ports.end()) break;
+            if (gone(jt->second.receivers[i])) { jt->second.receivers[i].page = nullptr; DropReceiver(id, i); }
+        }
+    }
+}
+
+// The extension stops: its ports go without a word (its scripts lose the bridge with it).
+void ForgetPorts(const std::wstring& extId) {
+    for (auto it = s_ports.begin(); it != s_ports.end();) {
+        if (it->second.ext != extId) { ++it; continue; }
+        ReleaseEnd(it->second.opener);
+        for (auto& r : it->second.receivers) ReleaseEnd(r);
+        it = s_ports.erase(it);
+    }
+}
+
+void OnPortReached(WKTypeRef result, WKErrorRef, void* context) {
+    const int id = (int)(intptr_t)context;
+    const bool ok = result && WKGetTypeID(result) == WKBooleanGetTypeID() && WKBooleanGetValue((WKBooleanRef)result);
+    if (ok) return;
+    auto it = s_ports.find(id);
+    if (it == s_ports.end()) return;
+    for (size_t i = 0; i < it->second.receivers.size(); ++i)
+        if (it->second.receivers[i].content) { it->second.receivers[i].page = nullptr; DropReceiver(id, i); return; }
+}
+
+Tab* TabOfPage(WKPageRef page) {
+    for (auto& t : g_tabs) if (page && t->page == page) return Visible(*t) ? t.get() : nullptr;
+    return nullptr;
+}
+
+// runtime.MessageSender for a message (or a port) from `fromPage`.
+std::string SenderJson(const Extension& e, bool content, WKPageRef fromPage, bool mainFrame) {
+    std::string sender = "{\"id\":" + JsonQuote(ToUtf8(e.info.id));
+    if (content) {
+        if (Tab* tab = TabOfPage(fromPage))
+            sender += ",\"tab\":" + TabJson(*tab) + ",\"url\":" + JsonQuote(ToUtf8(tab->url)) + ",\"frameId\":" + (mainFrame ? "0" : "1") +
+                      ",\"origin\":" + JsonQuote(ToUtf8(tab->url));
+    } else sender += ",\"url\":" + JsonQuote(ToUtf8(FileUrl(e.info.dir + L"\\")));
+    return sender + "}";
+}
+
+std::vector<WKPageRef> ExtensionPages(Host* host, WKPageRef except) {
+    std::vector<WKPageRef> pages;
+    if (!host) return pages;
+    if (host->bgPage && host->bgPage != except) pages.push_back(host->bgPage);
+    for (HWND w : host->windows)
+        if (WKViewRef v = (WKViewRef)GetWindowLongPtrW(w, GWLP_USERDATA))
+            if (WKViewGetPage(v) != except) pages.push_back(WKViewGetPage(v));
+    return pages;
+}
+
+// ---- the toolbar button's state: badge, title, icon, pop-up, for one tab or for all ----------------
+struct ActionState {
+    std::map<std::string, std::string> values;   // "badgeText", "badgeText:<tab id>", ... -> JSON
+    std::unique_ptr<Bitmap> icon;
+    std::string iconFor;                         // what the icon was made from
+};
+std::map<std::wstring, ActionState> s_actions;
+
+const std::string* ActionValue(ActionState& a, const std::string& what, unsigned long long tab) {
+    if (tab) if (auto it = a.values.find(what + ":" + std::to_string(tab)); it != a.values.end()) return &it->second;
+    if (auto it = a.values.find(what); it != a.values.end()) return &it->second;
+    return nullptr;
+}
+
+std::string JsonString(const std::string* raw) {
+    JsonValue v;
+    return raw && JsonParse(*raw, v) && v.isString() ? v.s : std::string();
+}
+
+// A CSS colour (#rgb, #rrggbb, #rrggbbaa, rgb() / rgba(), a few names) or [r, g, b, a].
+bool ParseColor(const std::string& raw, Color& out) {
+    JsonValue v;
+    if (!JsonParse(raw, v)) return false;
+    if (v.type == JsonValue::Array && v.items.size() >= 3) {
+        auto ch = [&](size_t i, int def) { return i < v.items.size() && v.items[i].type == JsonValue::Number ? std::clamp((int)v.items[i].n, 0, 255) : def; };
+        out = Color((BYTE)ch(3, 255), (BYTE)ch(0, 0), (BYTE)ch(1, 0), (BYTE)ch(2, 0));
+        return true;
+    }
+    if (!v.isString()) return false;
+    std::string s = v.s;
+    for (auto& ch : s) ch = (char)tolower((unsigned char)ch);
+    static const std::pair<const char*, const char*> names[] = {
+        { "red", "#ff0000" }, { "green", "#008000" }, { "blue", "#0000ff" }, { "black", "#000000" }, { "white", "#ffffff" },
+        { "gray", "#808080" }, { "grey", "#808080" }, { "orange", "#ffa500" }, { "yellow", "#ffff00" }, { "purple", "#800080" },
+        { "transparent", "#00000000" } };
+    for (auto& n : names) if (s == n.first) s = n.second;
+    if (s.size() > 1 && s[0] == '#') {
+        std::string hex = s.substr(1);
+        if (hex.size() == 3 || hex.size() == 4) { std::string x; for (char ch : hex) { x += ch; x += ch; } hex = x; }
+        if (hex.size() != 6 && hex.size() != 8) return false;
+        const unsigned long n = strtoul(hex.c_str(), nullptr, 16);
+        if (hex.size() == 6) out = Color(255, (BYTE)(n >> 16), (BYTE)(n >> 8), (BYTE)n);
+        else out = Color((BYTE)n, (BYTE)(n >> 24), (BYTE)(n >> 16), (BYTE)(n >> 8));
+        return true;
+    }
+    int r = 0, g = 0, b = 0;
+    float a = 1;
+    if (sscanf_s(s.c_str(), "rgba(%d,%d,%d,%f)", &r, &g, &b, &a) >= 3 || sscanf_s(s.c_str(), "rgb(%d,%d,%d)", &r, &g, &b) == 3) {
+        out = Color((BYTE)std::clamp((int)(a * 255.f), 0, 255), (BYTE)std::clamp(r, 0, 255), (BYTE)std::clamp(g, 0, 255), (BYTE)std::clamp(b, 0, 255));
+        return true;
+    }
+    return false;
+}
+
+std::string ColorJson(const Color& c) {
+    return "[" + std::to_string(c.GetR()) + "," + std::to_string(c.GetG()) + "," + std::to_string(c.GetB()) + "," + std::to_string(c.GetA()) + "]";
+}
+
+// The pop-up of a toolbar button (one at a time).
+struct PopupState {
+    HWND wnd = nullptr;
+    std::wstring id;
+    RectF anchor;                        // its button, in the main window's client coordinates
+    bool shown = false;                  // placed and visible (it waits off-screen for its size)
+    DWORD closedAt = 0;
+    std::wstring closedId;
+};
+PopupState s_popup;
+
+WKPageRef PopupPage() {
+    WKViewRef v = s_popup.wnd ? (WKViewRef)GetWindowLongPtrW(s_popup.wnd, GWLP_USERDATA) : nullptr;
+    return v ? WKViewGetPage(v) : nullptr;
+}
+void PlacePopup(int cssW, int cssH);
+void ClosePopup();
+void OpenPopup(const Extension& e, const std::wstring& url, const RectF& anchor);
+bool ButtonAnchor(const std::wstring& id, RectF& anchor);
+
 HWND OpenExtensionWindow(Host& h, const std::wstring& url, const std::wstring& title);
 
 void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompletionListenerRef reply, std::string& answer, bool& deferred) {
@@ -676,8 +900,9 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     }
     const std::string op = msg.str("op");
     WKPageRef fromPage = nullptr;
+    WKFrameInfoRef fromFrame = WKScriptMessageGetFrameInfo(message);
     bool mainFrame = true;
-    if (WKFrameInfoRef f = WKScriptMessageGetFrameInfo(message)) { fromPage = WKFrameInfoGetPage(f); mainFrame = WKFrameInfoGetIsMainFrame(f); }
+    if (fromFrame) { fromPage = WKFrameInfoGetPage(fromFrame); mainFrame = WKFrameInfoGetIsMainFrame(fromFrame); }
     Host* host = s_hosts.count(e->info.id) ? s_hosts[e->info.id].get() : nullptr;
 
     if (op.rfind("storage.", 0) == 0) {
@@ -693,20 +918,8 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     if (op == "runtime.sendMessage") {
         // From a page's scripts: to the background page and the extension's windows. From one
         // of those: to the others.
-        std::string sender = "{\"id\":" + JsonQuote(ToUtf8(e->info.id));
-        if (ctx.content) {
-            Tab* tab = nullptr;
-            for (auto& t : g_tabs) if (t->page == fromPage) tab = t.get();
-            if (tab && Visible(*tab)) sender += ",\"tab\":" + TabJson(*tab) + ",\"url\":" + JsonQuote(ToUtf8(tab->url)) + ",\"frameId\":" + (mainFrame ? "0" : "1");
-        } else sender += ",\"url\":" + JsonQuote(ToUtf8(FileUrl(e->info.dir + L"\\")));
-        sender += "}";
-        std::vector<WKPageRef> targets;
-        if (host) {
-            if (host->bgPage && host->bgPage != fromPage) targets.push_back(host->bgPage);
-            for (HWND w : host->windows)
-                if (WKViewRef v = (WKViewRef)GetWindowLongPtrW(w, GWLP_USERDATA))
-                    if (WKViewGetPage(v) != fromPage) targets.push_back(WKViewGetPage(v));
-        }
+        const std::string sender = SenderJson(*e, ctx.content, fromPage, mainFrame);
+        std::vector<WKPageRef> targets = ExtensionPages(host, fromPage);
         if (targets.empty()) { answer = kNoReceiver; return; }
         const int callId = NewCall(reply, (int)targets.size());
         deferred = true;
@@ -714,6 +927,58 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
             const std::string script = DeliverScript(callId, messageJson, sender);
             if (p == host->bgPage) ToBackground(*host, script); else Eval(p, script);
         }
+        return;
+    }
+    if (op == "port.connect") {
+        PortEnd opener;
+        opener.page = fromPage;
+        opener.content = ctx.content;
+        if (ctx.content) {
+            if (Tab* t = TabOfPage(fromPage)) opener.tabId = t->id;
+            if (fromFrame && !mainFrame) { opener.frame = fromFrame; WKRetain(fromFrame); }
+        }
+        const JsonValue* tabId = msg.get("tabId");
+        const bool toTab = tabId && tabId->type == JsonValue::Number;
+        std::vector<PortEnd> receivers;
+        if (toTab) {
+            Tab* t = ctx.content ? nullptr : TabById(tabId);
+            if (t && t->page && !e->scripts.empty()) { PortEnd r; r.page = t->page; r.content = true; r.tabId = t->id; receivers.push_back(r); }
+        } else {
+            for (WKPageRef p : ExtensionPages(host, fromPage)) { PortEnd r; r.page = p; receivers.push_back(r); }
+        }
+        const int id = s_nextPort++;
+        if (receivers.empty()) {
+            ReleaseEnd(opener);
+            answer = "{\"value\":{\"id\":" + std::to_string(id) + ",\"alone\":true}}";
+            return;
+        }
+        const std::string sender = toTab ? SenderJson(*e, false, nullptr, true) : SenderJson(*e, ctx.content, fromPage, mainFrame);
+        s_ports[id] = Port{ e->info.id, opener, receivers };
+        const std::string script = PortScript("__lyraPortConnect", id, JsonQuote(msg.str("name")) + "," + sender);
+        for (const PortEnd& r : receivers) {
+            if (r.content) ToEnd(e->info.id, r, script, (void*)(intptr_t)id, OnPortReached);
+            else ToEnd(e->info.id, r, script);
+        }
+        answer = "{\"value\":{\"id\":" + std::to_string(id) + "}}";
+        return;
+    }
+    if (op == "port.post" || op == "port.close") {
+        const int id = msg.get("id") ? (int)msg.get("id")->n : 0;
+        answer = "{\"value\":null}";
+        auto it = s_ports.find(id);
+        if (it == s_ports.end()) return;
+        Port& p = it->second;
+        auto same = [&](const PortEnd& end) { return end.page == fromPage && end.content == ctx.content; };
+        const bool fromOpener = same(p.opener);
+        if (op == "port.post") {
+            const std::string script = PortScript("__lyraPortMessage", id, messageJson);
+            if (fromOpener) { for (const PortEnd& r : std::vector<PortEnd>(p.receivers)) ToEnd(p.ext, r, script); }
+            else ToEnd(p.ext, p.opener, script);
+            return;
+        }
+        if (fromOpener) { p.opener.page = nullptr; ClosePort(id); return; }
+        for (size_t i = 0; i < p.receivers.size(); ++i)
+            if (same(p.receivers[i])) { p.receivers[i].page = nullptr; DropReceiver(id, i); break; }
         return;
     }
     if (op == "message.reply") {
@@ -804,21 +1069,67 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         return;
     }
     if (op == "action.set") {
-        if (host) {
-            const JsonValue* d = msg.get("details");
-            const std::string what = msg.str("what");
-            if (d) for (const char* key : { "text", "color", "title", "popup" }) if (const JsonValue* v = d->get(key)) host->action[what] = v->raw;
+        const JsonValue* d = msg.get("details");
+        const std::string what = msg.str("what");
+        if (!what.empty() && d) {
+            ActionState& a = s_actions[e->info.id];
+            const JsonValue* tab = d->get("tabId");
+            const std::string key = what + (tab && tab->type == JsonValue::Number ? ":" + std::to_string((unsigned long long)tab->n) : std::string());
+            const JsonValue* v = d->get("value");
+            if (!v || v->type == JsonValue::Null) a.values.erase(key);
+            else a.values[key] = v->raw;
+            InvalidateChrome();
         }
         answer = "{\"value\":null}";
         return;
     }
+    if (op == "action.get") {
+        const JsonValue* d = msg.get("details");
+        const std::string what = msg.str("what");
+        const JsonValue* tab = d ? d->get("tabId") : nullptr;
+        const std::string* v = ActionValue(s_actions[e->info.id], what, tab && tab->type == JsonValue::Number ? (unsigned long long)tab->n : 0);
+        std::string value = "null";
+        if (what == "badgeColor" || what == "badgeTextColor") {
+            Color col = what == "badgeColor" ? g_th.accent : Color(255, 255, 255, 255);
+            if (v) ParseColor(*v, col);
+            value = ColorJson(col);
+        } else if (what == "popup") {
+            const std::string popup = v ? JsonString(v) : e->defaultPopup;
+            value = JsonQuote(popup.empty() ? std::string() : ToUtf8(ResolveExtensionUrl(*e, popup)));
+        } else if (v) value = *v;
+        else if (what == "title") value = JsonQuote(ToUtf8(e->defaultTitle));
+        else if (what == "enabled") value = "true";
+        else if (what == "badgeText") value = "\"\"";
+        answer = "{\"value\":" + value + "}";
+        return;
+    }
+    if (op == "action.openPopup") {
+        Tab* t = ActiveTab();
+        const std::string* v = ActionValue(s_actions[e->info.id], "popup", t ? t->id : 0);
+        const std::string popup = v ? JsonString(v) : e->defaultPopup;
+        RectF anchor;
+        if (popup.empty() || !ButtonAnchor(e->info.id, anchor)) { answer = "{\"error\":\"The extension has no pop-up on the toolbar.\"}"; return; }
+        OpenPopup(*e, ResolveExtensionUrl(*e, popup), anchor);
+        answer = "{\"value\":null}";
+        return;
+    }
+    if (op == "popup.size") {
+        if (s_popup.wnd && fromPage && PopupPage() == fromPage)
+            PlacePopup(msg.get("w") ? (int)msg.get("w")->n : 0, msg.get("h") ? (int)msg.get("h")->n : 0);
+        answer = "{\"value\":null}";
+        return;
+    }
+    if (op == "window.close") {
+        if (s_popup.wnd && fromPage && PopupPage() == fromPage) ClosePopup();
+        else if (host)
+            for (HWND w : host->windows)
+                if (WKViewRef v = (WKViewRef)GetWindowLongPtrW(w, GWLP_USERDATA)) if (WKViewGetPage(v) == fromPage) PostMessageW(w, WM_CLOSE, 0, 0);
+        answer = "{\"value\":null}";
+        return;
+    }
     if (op == "runtime.openOptionsPage") {
-        JsonValue m;
-        JsonParse(e->manifestText, m);
-        std::string page = m.str("options_page");
-        if (const JsonValue* ui = m.get("options_ui")) if (page.empty()) page = ui->str("page");
-        if (page.empty() || !host) { answer = "{\"error\":\"This extension has no options page.\"}"; return; }
-        OpenExtensionWindow(*host, ResolveExtensionUrl(*e, page), e->info.name);
+        if (e->optionsPage.empty() || !host) { answer = "{\"error\":\"This extension has no options page.\"}"; return; }
+        OpenExtensionWindow(*host, ResolveExtensionUrl(*e, e->optionsPage), e->info.name);
         answer = "{\"value\":null}";
         return;
     }
@@ -914,6 +1225,7 @@ void StopBackground(const std::wstring& id) {
     auto it = s_hosts.find(id);
     if (it == s_hosts.end()) return;
     Host& h = *it->second;
+    ForgetPorts(id);
     for (HWND w : std::vector<HWND>(h.windows)) DestroyWindow(w);
     if (h.bgView) {
         HWND v = WKViewGetWindow(h.bgView);
@@ -973,6 +1285,19 @@ std::wstring InstallReason(const Extension& e) {
 }
 
 // ---- options pages and such: a window of their own -------------------------------------------
+void ForgetExtensionWindow(HWND h, WKViewRef view) {
+    if (view) { WKPageRef page = WKViewGetPage(view); DropPorts([page](const PortEnd& end) { return !end.content && end.page == page; }); }
+    for (auto& [id, host] : s_hosts) host->windows.erase(std::remove(host->windows.begin(), host->windows.end(), h), host->windows.end());
+    // The page's own window (a child) is destroyed only after this WM_DESTROY of its frame; it
+    // still uses its WebView then, so it goes first and the WebView is let go after (as tabs do).
+    if (view) {
+        SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+        HWND viewWnd = WKViewGetWindow(view);
+        if (viewWnd && IsWindow(viewWnd)) DestroyWindow(viewWnd);
+        WKRelease(view);
+    }
+}
+
 LRESULT CALLBACK ExtWindowProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     WKViewRef view = (WKViewRef)GetWindowLongPtrW(h, GWLP_USERDATA);
     switch (m) {
@@ -983,8 +1308,7 @@ LRESULT CALLBACK ExtWindowProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (view) SetFocus(WKViewGetWindow(view));
         return 0;
     case WM_DESTROY:
-        for (auto& [id, host] : s_hosts) host->windows.erase(std::remove(host->windows.begin(), host->windows.end(), h), host->windows.end());
-        if (view) { SetWindowLongPtrW(h, GWLP_USERDATA, 0); WKRelease(view); }
+        ForgetExtensionWindow(h, view);
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -1020,6 +1344,240 @@ HWND OpenExtensionWindow(Host& h, const std::wstring& url, const std::wstring& t
     WKRelease(u);
     ShowWindow(wnd, SW_SHOW);
     return wnd;
+}
+
+// ---- the toolbar button: its icon and its pop-up ------------------------------------------------
+std::string Base64Decode(const std::string& in) {
+    std::string out;
+    int val = 0, bits = -8;
+    for (unsigned char ch : in) {
+        int d;
+        if (ch >= 'A' && ch <= 'Z') d = ch - 'A';
+        else if (ch >= 'a' && ch <= 'z') d = ch - 'a' + 26;
+        else if (ch >= '0' && ch <= '9') d = ch - '0' + 52;
+        else if (ch == '+' || ch == '-') d = 62;
+        else if (ch == '/' || ch == '_') d = 63;
+        else continue;
+        val = ((val << 6) | d) & 0xFFFFFF;
+        bits += 6;
+        if (bits >= 0) { out.push_back((char)((val >> bits) & 0xFF)); bits -= 8; }
+    }
+    return out;
+}
+
+// A PNG (or other picture GDI+ reads) from memory, as a bitmap of its own (not tied to the stream).
+std::unique_ptr<Bitmap> ImageFromBytes(const std::string& data) {
+    if (data.empty()) return nullptr;
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, data.size());
+    if (!mem) return nullptr;
+    memcpy(GlobalLock(mem), data.data(), data.size());
+    GlobalUnlock(mem);
+    IStream* stream = nullptr;
+    if (FAILED(CreateStreamOnHGlobal(mem, TRUE, &stream))) { GlobalFree(mem); return nullptr; }
+    std::unique_ptr<Bitmap> out;
+    {
+        std::unique_ptr<Bitmap> loaded(Bitmap::FromStream(stream));
+        if (loaded && loaded->GetLastStatus() == Ok && loaded->GetWidth() > 0 && loaded->GetHeight() > 0) {
+            const int w = (int)loaded->GetWidth(), h = (int)loaded->GetHeight();
+            out = std::make_unique<Bitmap>(w, h, PixelFormat32bppPARGB);
+            Graphics g(out.get());
+            g.DrawImage(loaded.get(), 0, 0, w, h);
+        }
+    }
+    stream->Release();
+    return out;
+}
+
+// The button's icon from what the manifest or setIcon gave: a path, { size: path }, or pixels
+// ({ width, height, rgba: base64 }, from api.js).
+std::unique_ptr<Bitmap> IconFromValue(const Extension& e, const std::string& raw, int px) {
+    JsonValue v;
+    if (raw.empty() || !JsonParse(raw, v)) return nullptr;
+    if (v.isObject() && v.get("rgba")) {
+        const int w = v.get("width") ? (int)v.get("width")->n : 0, h = v.get("height") ? (int)v.get("height")->n : 0;
+        const std::string rgba = Base64Decode(v.str("rgba"));
+        if (w <= 0 || h <= 0 || w > 512 || h > 512 || rgba.size() < (size_t)w * h * 4) return nullptr;
+        auto bmp = std::make_unique<Bitmap>(w, h, PixelFormat32bppARGB);
+        Rect r(0, 0, w, h);
+        BitmapData d;
+        if (bmp->LockBits(&r, ImageLockModeWrite, PixelFormat32bppARGB, &d) != Ok) return nullptr;
+        for (int y = 0; y < h; ++y) {
+            BYTE* dst = (BYTE*)d.Scan0 + (ptrdiff_t)y * d.Stride;
+            const BYTE* src = (const BYTE*)rgba.data() + (size_t)y * w * 4;
+            for (int x = 0; x < w; ++x, dst += 4, src += 4) { dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3]; }
+        }
+        bmp->UnlockBits(&d);
+        return bmp;
+    }
+    std::string rel;
+    if (v.isString()) rel = v.s;
+    else if (v.isObject()) {
+        int bestSize = -1;          // the smallest at least `px`, else the largest
+        for (auto& m : v.members) {
+            if (!m.second.isString()) continue;
+            const int size = atoi(m.first.c_str());
+            const bool better = bestSize < 0 || (size >= px && (bestSize < px || size < bestSize)) || (bestSize < px && size > bestSize);
+            if (better) { bestSize = size; rel = m.second.s; }
+        }
+    }
+    if (rel.rfind("./", 0) == 0) rel.erase(0, 2);
+    while (!rel.empty() && rel[0] == '/') rel.erase(0, 1);
+    if (rel.empty() || !SafeRelative(ToWide(rel))) return nullptr;
+    return ImageFromBytes(ReadText(e.info.dir + L"\\" + Native(ToWide(rel)), 4u << 20));
+}
+
+// Measures the pop-up's page (its natural width, at most 800 x 600 as in Chrome) and tells Lyra.
+const char kPopupMeasure[] = R"JS((() => {
+  if (window.__lyraPopup) return;
+  window.__lyraPopup = true;
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lyraExt;
+  if (!bridge) return;
+  let last = "";
+  const measure = () => {
+    const de = document.documentElement, body = document.body;
+    if (!de) return;
+    const keep = de.style.width;
+    de.style.width = "max-content";
+    const r = de.getBoundingClientRect();
+    let h = r.height;
+    if (document.compatMode === "BackCompat" && body) {
+      h = 0;
+      for (const ch of body.children) h = Math.max(h, ch.getBoundingClientRect().bottom);
+      h += parseFloat(getComputedStyle(body).marginBottom) || 0;
+    }
+    const w = Math.ceil(r.width);
+    de.style.width = keep;
+    h = Math.ceil(h);
+    const key = w + "x" + h;
+    if (key === last) return;
+    last = key;
+    bridge.postMessage(JSON.stringify({ op: "popup.size", w, h }));
+  };
+  measure();
+  try { const ro = new ResizeObserver(() => measure()); ro.observe(document.documentElement); if (document.body) ro.observe(document.body); } catch (e) {}
+  new MutationObserver((records) => {
+    if (records.every((x) => x.type === "attributes" && x.target === document.documentElement && x.attributeName === "style")) return;
+    measure();
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  for (const t of [50, 200, 600, 1500]) setTimeout(measure, t);
+})())JS";
+
+void OnPopupLoaded(WKPageRef page, WKNavigationRef, WKTypeRef, const void*) { Eval(page, kPopupMeasure); }
+
+LRESULT CALLBACK PopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    WKViewRef view = (WKViewRef)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (m) {
+    case WM_SIZE:
+        if (view) { RECT r; GetClientRect(h, &r); SetWindowPos(WKViewGetWindow(view), nullptr, 0, 0, r.right, r.bottom, SWP_NOZORDER); }
+        return 0;
+    case WM_SETFOCUS:
+        if (view) SetFocus(WKViewGetWindow(view));
+        return 0;
+    case WM_ACTIVATE:
+        // Another window of Lyra or another app came forward: the pop-up goes (not for windows
+        // of its own, such as a <select>'s list).
+        if (LOWORD(w) == WA_INACTIVE && s_popup.shown && h == s_popup.wnd) {
+            for (HWND to = (HWND)l; to; to = GetWindow(to, GW_OWNER)) if (to == h) return 0;
+            PostMessageW(h, WM_CLOSE, 0, 0);
+        }
+        return 0;
+    case WM_TIMER:                       // no size came: a usual one
+        KillTimer(h, 1);
+        if (h == s_popup.wnd && !s_popup.shown) PlacePopup(360, 420);
+        return 0;
+    case WM_CLOSE:
+        if (h == s_popup.wnd) ClosePopup(); else DestroyWindow(h);
+        return 0;
+    case WM_DESTROY:
+        if (h == s_popup.wnd) {
+            s_popup.closedAt = GetTickCount();
+            s_popup.closedId = s_popup.id;
+            s_popup.wnd = nullptr;
+            s_popup.shown = false;
+            InvalidateChrome();
+        }
+        ForgetExtensionWindow(h, view);
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+void OpenPopup(const Extension& e, const std::wstring& url, const RectF& anchor) {
+    if (s_popup.wnd) ClosePopup();
+    Host& h = EnsureHost(e);
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.style = CS_DROPSHADOW;
+        wc.lpfnWndProc = PopupProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"LyraExtensionPopup";
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    // It lays out at the largest size off-screen until the page says how big it is.
+    HWND wnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"LyraExtensionPopup", e.info.name.c_str(), WS_POPUP, -32000, -32000,
+                               (int)S(800), (int)S(600), g_hWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!wnd) return;
+    const DWORD round = 2;                               // DWMWCP_ROUND (Windows 11)
+    DwmSetWindowAttribute(wnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
+    const BOOL dark = g_dark;
+    DwmSetWindowAttribute(wnd, kDwmDarkMode, &dark, sizeof(dark));
+    RECT r;
+    GetClientRect(wnd, &r);
+    WKViewRef view = WKViewCreate(r, h.conf, wnd);
+    if (!view) { DestroyWindow(wnd); return; }
+    SetWindowLongPtrW(wnd, GWLP_USERDATA, (LONG_PTR)view);
+    WKViewSetIsInWindow(view, true);
+    h.windows.push_back(wnd);
+    s_popup.wnd = wnd;
+    s_popup.id = e.info.id;
+    s_popup.anchor = anchor;
+    s_popup.shown = false;
+    WKPageRef page = WKViewGetPage(view);
+    WKPageNavigationClientV0 nc = {};
+    nc.base.version = 0;
+    nc.didFinishNavigation = OnPopupLoaded;
+    WKPageSetPageNavigationClient(page, &nc.base);
+    WKURLRef u = WKURLCreateWithUTF8CString(ToUtf8(url).c_str());
+    WKPageLoadURL(page, u);
+    WKRelease(u);
+    ShowWindow(wnd, SW_SHOWNOACTIVATE);
+    SetTimer(wnd, 1, 1500, nullptr);
+    InvalidateChrome();
+    Log("extensions: pop-up of %ls", e.info.id.c_str());
+}
+
+void PlacePopup(int cssW, int cssH) {
+    if (!s_popup.wnd || !g_hWnd) return;
+    const int w = (int)std::ceil(S((float)std::clamp(cssW, 25, 800))), h = (int)std::ceil(S((float)std::clamp(cssH, 25, 600)));
+    POINT a = { (LONG)s_popup.anchor.GetRight(), (LONG)(s_popup.anchor.GetBottom() + S(6)) };
+    ClientToScreen(g_hWnd, &a);
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST), &mi);
+    int x = a.x + (int)S(4) - w;
+    x = std::max((int)mi.rcWork.left + 4, std::min(x, (int)mi.rcWork.right - w - 4));
+    const int y = std::max((int)mi.rcWork.top, std::min((int)a.y, (int)mi.rcWork.bottom - h - 4));
+    SetWindowPos(s_popup.wnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+    if (!s_popup.shown) {
+        s_popup.shown = true;
+        KillTimer(s_popup.wnd, 1);
+        SetForegroundWindow(s_popup.wnd);
+        SetFocus(s_popup.wnd);
+    }
+}
+
+void ClosePopup() {
+    if (s_popup.wnd) DestroyWindow(s_popup.wnd);       // (WM_DESTROY forgets it)
+}
+
+bool ButtonAnchor(const std::wstring& id, RectF& anchor) {
+    const std::vector<ExtensionButton> buttons = ExtensionButtons();
+    for (size_t i = 0; i < buttons.size() && i < g_L.ext.size(); ++i)
+        if (buttons[i].id == id) { anchor = g_L.ext[i]; return true; }
+    return false;
 }
 
 // ---- tab events ---------------------------------------------------------------------------------
@@ -1059,8 +1617,22 @@ void ExtensionsOnTabActivated(Tab* t) {
     Broadcast("tabs.onActivated", "[{\"tabId\":" + std::to_string(t->id) + ",\"windowId\":1}]");
 }
 
+void ExtensionsOnTabCommitted(Tab* t) {
+    if (!t || s_ports.empty()) return;
+    const unsigned long long id = t->id;
+    DropPorts([id](const PortEnd& end) { return end.content && end.tabId == id; });
+}
+
 void ExtensionsOnTabRemoved(unsigned long long id) {
     s_tabSeen.erase(id);
+    const std::string suffix = ":" + std::to_string(id);    // the buttons' settings for that tab
+    for (auto& [eid, a] : s_actions)
+        for (auto it = a.values.begin(); it != a.values.end();) {
+            const std::string& k = it->first;
+            if (k.size() > suffix.size() && k.compare(k.size() - suffix.size(), std::string::npos, suffix) == 0) it = a.values.erase(it);
+            else ++it;
+        }
+    if (!s_ports.empty()) DropPorts([id](const PortEnd& end) { return end.content && end.tabId == id; });
     if (s_hosts.empty()) return;
     Broadcast("tabs.onRemoved", "[" + std::to_string(id) + ",{\"windowId\":1,\"isWindowClosing\":false}]");
 }
@@ -1092,7 +1664,7 @@ void ExtensionRemove(const std::wstring& id) {
     Changed();
 }
 
-bool ExtensionInstall(const std::wstring& path, std::wstring& err) {
+bool ExtensionInstall(const std::wstring& path, std::wstring& err, const std::function<bool(const ExtensionInfo&)>& confirm) {
     const std::wstring tmp = g_settingsDir + L"\\Extensions.new";
     std::error_code ec;
     fs::remove_all(tmp, ec);
@@ -1134,6 +1706,10 @@ bool ExtensionInstall(const std::wstring& path, std::wstring& err) {
         JsonParse(ReadText(src + L"\\_locales\\" + ToWide(m.str("default_locale")) + L"\\messages.json", 4u << 20), defaultMessages);
     const std::wstring id = MakeId(m, Localize(m.str("name", "Extension"), defaultMessages));
     const std::wstring dir = Root() + L"\\" + id;
+    if (confirm) {
+        probe.info.id = id;
+        if (!confirm(probe.info)) { err.clear(); fs::remove_all(tmp, ec); return false; }
+    }
     // a newer version replaces the old one but keeps its data and whether it is on
     for (const wchar_t* keep : { L"lyra.ini", L"storage-local.json", L"storage-sync.json" })
         if (GetFileAttributesW((dir + L"\\" + keep).c_str()) != INVALID_FILE_ATTRIBUTES)
@@ -1192,3 +1768,111 @@ static bool InstallPicked(bool folder) {
 
 bool ExtensionInstallFromFile() { return InstallPicked(false); }
 bool ExtensionInstallFromFolder() { return InstallPicked(true); }
+
+// ---- the toolbar buttons -------------------------------------------------------------------------
+std::vector<ExtensionButton> ExtensionButtons() {
+    std::vector<ExtensionButton> out;
+    Tab* t = ActiveTab();
+    const unsigned long long tab = t ? t->id : 0;
+    const int px = std::max(16, (int)std::lround(S(16)));
+    for (Extension& e : s_exts) {
+        if (!e.info.enabled || !e.hasAction || !e.info.pinned) continue;
+        ActionState& a = s_actions[e.info.id];
+        ExtensionButton b;
+        b.id = e.info.id;
+        const std::string* icon = ActionValue(a, "icon", tab);
+        const std::string iconRaw = icon ? *icon : e.defaultIcon;
+        const std::string key = iconRaw + "@" + std::to_string(px);
+        if (a.iconFor != key) {
+            a.icon = IconFromValue(e, iconRaw, px);
+            if (!a.icon && !e.info.icon.empty()) a.icon = ImageFromBytes(ReadText(e.info.icon, 4u << 20));
+            a.iconFor = key;
+        }
+        b.icon = a.icon.get();
+        const std::string* title = ActionValue(a, "title", tab);
+        b.title = title ? ToWide(JsonString(title)) : e.defaultTitle;
+        if (b.title.empty()) b.title = e.info.name;
+        b.badge = ToWide(JsonString(ActionValue(a, "badgeText", tab)));
+        if (b.badge.size() > 4) b.badge.resize(4);
+        if (const std::string* c = ActionValue(a, "badgeColor", tab)) ParseColor(*c, b.badgeColor);
+        if (const std::string* c = ActionValue(a, "badgeTextColor", tab)) ParseColor(*c, b.badgeTextColor);
+        if (const std::string* en = ActionValue(a, "enabled", tab)) b.enabled = *en != "false";
+        b.open = s_popup.wnd && s_popup.id == e.info.id;
+        out.push_back(std::move(b));
+    }
+    return out;
+}
+
+void ExtensionButtonClick(int index) {
+    const std::vector<ExtensionButton> buttons = ExtensionButtons();
+    if (index < 0 || index >= (int)buttons.size() || index >= (int)g_L.ext.size()) return;
+    Extension* e = Find(buttons[index].id);
+    if (!e || !buttons[index].enabled) return;
+    if (s_popup.wnd) {
+        const bool same = s_popup.id == e->info.id;
+        ClosePopup();
+        if (same) return;
+    } else if (s_popup.closedId == e->info.id && GetTickCount() - s_popup.closedAt < 300) {
+        return;                          // this click already closed it (the main window came forward)
+    }
+    Tab* t = ActiveTab();
+    const std::string* v = ActionValue(s_actions[e->info.id], "popup", t ? t->id : 0);
+    const std::string popup = v ? JsonString(v) : e->defaultPopup;
+    if (!popup.empty()) { OpenPopup(*e, ResolveExtensionUrl(*e, popup), g_L.ext[index]); return; }
+    auto it = s_hosts.find(e->info.id);
+    if (it == s_hosts.end() || !it->second->bgPage) return;
+    const std::string tabJson = t && Visible(*t) ? TabJson(*t) : "null";
+    ToBackground(*it->second, "globalThis.__lyraEvent && __lyraEvent('action.onClicked',[" + tabJson + "])");
+}
+
+void ExtensionButtonMenu(int index) {
+    const std::vector<ExtensionButton> buttons = ExtensionButtons();
+    if (index < 0 || index >= (int)buttons.size() || index >= (int)g_L.ext.size()) return;
+    Extension* e = Find(buttons[index].id);
+    if (!e) return;
+    const std::wstring id = e->info.id;
+    enum { kName = 1, kOptions, kHide, kManage, kRemove };
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING | MF_GRAYED, kName, e->info.name.c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    if (!e->optionsPage.empty()) AppendMenuW(m, MF_STRING, kOptions, Tr(L"Options", L"Параметры"));
+    AppendMenuW(m, MF_STRING, kHide, Tr(L"Hide from the toolbar", L"Убрать с панели"));
+    AppendMenuW(m, MF_STRING, kManage, Tr(L"Manage extension", L"Управление расширением"));
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, kRemove, Tr(L"Remove from Lyra\x2026", L"Удалить из Lyra\x2026"));
+    MenuSetIcon(m, kOptions, L"\uE713");
+    MenuSetIcon(m, kHide, L"\uE77A");
+    MenuSetIcon(m, kManage, L"\uE943");
+    MenuSetIcon(m, kRemove, L"\uE74D");
+    const RectF& r = g_L.ext[index];
+    POINT pt = { (LONG)r.GetRight(), (LONG)(r.GetBottom() + S(4)) };
+    ClientToScreen(g_hWnd, &pt);
+    const int cmd = MenuTrack(m, TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
+    DestroyMenu(m);
+    e = Find(id);
+    if (!e) return;
+    switch (cmd) {
+    case kOptions: OpenExtensionWindow(EnsureHost(*e), ResolveExtensionUrl(*e, e->optionsPage), e->info.name); break;
+    case kHide: ExtensionSetPinned(id, false); break;
+    case kManage:
+        for (size_t k = 0; k < s_infos.size(); ++k)
+            if (s_infos[k].id == id) SettingsOpenPage(SettingsExtensionPage(k));
+        break;
+    case kRemove:
+        if (MessageBoxW(g_hWnd, (std::wstring(Tr(L"Remove the extension \x201C", L"Удалить расширение \x00AB")) + e->info.name +
+                                 Tr(L"\x201D? Its settings are deleted too.", L"\x00BB? Его настройки тоже удалятся.")).c_str(),
+                        kAppName, MB_YESNO | MB_ICONQUESTION) == IDYES)
+            ExtensionRemove(id);
+        break;
+    }
+}
+
+void ExtensionSetPinned(const std::wstring& id, bool pinned) {
+    for (auto& i : s_infos) if (i.id == id) i.pinned = pinned;
+    Extension* e = Find(id);
+    if (!e) return;
+    e->info.pinned = pinned;
+    WritePrivateProfileStringW(L"Lyra", L"Toolbar", pinned ? L"1" : L"0", (e->info.dir + L"\\lyra.ini").c_str());
+    SettingsRefresh();
+    if (g_hWnd) RefreshLayout();
+}

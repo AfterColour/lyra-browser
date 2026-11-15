@@ -13,6 +13,7 @@
 #include "browser/Reader.h"
 #include "ui/WindowFrame.h"
 #include "browser/Downloads.h"
+#include "browser/Extensions.h"
 #include "browser/Favicons.h"
 #include "browser/Passwords.h"
 #include "core/Localization.h"
@@ -177,6 +178,14 @@ static void OpenInsertGap(Layout& L) {
     }
 }
 
+// The extensions' buttons, right to left from `trail`; returns where they begin.
+static float PlaceExtButtons(Layout& L, float trail, float by, float btn, float gap) {
+    const size_t n = std::min<size_t>(ExtensionButtons().size(), 8);
+    L.ext.resize(n);
+    for (size_t i = 0; i < n; ++i) L.ext[i] = RectF(trail - (float)(n - i) * (btn + gap), by, btn, btn);
+    return n ? L.ext[0].X : trail;
+}
+
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
     const float w = (float)clientW;
@@ -197,7 +206,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.fwd  = RectF(edge + btn + gap, by, btn, btn);
         L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
         if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float trail = dl ? L.downloads.X : L.more.X;
+        const float trail = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap);
 
         // Tabs between "forward" and "+": inactive tabs up to 150 px wide, the active tab (the
         // address field) takes the rest, up to 860 px. Many tabs shrink the inactive ones first.
@@ -266,7 +275,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.reloadInPill = false;
         L.more   = RectF(w - edge - btn, by, btn, btn);
         if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float pl = L.reload.GetRight() + S(8), pr = (dl ? L.downloads.X : L.more.X) - S(8);
+        const float pl = L.reload.GetRight() + S(8), pr = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap) - S(8);
         L.pill = RectF(std::floor(pl), strip + std::floor((bar - tabH) / 2), std::floor(std::max(S(80), pr - pl)), tabH);
         PlaceStar(L);
     } else {   // vertical
@@ -278,7 +287,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         L.fwd  = RectF(edge + btn + gap, by, btn, btn);
         L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
         if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float pl = L.fwd.GetRight() + S(12), pr = (dl ? L.downloads.X : L.more.X) - S(12);
+        const float pl = L.fwd.GetRight() + S(12), pr = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap) - S(12);
         const float pw = std::max(S(120), std::min(pr - pl, S(640)));
         float px = std::floor(w / 2 - pw / 2);
         px = std::max(pl, std::min(px, pr - pw));
@@ -638,6 +647,7 @@ Hit HitTest(int px, int py) {
         if (L.fwd.Contains(x, y))      return MakeHit(Hit::Forward);
         if (L.more.Contains(x, y))     return MakeHit(Hit::More);
         if (L.downloads.Width > 0 && L.downloads.Contains(x, y)) return MakeHit(Hit::Downloads);
+        for (size_t i = 0; i < L.ext.size(); ++i) if (L.ext[i].Contains(x, y)) return MakeHit(Hit::ExtAction, (int)i);
         if (L.mode != kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
         if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
@@ -857,6 +867,45 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 const float t = (float)(GetTickCount() % 1200) / 1200.f;
                 const float sw = bw * 0.35f, sx = track.X + (bw - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
                 FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
+            }
+        }
+    }
+    // Extensions' buttons: the icon (greyed while off for this tab), the badge in its corner.
+    if (!L.ext.empty()) {
+        const std::vector<ExtensionButton> buttons = ExtensionButtons();
+        for (size_t i = 0; i < L.ext.size() && i < buttons.size(); ++i) {
+            const RectF& r = L.ext[i];
+            const ExtensionButton& b = buttons[i];
+            const Hit hit = MakeHit(Hit::ExtAction, (int)i);
+            hoverFill(r, hit, dwn(Hit::ExtAction, (int)i) || b.open, S(6));
+            const float is = std::floor(S(16));
+            const RectF ir(std::floor(r.X + (r.Width - is) / 2), std::floor(r.Y + (r.Height - is) / 2), is, is);
+            if (b.icon) {
+                const InterpolationMode im = g.GetInterpolationMode();
+                g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+                if (b.enabled) {
+                    g.DrawImage(b.icon, ir);
+                } else {
+                    ColorMatrix cm = { { { 0.3f, 0.3f, 0.3f, 0, 0 }, { 0.59f, 0.59f, 0.59f, 0, 0 }, { 0.11f, 0.11f, 0.11f, 0, 0 },
+                                         { 0, 0, 0, 0.45f, 0 }, { 0, 0, 0, 0, 1 } } };
+                    ImageAttributes ia;
+                    ia.SetColorMatrix(&cm);
+                    g.DrawImage(b.icon, ir, 0, 0, (REAL)b.icon->GetWidth(), (REAL)b.icon->GetHeight(), UnitPixel, &ia);
+                }
+                g.SetInterpolationMode(im);
+            } else {                                     // no icon: its first letter in a circle
+                FillRound(g, Faded(T.icon, b.enabled ? 0.22f : 0.1f), ir, is / 2);
+                const std::wstring letter = b.title.empty() ? std::wstring(L"?") : b.title.substr(0, 1);
+                DrawGlyph(g, letter.c_str(), ir, b.enabled ? T.icon : T.iconDis, g_fBadge.get());
+            }
+            if (!b.badge.empty()) {
+                StringFormat sf(StringFormat::GenericTypographic());
+                RectF tb;
+                g.MeasureString(b.badge.c_str(), -1, g_fBadge.get(), PointF(0, 0), &sf, &tb);
+                const float bh = std::floor(S(12)), bw = std::max(bh, std::ceil(tb.Width) + S(6));
+                const RectF br(std::min(r.GetRight() - S(1), ir.GetRight() + S(5)) - bw, std::min(r.GetBottom() - S(1), ir.GetBottom() + S(3)) - bh, bw, bh);
+                FillRound(g, b.badgeColor.GetA() ? b.badgeColor : T.accent, br, bh / 2);
+                DrawGlyph(g, b.badge.c_str(), br, b.badgeTextColor, g_fBadge.get());
             }
         }
     }

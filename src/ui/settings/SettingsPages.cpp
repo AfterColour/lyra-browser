@@ -138,6 +138,7 @@ void OpenPasswordsSettings() {
 
 static std::vector<int> s_extensionPages;              // each extension's own page (the gear)
 static std::vector<int> s_themePages;                  // each theme's own page (the gear), filled in BuildPages
+int SettingsExtensionPage(size_t k) { return k < s_extensionPages.size() ? s_extensionPages[k] : -1; }
 int SettingsThemePage(size_t k) { return k < s_themePages.size() ? s_themePages[k] : -1; }
 
 void BuildPages() {
@@ -517,6 +518,15 @@ void BuildPages() {
             p.rows.push_back(std::move(r));
         }
         p.rows.push_back(RHeader(Tr(L"Add an extension", L"Добавить расширение")));
+        p.rows.push_back(RButton(L"Chrome Web Store",
+            Tr(L"Opens in a tab: on an extension\u2019s page, \u201cAdd to Lyra\u201d at the bottom right installs it.",
+               L"Откроется во вкладке: на странице расширения кнопка \u00ABУстановить в Lyra\u00BB справа внизу установит его."),
+            Tr(L"Open", L"Открыть"),
+            []() { CreateTab(L"https://chromewebstore.google.com/category/extensions"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
+        p.rows.push_back(RButton(L"Firefox Add-ons",
+            Tr(L"The same for Firefox extensions.", L"То же для расширений Firefox."),
+            Tr(L"Open", L"Открыть"),
+            []() { CreateTab(L"https://addons.mozilla.org/firefox/extensions/"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
         p.rows.push_back(RButton(Tr(L"Install from a file", L"Установить из файла"),
             Tr(L"A .crx (Chrome), .xpi (Firefox) or .zip file.", L"Файл .crx (Chrome), .xpi (Firefox) или .zip."),
             Tr(L"Choose\x2026", L"Выбрать\x2026"),
@@ -526,10 +536,12 @@ void BuildPages() {
             Tr(L"Choose\x2026", L"Выбрать\x2026"),
             []() { ExtensionInstallFromFolder(); }));
         p.rows.push_back(RCustom(L"note",
-            Tr(L"Extensions support is new: for now they can change pages (content scripts and styles) and keep their settings. "
-               L"Toolbar buttons, pop-ups and background work are coming.",
-               L"Поддержка расширений только появилась: пока они могут изменять страницы (скрипты и стили на страницах) и хранить свои настройки. "
-               L"Кнопки на панели, всплывающие окна и фоновая работа — скоро.")));
+            Tr(L"Extensions support is new. Working: changing pages, the background part, messages and ports, tabs, storage, "
+               L"the toolbar button with its pop-up. Not yet: network filters (webRequest, declarativeNetRequest), "
+               L"context menu items, bookmarks, history and cookies, so some extensions work only in part.",
+               L"Поддержка расширений только появилась. Работают: изменение страниц, фоновая часть, сообщения и порты, вкладки, хранилище, "
+               L"кнопка на панели со всплывающим окном. Пока нет: сетевых фильтров (webRequest, declarativeNetRequest), "
+               L"пунктов в контекстном меню, закладок, истории и cookie, поэтому некоторые расширения работают не полностью.")));
         g_pages.push_back(std::move(p));
     }
     {   // Keyboard
@@ -611,6 +623,14 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), ex.version.empty() ? L"\x2014" : ex.version));
         if (!ex.description.empty()) p.rows.push_back(RInfo(ex.description.c_str(), L""));
         p.rows.push_back(RInfo(Tr(L"Manifest", L"Манифест"), L"v" + std::to_wstring(ex.manifestVersion)));
+        if (ex.hasAction) {
+            static bool unusedPin = false;
+            SRow r = RToggle(Tr(L"Show on the toolbar", L"Показывать на панели"),
+                             Tr(L"Its button with the pop-up, left of the menu.", L"Кнопка расширения со всплывающим окном, слева от меню."), &unusedPin, nullptr);
+            r.getInt = [id]() { for (auto& e : ExtensionsList()) if (e.id == id) return e.pinned ? 1 : 0; return 0; };
+            r.setInt = [id](int on) { ExtensionSetPinned(id, on != 0); };
+            p.rows.push_back(std::move(r));
+        }
         p.rows.push_back(RInfo(Tr(L"Changes pages", L"Изменяет страницы"),
             ex.contentScripts ? std::wstring(Tr(L"Yes", L"Да")) : std::wstring(Tr(L"No", L"Нет"))));
         if (!ex.permissions.empty()) {

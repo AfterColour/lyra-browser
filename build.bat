@@ -53,12 +53,8 @@ set "WEBKITDIR_WIN=%WEBKITDIR:/=\%"
 if not exist "%WEBKITDIR_WIN%\bin\WebKit2.dll" goto :no_webkit
 
 rem --- 4. Leftover browser processes keep the WebKit DLLs locked: stop them --------
-for %%p in (Lyra.exe MyBrowser.exe WebKitGPUProcess.exe WebKitWebProcess.exe WebKitNetworkProcess.exe) do (
-    tasklist /fi "imagename eq %%p" 2>nul | find /i "%%p" >nul && (
-        echo [build] %%p is still running, stopping it:
-        taskkill /f /t /im %%p
-    )
-)
+rem Only those started from this run\ folder: an installed Lyra (and its WebKit processes) stays open.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$run = '%~dp0run\'; Get-Process Lyra,MyBrowser,WebKitGPUProcess,WebKitWebProcess,WebKitNetworkProcess -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($run, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Write-Host ('[build] ' + $_.Name + ' is still running, stopping it'); Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 300"
 rem A process that cannot be stopped still lets its files be renamed: move them aside so
 rem the new ones can be copied in. The *.locked files are removed by a later build.
 for %%d in (run run-gst) do if exist "%~dp0%%d" (

@@ -2,6 +2,7 @@
 #include "browser/ContextMenu.h"
 #include "browser/PageClients.h"
 #include "browser/CustomThemes.h"
+#include "browser/ExtensionStore.h"
 #include "browser/Extensions.h"
 #include "browser/DevProbe.h"
 #include "browser/Translate.h"
@@ -95,6 +96,7 @@ static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     if (!t) return;
     t->readerable = false;               // the new page is checked when it finishes
     TranslatePageCommitted(*t);
+    ExtensionsOnTabCommitted(t);
     SyncTab(*t);
     ExtensionsOnTabUpdated(t);
     Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
@@ -203,6 +205,14 @@ static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKF
         CustomThemeDownload(url);
         return;
     }
+    // A .crx / .xpi file opened in Lyra: offered for installing, not shown.
+    if (_wcsnicmp(url.c_str(), L"file:", 5) == 0 && ExtensionIsPackage(url)) {
+        WKFramePolicyListenerIgnore(listener);
+        wchar_t path[MAX_PATH] = {};
+        DWORD len = MAX_PATH;
+        if (SUCCEEDED(PathCreateFromUrlW(url.c_str(), path, &len, 0))) ExtensionInstallFromPath(path);
+        return;
+    }
     // Sites the user turned ad blocking off for: the page loads without the content blockers.
     if (g_prefs.adBlock && !AdBlockAllowedOn(url)) {
         bool mainFrame = false;
@@ -230,11 +240,21 @@ static void OnDecidePolicyForResponse(WKPageRef, WKNavigationResponseRef nr, WKF
         WKRelease(fi);
     }
     bool attachment = false;
-    std::wstring mime;
+    std::wstring mime, responseUrl;
     if (WKURLResponseRef resp = WKNavigationResponseCopyResponse(nr)) {
+        if (WKURLRef u = WKURLResponseCopyURL(resp)) {
+            if (WKStringRef s = WKURLCopyString(u)) { responseUrl = WKStr(s); WKRelease(s); }
+            WKRelease(u);
+        }
         attachment = WKURLResponseIsAttachment(resp);
         if (WKStringRef m = WKURLResponseCopyMIMEType(resp)) { mime = WKStr(m); WKRelease(m); }
         WKRelease(resp);
+    }
+    // An extension package from a site: installed (after asking) rather than saved.
+    if (mainFrame && _wcsnicmp(responseUrl.c_str(), L"https:", 6) == 0 && ExtensionIsPackage(responseUrl, mime)) {
+        WKFramePolicyListenerIgnore(listener);
+        ExtensionInstallFromUrl(responseUrl);
+        return;
     }
     if (mainFrame && (attachment || !WKNavigationResponseCanShowMIMEType(nr))) {
         Log("response -> download: mime='%ls' attachment=%d canShow=%d", mime.c_str(), (int)attachment,
