@@ -654,6 +654,7 @@ static const char kYouTubeAds[] = R"JS((function () {
 })();)JS";
 
 static std::vector<std::pair<std::string, bool>> s_userScripts;
+static void (*s_extraUserScripts)(WKUserContentControllerRef) = nullptr;
 
 static void AddScript(const std::string& source, bool mainFrameOnly) {
     WKStringRef s = WKStringCreateWithUTF8CString(source.c_str());
@@ -668,6 +669,7 @@ static void ApplyUserScripts() {
     if (!s_controller) return;
     WKUserContentControllerRemoveAllUserScripts(s_controller);
     for (auto& [source, mainOnly] : s_userScripts) AddScript(source, mainOnly);
+    if (s_extraUserScripts) s_extraUserScripts(s_controller);
     if (!g_prefs.adBlock) return;
     std::string allowed = "[";
     for (auto& h : s_allowed) {
@@ -682,6 +684,13 @@ static void ApplyUserScripts() {
     if (at != std::string::npos) yt.replace(at, 9, allowed);
     AddScript(yt, false);
 }
+
+void AdBlockSetExtraUserScripts(void (*add)(WKUserContentControllerRef)) {
+    s_extraUserScripts = add;
+    ApplyUserScripts();
+}
+
+void AdBlockRefreshUserScripts() { ApplyUserScripts(); }
 
 void AdBlockAddUserScript(const char* source, bool mainFrameOnly) {
     s_userScripts.emplace_back(source, mainFrameOnly);

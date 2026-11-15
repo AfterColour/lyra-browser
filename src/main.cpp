@@ -32,6 +32,7 @@
 #include "browser/StartPage.h"
 #include "app/CrashHandler.h"
 #include "app/StallWatch.h"
+#include "browser/Extensions.h"
 #include "app/Environment.h"
 #include "app/Log.h"
 #include "browser/TabManager.h"
@@ -170,6 +171,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     WKPreferencesSetSuppressesIncrementalRendering(g_preferences, false);
     PermissionsInit();                                 // site permissions: notifications, location
     AdBlockInit();                                     // compiled filter lists; updates them in the background
+    ExtensionsInit();                                  // installed extensions: their content scripts
     MediaControlsInit();                               // media keys, Windows' media flyout
     PasswordsInit();                                   // saved passwords: offer to save, fill in
     PipInit();                                         // picture-in-picture

@@ -23,6 +23,7 @@
 #include "ui/Theme.h"
 #include "ui/Menu.h"
 #include "browser/CustomThemes.h"
+#include "browser/Extensions.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
@@ -135,6 +136,7 @@ void OpenPasswordsSettings() {
     SettingsLanguageChanged();                           // rebuilt: the list is up to date
 }
 
+static std::vector<int> s_extensionPages;              // each extension's own page (the gear)
 static std::vector<int> s_themePages;                  // each theme's own page (the gear), filled in BuildPages
 int SettingsThemePage(size_t k) { return k < s_themePages.size() ? s_themePages[k] : -1; }
 
@@ -496,6 +498,40 @@ void BuildPages() {
                                Tr(L"Closes the window", L"Закрывает окно")));
         g_pages.push_back(std::move(p));
     }
+    const int extensionsPage = (int)g_pages.size();
+    {   // Extensions
+        SPage p; p.name = Tr(L"Extensions", L"Расширения"); p.icon = L"\uE943"; p.tint = Color(48, 140, 120); p.group = 3;
+        p.rows.push_back(RHeader(Tr(L"Installed", L"Установленные")));
+        const std::vector<ExtensionInfo>& list = ExtensionsList();
+        if (list.empty())
+            p.rows.push_back(RInfo(Tr(L"No extensions yet", L"Расширений пока нет"), L""));
+        static bool unused = false;
+        for (size_t k = 0; k < list.size(); ++k) {
+            const std::wstring id = list[k].id;
+            std::wstring desc = list[k].version.empty() ? L"" : Tr(L"Version ", L"Версия ") + list[k].version;
+            if (!list[k].description.empty()) desc += (desc.empty() ? L"" : L" \x00B7 ") + list[k].description;
+            SRow r = RToggleGear(list[k].name.c_str(), desc.c_str(), &unused, nullptr,
+                [k]() { if (k < s_extensionPages.size()) SettingsOpenPage(s_extensionPages[k]); });
+            r.getInt = [id]() { for (auto& e : ExtensionsList()) if (e.id == id) return e.enabled ? 1 : 0; return 0; };
+            r.setInt = [id](int on) { ExtensionSetEnabled(id, on != 0); };
+            p.rows.push_back(std::move(r));
+        }
+        p.rows.push_back(RHeader(Tr(L"Add an extension", L"Добавить расширение")));
+        p.rows.push_back(RButton(Tr(L"Install from a file", L"Установить из файла"),
+            Tr(L"A .crx (Chrome), .xpi (Firefox) or .zip file.", L"Файл .crx (Chrome), .xpi (Firefox) или .zip."),
+            Tr(L"Choose\x2026", L"Выбрать\x2026"),
+            []() { ExtensionInstallFromFile(); }));
+        p.rows.push_back(RButton(Tr(L"Load an unpacked extension", L"Загрузить распакованное"),
+            Tr(L"A folder with manifest.json, e.g. one you are writing.", L"Папка с manifest.json, например своё расширение в разработке."),
+            Tr(L"Choose\x2026", L"Выбрать\x2026"),
+            []() { ExtensionInstallFromFolder(); }));
+        p.rows.push_back(RCustom(L"note",
+            Tr(L"Extensions support is new: for now they can change pages (content scripts and styles) and keep their settings. "
+               L"Toolbar buttons, pop-ups and background work are coming.",
+               L"Поддержка расширений только появилась: пока они могут изменять страницы (скрипты и стили на страницах) и хранить свои настройки. "
+               L"Кнопки на панели, всплывающие окна и фоновая работа — скоро.")));
+        g_pages.push_back(std::move(p));
+    }
     {   // Keyboard
         SPage p; p.group = 4;
         p.name = Tr(L"Keyboard", L"Клавиатура");
@@ -566,6 +602,35 @@ void BuildPages() {
         g_pages.push_back(std::move(p));
     }
     // ---- detail pages (not in the sidebar) ----------------------------------
+    s_extensionPages.clear();
+    for (const ExtensionInfo& ex : ExtensionsList()) {   // an extension's page, from its gear
+        SPage p; p.name = ex.name; p.icon = L"\uE943"; p.tint = Color(48, 140, 120);
+        p.parent = extensionsPage;
+        const std::wstring id = ex.id;
+        p.rows.push_back(RHeader(Tr(L"About", L"О расширении")));
+        p.rows.push_back(RInfo(Tr(L"Version", L"Версия"), ex.version.empty() ? L"\x2014" : ex.version));
+        if (!ex.description.empty()) p.rows.push_back(RInfo(ex.description.c_str(), L""));
+        p.rows.push_back(RInfo(Tr(L"Manifest", L"Манифест"), L"v" + std::to_wstring(ex.manifestVersion)));
+        p.rows.push_back(RInfo(Tr(L"Changes pages", L"Изменяет страницы"),
+            ex.contentScripts ? std::wstring(Tr(L"Yes", L"Да")) : std::wstring(Tr(L"No", L"Нет"))));
+        if (!ex.permissions.empty()) {
+            p.rows.push_back(RHeader(Tr(L"Asks for", L"Запрашивает")));
+            for (const std::wstring& perm : ex.permissions) p.rows.push_back(RInfo(perm.c_str(), L""));
+        }
+        p.rows.push_back(RHeader(L""));
+        p.rows.push_back(RButton(Tr(L"Files", L"Файлы"), Tr(L"The extension's folder.", L"Папка расширения."), Tr(L"Open", L"Открыть"),
+            [dir = ex.dir]() { ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }));
+        p.rows.push_back(RButton(Tr(L"Remove extension", L"Удалить расширение"),
+            Tr(L"Its settings are deleted too.", L"Его настройки тоже удалятся."), Tr(L"Remove\x2026", L"Удалить\x2026"),
+            [id, extensionsPage]() {
+                if (MessageBoxW(g_setHwnd, Tr(L"Remove this extension?", L"Удалить это расширение?"), Tr(L"Lyra Settings", L"Настройки Lyra"),
+                                MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+                ExtensionRemove(id);
+                SettingsOpenPage(extensionsPage);
+            }));
+        s_extensionPages.push_back((int)g_pages.size());
+        g_pages.push_back(std::move(p));
+    }
     s_themePages.clear();
     for (const CustomTheme& th : CustomThemes()) {     // a theme's page, from its gear in Settings > Themes
         SPage p; p.name = th.name; p.icon = L"\uE91B"; p.tint = Color(88, 86, 214);
