@@ -519,8 +519,8 @@ void BuildPages() {
         }
         p.rows.push_back(RHeader(Tr(L"Add an extension", L"Добавить расширение")));
         p.rows.push_back(RButton(L"Chrome Web Store",
-            Tr(L"Opens in a tab: on an extension\u2019s page, \u201cAdd to Lyra\u201d at the bottom right installs it.",
-               L"Откроется во вкладке: на странице расширения кнопка \u00ABУстановить в Lyra\u00BB справа внизу установит его."),
+            Tr(L"Opens in a tab: on an extension\u2019s page, \u201cAdd to Lyra\u201d (in place of the store\u2019s own button) installs it.",
+               L"Откроется во вкладке: на странице расширения кнопка \u00ABУстановить в Lyra\u00BB (на месте кнопки магазина) установит его."),
             Tr(L"Open", L"Открыть"),
             []() { CreateTab(L"https://chromewebstore.google.com/category/extensions"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
         p.rows.push_back(RButton(L"Firefox Add-ons",

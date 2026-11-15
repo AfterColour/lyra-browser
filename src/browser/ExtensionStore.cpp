@@ -53,11 +53,16 @@ const char kStoreScript[] = R"JS((() => {
   // The store's install button (its outermost wrapper), or null.
   const storeButton = () => {
     if (location.hostname === "chromewebstore.google.com") {
-      const title = document.querySelector("h1");
-      if (!title) return null;
-      for (const b of document.querySelectorAll("button")) {
-        if (!(title.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-        if (b.querySelector('span[jsname="V67aGc"]') && !b.querySelector("svg")) return b.closest("[data-is-touch-wrapper]") || b;
+      // (the store keeps the pages shown before in the document, hidden: the title on screen, and
+      // the nearest install button after it)
+      const isInstall = (b) => b.querySelector('span[jsname="V67aGc"]') && !b.querySelector("svg");
+      for (const title of document.querySelectorAll("h1")) {
+        if (!title.getClientRects().length) continue;
+        for (let up = title.parentElement; up && up !== document.body; up = up.parentElement) {
+          for (const b of up.querySelectorAll("button"))
+            if ((title.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) && isInstall(b))
+              return b.closest("[data-is-touch-wrapper]") || b;
+        }
       }
       return null;
     }
@@ -68,8 +73,7 @@ const char kStoreScript[] = R"JS((() => {
   const make = () => {
     host = document.createElement("lyra-store-button");
     const root = host.attachShadow({ mode: "closed" });
-    const style = document.createElement("style");
-    style.textContent = 'button{font:600 14px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:#fff;' +
+    const css = 'button{font:600 14px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:#fff;' +
       "background:linear-gradient(135deg,#8b5cf6,#6d28d9);border:0;border-radius:999px;cursor:pointer;" +
       "display:flex;align-items:center;gap:9px;white-space:nowrap;transition:transform .15s,box-shadow .15s,opacity .15s}" +
       ":host(.float) button{padding:13px 22px 13px 18px;box-shadow:0 6px 24px rgba(76,29,149,.45),0 1px 3px rgba(0,0,0,.3)}" +
@@ -77,6 +81,17 @@ const char kStoreScript[] = R"JS((() => {
       ":host(.inline) button{height:40px;padding:0 22px 0 16px;box-shadow:0 2px 10px -2px rgba(76,29,149,.5)}" +
       ":host(.inline) button:hover{box-shadow:0 4px 16px -2px rgba(76,29,149,.65);filter:brightness(1.06)}" +
       "button:active{transform:none}button[disabled]{opacity:.75;cursor:default}svg{width:18px;height:18px;flex:none}";
+    // A constructed style sheet: a site's CSP (addons.mozilla.org) blocks <style> elements, also in a
+    // shadow root, but not these.
+    let styled = false;
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      root.adoptedStyleSheets = [sheet];
+      styled = true;
+    } catch (e) {}
+    const style = document.createElement("style");
+    style.textContent = css;
     button = document.createElement("button");
     const NS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(NS, "svg");
@@ -96,7 +111,8 @@ const char kStoreScript[] = R"JS((() => {
       window.webkit.messageHandlers.lyraStore.postMessage(JSON.stringify(t));
       setTimeout(() => { button.disabled = false; label.textContent = LABEL; }, 5000);
     });
-    root.append(style, button);
+    if (styled) root.append(button);
+    else root.append(style, button);
   };
   const setMode = (m) => {
     if (mode === m) return;
