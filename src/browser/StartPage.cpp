@@ -530,8 +530,8 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     // The passwords step: Lyra's own saving only with Lyra chosen; an extension is added (asking first)
     // when the step is left with it chosen.
     const int pm = QueryInt(query, L"pm");
-    if (pm >= 0 && pm <= 3) g_prefs.savePasswords = pm == 0;
-    if (QueryInt(query, L"pmInstall") == 1 && (pm == 1 || pm == 2)) ExtensionInstallPasswordManager(pm);
+    if (pm == 0 || pm == 3) g_prefs.savePasswords = pm == 0;
+    if (QueryInt(query, L"pmInstall") == 1 && pm >= 0 && pm <= 3) ExtensionSetPasswordManager(pm);
     const bool done = QueryInt(query, L"done") == 1;
     if (done) g_prefs.onboarded = true;
     SaveSettings();

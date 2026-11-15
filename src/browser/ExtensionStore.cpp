@@ -287,6 +287,39 @@ bool Ask(const ExtensionInfo& e, const std::wstring& from) {
     return MessageBoxW(Owner(), q.c_str(), Tr(L"Add an extension", L"Установка расширения"), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
 
+// The password manager in use: Lyra's own saving, Bitwarden, Proton Pass or none. An extension
+// becomes the one only once it is installed (the person may say no to it).
+struct PasswordManager { const char* cwsId; const wchar_t* name; };
+const PasswordManager kPasswordManagers[] = {
+    { "nngceckbapebfimnlniiiahkandclblb", L"Bitwarden" },
+    { "ghmbeldphafepmbegfdlkpapadhbakde", L"Proton Pass" },
+};
+int s_pendingPasswordManager = 0;           // 1 / 2 while its download and question are on
+
+const ExtensionInfo* InstalledPasswordManager(int which) {
+    const wchar_t* name = kPasswordManagers[which - 1].name;
+    for (const ExtensionInfo& e : ExtensionsList())
+        if (_wcsnicmp(e.name.c_str(), name, wcslen(name)) == 0) return &e;
+    return nullptr;
+}
+
+// Turns `which` (0..3) on and the others off; an extension is not removed, only turned off.
+void ActivatePasswordManager(int which) {
+    for (int i = 1; i <= 2; ++i) {
+        const ExtensionInfo* e = InstalledPasswordManager(i);
+        if (e && e->enabled != (i == which)) ExtensionSetEnabled(std::wstring(e->id), i == which);
+    }
+    g_prefs.savePasswords = which == 0;
+    SaveSettings();
+    SettingsRefresh();
+}
+
+void PasswordManagerInstalled(const std::wstring& name) {
+    const int which = std::exchange(s_pendingPasswordManager, 0);
+    if (which && _wcsnicmp(name.c_str(), kPasswordManagers[which - 1].name, wcslen(kPasswordManagers[which - 1].name)) == 0)
+        ActivatePasswordManager(which);
+}
+
 void InstallAsking(const std::wstring& path, const std::wstring& from) {
     bool asked = false, yes = false;
     std::wstring err, name;
@@ -296,6 +329,7 @@ void InstallAsking(const std::wstring& path, const std::wstring& from) {
         return yes = Ask(e, from);
     });
     if (ok) {
+        PasswordManagerInstalled(name);
         ModalScope modal;
         const std::wstring msg = L"«" + name + L"» " +
             Tr(L"is added. It is in Settings → Extensions.", L"установлено. Оно в Настройках → Расширения.");
@@ -377,33 +411,22 @@ void ExtensionInstallFromPath(const std::wstring& path) {
     InstallAsking(path, std::wstring(Tr(L"From the file ", L"Из файла ")) + PathFindFileNameW(path.c_str()) + L".");
 }
 
-namespace {
-struct PasswordManager { const char* cwsId; const wchar_t* name; };
-const PasswordManager kPasswordManagers[] = {
-    { "nngceckbapebfimnlniiiahkandclblb", L"Bitwarden" },
-    { "ghmbeldphafepmbegfdlkpapadhbakde", L"Proton Pass" },
-};
-const ExtensionInfo* Installed(const wchar_t* name) {
-    for (const ExtensionInfo& e : ExtensionsList())
-        if (_wcsnicmp(e.name.c_str(), name, wcslen(name)) == 0) return &e;
-    return nullptr;
-}
-}  // namespace
-
-void ExtensionInstallPasswordManager(int which) {
-    if (which < 1 || which > 2) return;
-    const PasswordManager& pm = kPasswordManagers[which - 1];
-    if (const ExtensionInfo* e = Installed(pm.name)) {
-        if (!e->enabled) ExtensionSetEnabled(e->id, true);
+void ExtensionSetPasswordManager(int which) {
+    if (which < 0 || which > 3) return;
+    if (which == 0 || which == 3 || InstalledPasswordManager(which)) {
+        s_pendingPasswordManager = 0;
+        ActivatePasswordManager(which);
         return;
     }
+    s_pendingPasswordManager = which;
+    const PasswordManager& pm = kPasswordManagers[which - 1];
     Fetch(L"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" kChromeVersion
           L"&acceptformat=crx2,crx3&x=id%3D" + ToWide(pm.cwsId) + L"%26uc", L"", Tr(L"From Chrome Web Store.", L"\u0418\u0437 Chrome Web Store."));
 }
 
 int ExtensionPasswordManagerChoice() {
-    for (int i = 0; i < 2; ++i)
-        if (const ExtensionInfo* e = Installed(kPasswordManagers[i].name)) if (e->enabled) return i + 1;
+    for (int i = 1; i <= 2; ++i)
+        if (const ExtensionInfo* e = InstalledPasswordManager(i)) if (e->enabled) return i;
     return g_prefs.savePasswords ? 0 : 3;
 }
 

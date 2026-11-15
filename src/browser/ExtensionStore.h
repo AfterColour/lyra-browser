@@ -15,7 +15,8 @@ bool ExtensionIsPackage(const std::wstring& url, const std::wstring& mime = L"")
 void ExtensionInstallFromUrl(const std::wstring& url);   // https: downloads, then asks (WM_APP_EXT_INSTALL)
 void ExtensionInstallFromPath(const std::wstring& path); // a local file: asks, installs
 void ExtensionStoreMessage(WPARAM wParam, LPARAM lParam); // main window: WM_APP_EXT_INSTALL
-// The welcome's passwords step: 1 Bitwarden, 2 Proton Pass from Chrome Web Store (turned on if it is
-// there already); and which one is in use: 1 / 2, else 0 Lyra's own saving, 3 none.
-void ExtensionInstallPasswordManager(int which);
+// The password manager: 0 Lyra's own saving, 1 Bitwarden, 2 Proton Pass, 3 none. An extension not
+// installed yet is added from Chrome Web Store (asking first) and becomes the one once it is in;
+// the other one is turned off (not removed). Choice: the one in use now.
+void ExtensionSetPasswordManager(int which);
 int ExtensionPasswordManagerChoice();

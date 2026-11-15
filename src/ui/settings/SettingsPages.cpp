@@ -24,6 +24,7 @@
 #include "ui/Menu.h"
 #include "browser/CustomThemes.h"
 #include "browser/Extensions.h"
+#include "browser/ExtensionStore.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
@@ -428,10 +429,12 @@ void BuildPages() {
                 Tr(L"Update", L"Обновить"), []() { AdBlockUpdateNow(); }));
         }
         p.rows.push_back(RHeader(Tr(L"Passwords", L"Пароли")));
-        p.rows.push_back(RToggle(Tr(L"Offer to save passwords", L"Предлагать сохранять пароли"),
-            Tr(L"Lyra remembers sign-ins and fills them in. They are encrypted with your Windows account.",
-               L"Lyra запоминает входы на сайты и подставляет их. Пароли зашифрованы вашей учётной записью Windows."),
-            &g_prefs.savePasswords, save));
+        p.rows.push_back(RChoice(Tr(L"Password manager", L"Менеджер паролей"),
+            Tr(L"Lyra keeps sign-ins on this computer, encrypted for your Windows account. Bitwarden and Proton Pass sync across devices: Lyra adds the extension from Chrome Web Store.",
+               L"Lyra хранит пароли на этом компьютере, зашифрованными для вашей учётной записи Windows. Bitwarden и Proton Pass синхронизируют их между устройствами: Lyra установит расширение из Chrome Web Store."),
+            { Tr(L"Lyra", L"Lyra"), L"Bitwarden", L"Proton Pass", Tr(L"Don't save passwords", L"Не сохранять пароли") },
+            []() { return ExtensionPasswordManagerChoice(); },
+            [](int i) { ExtensionSetPasswordManager(i); }));
         {
             static std::wstring saved;                   // the row label must outlive the page build
             saved = Tr(L"Saved: ", L"Сохранено: ") + std::to_wstring(PasswordsList().size());

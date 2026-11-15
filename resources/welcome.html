@@ -424,7 +424,7 @@ for (let i = 0; i < steps.length; i++) {
 }
 const pmStep = steps.findIndex((s) => s.querySelector("#pms"));
 function next() {
-  if (cur === pmStep && (state.pm === 1 || state.pm === 2)) setup("&live=1&pmInstall=1");
+  if (cur === pmStep) setup("&live=1&pmInstall=1");   // the extension added, the other one off
   go(cur + 1);
 }
 document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", next));
