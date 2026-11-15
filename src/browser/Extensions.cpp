@@ -1081,6 +1081,7 @@ bool MenuShows(const MenuItem& m, const ExtensionMenuContext& c, bool inherit) {
     bool any = inherit && m.contexts.empty();
     const std::vector<std::string> page = { "page" };
     for (auto& s : m.contexts.empty() ? page : m.contexts) {
+        if (c.action) { if (s == "all" || s == "action" || s == "browser_action" || s == "page_action") any = true; continue; }
         if (s == "all") any = true;
         else if (s == "page" && !special) any = true;
         else if (s == "selection" && c.selection) any = true;
@@ -2609,6 +2610,55 @@ void ExtensionButtonMenu(int index) {
     MenuSetIcon(m, kHide, L"\uE77A");
     MenuSetIcon(m, kManage, L"\uE943");
     MenuSetIcon(m, kRemove, L"\uE74D");
+    // The extension's own items for its button (contexts "action", "browser_action", "page_action",
+    // "all"), first, as Chrome shows them (at most 6 at the top level).
+    enum { kItem = 100 };
+    ExtensionMenuContext ac;
+    ac.action = true;
+    Tab* active = ActiveTab();
+    if (active) ac.pageUrl = active->url;
+    std::vector<ExtensionMenuEntry> own;
+    MenuChildren(Menus(*e), "", ac, id, own, 0);
+    while (!own.empty() && own.back().separator) own.pop_back();
+    if (own.size() > 6) own.resize(6);
+    std::vector<std::string> itemIds;
+    std::function<void(HMENU, const ExtensionMenuEntry&)> add = [&](HMENU parent, const ExtensionMenuEntry& x) {
+        if (x.separator) { AppendMenuW(parent, MF_SEPARATOR, 0, nullptr); return; }
+        if (!x.children.empty()) {
+            HMENU sub = CreatePopupMenu();
+            for (auto& c : x.children) add(sub, c);
+            AppendMenuW(parent, MF_POPUP | (x.enabled ? 0 : MF_GRAYED), (UINT_PTR)sub, x.title.c_str());
+            return;
+        }
+        itemIds.push_back(x.itemId);
+        AppendMenuW(parent, MF_STRING | (x.enabled ? 0 : MF_GRAYED) | (x.checkable && x.checked ? MF_CHECKED : 0),
+                    kItem + (UINT)itemIds.size() - 1, x.title.c_str());
+    };
+    if (!own.empty()) {
+        HMENU withItems = CreatePopupMenu();
+        AppendMenuW(withItems, MF_STRING | MF_GRAYED, kName, e->info.name.c_str());
+        AppendMenuW(withItems, MF_SEPARATOR, 0, nullptr);
+        for (auto& x : own) add(withItems, x);
+        AppendMenuW(withItems, MF_SEPARATOR, 0, nullptr);
+        // then Lyra's items (from the menu built above, after its name and separator)
+        const int n = GetMenuItemCount(m);
+        for (int k = 2; k < n; ++k) {
+            wchar_t text[256] = {};
+            MENUITEMINFOW mi = { sizeof(mi) };
+            mi.fMask = MIIM_FTYPE | MIIM_ID | MIIM_STRING | MIIM_STATE;
+            mi.dwTypeData = text;
+            mi.cch = 255;
+            if (!GetMenuItemInfoW(m, k, TRUE, &mi)) continue;
+            if (mi.fType & MFT_SEPARATOR) AppendMenuW(withItems, MF_SEPARATOR, 0, nullptr);
+            else AppendMenuW(withItems, MF_STRING, mi.wID, text);
+        }
+        DestroyMenu(m);
+        m = withItems;
+        MenuSetIcon(m, kOptions, L"\uE713");
+        MenuSetIcon(m, kHide, L"\uE77A");
+        MenuSetIcon(m, kManage, L"\uE943");
+        MenuSetIcon(m, kRemove, L"\uE74D");
+    }
     const RectF& r = g_L.ext[index];
     POINT pt = { (LONG)r.GetRight(), (LONG)(r.GetBottom() + S(4)) };
     ClientToScreen(g_hWnd, &pt);
@@ -2616,6 +2666,11 @@ void ExtensionButtonMenu(int index) {
     DestroyMenu(m);
     e = Find(id);
     if (!e) return;
+    if (cmd >= kItem && cmd - kItem < (int)itemIds.size()) {
+        Tab* t = ActiveTab();
+        ExtensionMenuClicked(id, itemIds[cmd - kItem], ac, t ? t->id : 0);
+        return;
+    }
     switch (cmd) {
     case kOptions: OpenExtensionWindow(EnsureHost(*e), ResolveExtensionUrl(*e, e->optionsPage), e->info.name); break;
     case kHide: ExtensionSetPinned(id, false); break;

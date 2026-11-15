@@ -70,6 +70,7 @@ void ExtensionSetPinned(const std::wstring& id, bool pinned);
 struct ExtensionMenuContext {
     std::wstring pageUrl, link, linkText, image, media, selectionText;
     bool editable = false, selection = false;
+    bool action = false;                 // the menu of the extension's toolbar button
 };
 struct ExtensionMenuEntry {
     std::wstring extId, title;
