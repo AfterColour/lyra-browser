@@ -2,6 +2,7 @@
 #include "browser/Wallpaper.h"
 #include "app/Http.h"
 #include "app/Log.h"
+#include "browser/CustomThemes.h"
 #include "core/Constants.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
@@ -66,14 +67,6 @@ std::wstring CustomName() {
     return fd.cFileName;
 }
 
-std::wstring ThemeName() {
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((Dir() + L"\\theme.*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return L"";
-    FindClose(h);
-    return fd.cFileName;
-}
-
 long long WriteTime(const std::wstring& path) {
     WIN32_FILE_ATTRIBUTE_DATA a;
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &a)) return 0;
@@ -114,8 +107,7 @@ std::wstring WallpaperParams() {
     std::wstring p = L"&wpdir=" + ToWide(UrlEncode(ToUtf8(FileUrl(Dir() + L"\\"))));
     const std::wstring custom = CustomName();
     if (!custom.empty()) p += L"&custom=" + ToWide(UrlEncode(ToUtf8(custom))) + L"&cv=" + std::to_wstring(WriteTime(Dir() + L"\\" + custom));
-    const std::wstring theme = ThemeName();
-    if (!theme.empty()) p += L"&themewp=" + ToWide(UrlEncode(ToUtf8(theme))) + L"&tv=" + std::to_wstring(WriteTime(Dir() + L"\\" + theme));
+    p += CustomThemeWallpaperParams();
     const std::wstring bing = Dir() + L"\\bing.jpg";
     if (GetFileAttributesW(bing.c_str()) != INVALID_FILE_ATTRIBUTES) {
         const std::string info = ReadAll(Dir() + L"\\bing.txt");            // date \n copyright \n link
@@ -158,16 +150,6 @@ void WallpaperBingEnsure() {
     }).detach();
 }
 
-void WallpaperSetThemePicture(const std::wstring& src) {
-    CreateDirectoryW(Dir().c_str(), nullptr);
-    for (std::wstring old = ThemeName(); !old.empty(); old = ThemeName())
-        if (!DeleteFileW((Dir() + L"\\" + old).c_str())) break;
-    if (src.empty()) return;
-    std::wstring ext = src.substr(src.find_last_of(L'.') + 1);
-    CharLowerBuffW(ext.data(), (DWORD)ext.size());
-    CopyFileW(src.c_str(), (Dir() + L"\\theme." + ext).c_str(), FALSE);
-}
-
 std::string StartWallpaperKind() {
     const std::string cfg = ReadAll(ConfigPath());
     const size_t w = cfg.find("\"wallpaper\":{");
@@ -175,6 +157,12 @@ std::string StartWallpaperKind() {
     const std::string obj = cfg.substr(w, cfg.find('}', w) - w);
     const std::string k = JsonField(obj, "kind");
     return k.empty() ? "builtin" : k;
+}
+
+std::string StartWallpaperId() {
+    const std::string cfg = ReadAll(ConfigPath());
+    const size_t w = cfg.find("\"wallpaper\":{");
+    return w == std::string::npos ? std::string() : JsonField(cfg.substr(w, cfg.find('}', w) - w), "id");
 }
 
 void StartWallpaperSet(const std::string& kind, const std::string& id) {

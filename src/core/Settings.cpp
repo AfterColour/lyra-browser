@@ -9,6 +9,7 @@ double       g_zoom = 1.0;
 std::wstring g_homePage = L"lyra://start";
 std::wstring g_downloadDir;
 std::wstring g_printPrinter;
+std::wstring g_activeTheme;
 
 std::wstring g_searchEngine = L"https://duckduckgo.com/?q=";
 
@@ -51,6 +52,8 @@ void LoadSettings() {
     g_downloadDir = buf;
     GetPrivateProfileStringW(L"Browser", L"Printer", L"", buf, 512, g_settingsFile.c_str());
     g_printPrinter = buf;
+    GetPrivateProfileStringW(L"Browser", L"ActiveTheme", L"", buf, 512, g_settingsFile.c_str());
+    g_activeTheme = buf;
 
     auto geti = [&](const wchar_t* k, int d) {
         return (int)GetPrivateProfileIntW(L"Browser", k, d, g_settingsFile.c_str());
@@ -62,7 +65,6 @@ void LoadSettings() {
     g_prefs.density     = std::max(0, std::min(2, geti(L"Density", 0)));
     g_prefs.tabLayout   = std::max(0, std::min(2, geti(L"TabLayout", 0)));
     g_prefs.animations  = geti(L"Animations", 1) != 0;
-    g_prefs.vivaldiTheme = geti(L"VivaldiTheme", 0) != 0;
     g_prefs.animSpeed   = std::max(25, std::min(300, geti(L"AnimationSpeed", 100)));
     g_prefs.animTabs    = geti(L"AnimateTabs", 1) != 0;
     g_prefs.animHover   = geti(L"AnimateHover", 1) != 0;
@@ -117,6 +119,7 @@ void SaveSettings() {
     WritePrivateProfileStringW(L"Browser", L"SearchEngine", g_searchEngine.c_str(), g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"DownloadFolder", g_downloadDir.c_str(), g_settingsFile.c_str());
     WritePrivateProfileStringW(L"Browser", L"Printer", g_printPrinter.c_str(), g_settingsFile.c_str());
+    WritePrivateProfileStringW(L"Browser", L"ActiveTheme", g_activeTheme.c_str(), g_settingsFile.c_str());
 
     auto puti = [&](const wchar_t* k, int v) {
         WritePrivateProfileStringW(L"Browser", k, std::to_wstring(v).c_str(), g_settingsFile.c_str());
@@ -124,7 +127,6 @@ void SaveSettings() {
     puti(L"Language", g_prefs.language);
     puti(L"Theme", g_prefs.themeMode);   puti(L"AccentColor", g_prefs.accent);
     puti(L"Density", g_prefs.density);   puti(L"TabLayout", g_prefs.tabLayout);
-    puti(L"VivaldiTheme", g_prefs.vivaldiTheme);
     puti(L"Animations", g_prefs.animations); puti(L"AnimationSpeed", g_prefs.animSpeed);
     puti(L"AnimateTabs", g_prefs.animTabs);  puti(L"AnimateHover", g_prefs.animHover);
     puti(L"TabResizeDelay", g_prefs.tabResizeDelay);

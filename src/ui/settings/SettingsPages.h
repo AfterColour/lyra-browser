@@ -16,5 +16,6 @@ static const EngineDef kEngines[] = {
 constexpr int kEngineCount = (int)(sizeof(kEngines) / sizeof(kEngines[0]));
 
 void BuildPages();
+int  SettingsThemePage(size_t k);    // the page of the k-th theme in CustomThemes() (its gear), -1 if none
 void OpenPasswordsSettings();      // Settings > Privacy > Saved passwords (menu, key in the address field)
 void OpenClearDataSettings();      // Settings > Privacy > Clear browsing data (Ctrl+Shift+Del)

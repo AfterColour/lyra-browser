@@ -1,6 +1,6 @@
 // Lyra — цвета интерфейса, акцент, светлая/тёмная тема, оформление заголовка окна (DWM).
 #include "ui/Theme.h"
-#include "browser/VivaldiTheme.h"
+#include "browser/CustomThemes.h"
 #include "ui/Crossfade.h"
 #include "ui/Chrome.h"
 #include "browser/StartPage.h"
@@ -102,7 +102,7 @@ void EnableDarkMenus() {
 }
 
 bool ResolveDark() {
-    if (VivaldiThemeOn()) return VivaldiThemeGet().dark;
+    if (CustomThemeColorsOn()) return CustomThemeActive()->dark;
     return g_prefs.themeMode == 2 || (g_prefs.themeMode == 0 && SystemUsesDarkMode());
 }
 
@@ -136,7 +136,7 @@ bool MicaSupported() {
 bool MicaActive() {
     HIGHCONTRASTW hc = { sizeof(hc) };
     if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON)) return false;
-    return g_prefs.mica && MicaSupported() && !VivaldiThemeOn();      // a theme brings its own colours
+    return g_prefs.mica && MicaSupported() && !CustomThemeColorsOn();      // a theme brings its own colours
 }
 
 void ApplyBackdrop(HWND hwnd, int type, MARGINS margins) {
@@ -169,10 +169,10 @@ static Color Mix(const Color& a, const Color& b, float t) {
 static Color WithAlpha(const Color& c, BYTE a) { return Color(a, c.GetR(), c.GetG(), c.GetB()); }
 static float Lum(const Color& c) { return (0.2126f * c.GetR() + 0.7152f * c.GetG() + 0.0722f * c.GetB()) / 255.f; }
 
-// A Vivaldi theme's five colours spread over Lyra's palette: background (or the accent, when the
+// A theme's five colours spread over Lyra's palette: background (or the accent, when the
 // theme puts it on the window) for the chrome, foreground for text and icons, highlight as the
 // accent, the accent colour for the active tab.
-static void ApplyVivaldiColors(Theme& t, const VivaldiTheme& v) {
+static void ApplyThemeColors(Theme& t, const CustomTheme& v) {
     const Color frame = v.accentOnWindow ? v.accent : v.bg;
     t.frame = t.toolbar = frame;
     t.tabbar = v.accentOnWindow ? v.accent : Mix(v.bg, Color(0, 0, 0), v.dark ? 0.25f : 0.06f);
@@ -209,12 +209,14 @@ void ApplyDwm(HWND hwnd) {
 
 void ApplyTheme(bool dark) {
     if (g_hWnd) CrossfadeBegin();         // light/dark and accent changes dissolve too
-    const bool vivaldi = VivaldiThemeOn();
-    if (vivaldi) dark = VivaldiThemeGet().dark;
+    const CustomTheme* theme = CustomThemeActive();
+    const bool colors = theme && theme->useColors;
+    if (colors) dark = theme->dark;
     g_dark = dark;
     g_th = MakeTheme(dark);
-    if (vivaldi) {
-        ApplyVivaldiColors(g_th, VivaldiThemeGet());
+    if (colors) ApplyThemeColors(g_th, *theme);
+    if (theme && theme->useAccent) {
+        g_th.accent = colors ? theme->highlight : ReadableAccent(theme->highlight, dark);
     } else {
         Color accent = WindowsAccentColor();
         if (g_prefs.accent > 0 && g_prefs.accent < kAccentCount) {

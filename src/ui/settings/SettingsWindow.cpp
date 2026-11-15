@@ -13,6 +13,7 @@
 //                    settings-page?i=           the page now shown (reopened next time)
 //                    settings-start?cfg=        the start page's layout/wallpaper changed
 //                    settings-start-file        choose a picture for the start page
+//                    settings-theme?id=         turn a theme on ("" = Lyra's own look)
 //                    settings-close             Esc with nothing left to close
 // After every change the whole model is sent again: one setting can change what others show.
 #include "ui/settings/SettingsWindow.h"
@@ -21,6 +22,7 @@
 #include "browser/StartPage.h"
 #include "browser/TabManager.h"
 #include "browser/Wallpaper.h"
+#include "browser/CustomThemes.h"
 #include "browser/WebContext.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
@@ -118,6 +120,31 @@ static std::wstring ModelJson() {
     const std::wstring start = StartConfigJson();
     j += L",\"start\":" + (start.empty() ? std::wstring(L"null") : start);
     j += L",\"wpq\":" + JsString(WallpaperParams());
+    // The installed themes for the previews in Settings > Themes.
+    j += L",\"themes\":[";
+    const std::vector<CustomTheme>& themes = CustomThemes();
+    for (size_t k = 0; k < themes.size(); ++k) {
+        const CustomTheme& t = themes[k];
+        std::wstring pic;
+        if (!t.picture.empty()) {
+            wchar_t url[2084] = {};
+            DWORD len = ARRAYSIZE(url);
+            if (SUCCEEDED(UrlCreateFromPathW((t.dir + L"\\" + t.picture).c_str(), url, &len, 0))) pic = url;
+        }
+        std::wstring summary;
+        if (t.useColors) summary += Tr(L"colors", L"цвета");
+        if (t.useAccent) summary += std::wstring(summary.empty() ? L"" : L", ") + Tr(L"accent", L"акцент");
+        if (t.useWallpaper && !t.picture.empty()) summary += std::wstring(summary.empty() ? L"" : L", ") + Tr(L"wallpaper", L"обои");
+        if (summary.empty()) summary = Tr(L"changes nothing", L"ничего не меняет");
+        summary[0] = towupper(summary[0]);
+        if (k) j += L",";
+        j += L"{\"id\":" + JsString(t.id) + L",\"n\":" + JsString(t.name) + L",\"d\":" + JsString(summary) +
+             L",\"on\":" + std::wstring(g_activeTheme == t.id ? L"true" : L"false") +
+             L",\"bg\":" + JsString(Hex(t.bg)) + L",\"fg\":" + JsString(Hex(t.fg)) + L",\"hi\":" + JsString(Hex(t.highlight)) +
+             L",\"ac\":" + JsString(Hex(t.accent)) + L",\"acw\":" + std::wstring(t.accentOnWindow ? L"true" : L"false") +
+             L",\"pic\":" + JsString(pic) + L",\"page\":" + std::to_wstring(SettingsThemePage(k)) + L"}";
+    }
+    j += L"]";
     j += L",\"pages\":[";
     for (size_t i = 0; i < g_pages.size(); ++i) {
         const SPage& p = g_pages[i];
@@ -220,6 +247,9 @@ static void OnCommand(const std::wstring& url) {
         StartConfigSave(ToUtf8(Param(query, L"cfg")));
         WallpaperBingEnsure();
         RefreshStartPages();
+        Push();
+    } else if (command == L"lyra://settings-theme") {
+        CustomThemeActivate(Param(query, L"id"));
         Push();
     } else if (command == L"lyra://settings-start-file") {
         if (WallpaperPickFile()) {

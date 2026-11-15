@@ -9,6 +9,7 @@ extern double g_zoom;
 extern std::wstring g_homePage;
 extern std::wstring g_searchEngine;
 extern std::wstring g_downloadDir;      // Settings > Downloads; empty = the Windows Downloads folder
+extern std::wstring g_activeTheme;     // the custom theme that is on (browser/CustomThemes.cpp); empty: Lyra's own look
 extern std::wstring g_printPrinter;     // the printer chosen last in the print preview (empty: the Windows default)
 
 struct Prefs {
@@ -28,7 +29,6 @@ struct Prefs {
     bool startFavorites = true;  // start page shows Favorites
     bool startFrequent = false;  // start page shows frequently visited sites
     bool recordHistory = true;
-    bool vivaldiTheme = false;   // the installed Vivaldi theme is on (browser/VivaldiTheme.cpp)
     bool mica = true;            // Windows 11 Mica behind the tab strip and toolbar   // remember visited pages (Settings > Privacy)
     bool onboarded = false;      // the first-run welcome screen was completed
     int  newTabMode = 0;         // 0 start page, 1 blank page, 2 home page

@@ -22,7 +22,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
-#include "browser/VivaldiTheme.h"
+#include "browser/CustomThemes.h"
 #include "ui/settings/SettingsModel.h"
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
@@ -135,6 +135,9 @@ void OpenPasswordsSettings() {
     SettingsLanguageChanged();                           // rebuilt: the list is up to date
 }
 
+static std::vector<int> s_themePages;                  // each theme's own page (the gear), filled in BuildPages
+int SettingsThemePage(size_t k) { return k < s_themePages.size() ? s_themePages[k] : -1; }
+
 void BuildPages() {
     g_pages.clear();
     const std::function<void()> save    = []() { SaveSettings(); };
@@ -185,7 +188,7 @@ void BuildPages() {
         p.rows.push_back(RCards(Tr(L"Theme", L"Тема"), 0,
             { Tr(L"As in Windows", L"Как в Windows"), Tr(L"Light", L"Светлая"), Tr(L"Dark", L"Тёмная") },
             []() { return g_prefs.themeMode; },
-            [theme](int i) { g_prefs.themeMode = i; if (g_prefs.vivaldiTheme) VivaldiThemeSetOn(false); theme(); }));
+            [theme](int i) { g_prefs.themeMode = i; if (CustomThemeColorsOn()) CustomThemeActivate(L""); theme(); }));
         p.rows.push_back(RHeader(Tr(L"Accent color", L"Акцентный цвет")));
         std::vector<Color> colors;
         colors.push_back(WindowsAccentColor());
@@ -195,24 +198,7 @@ void BuildPages() {
               Tr(L"Pink", L"Розовый"), Tr(L"Red", L"Красный"), Tr(L"Orange", L"Оранжевый"),
               Tr(L"Yellow", L"Жёлтый"), Tr(L"Green", L"Зелёный"), Tr(L"Graphite", L"Графит") },
             []() { return g_prefs.accent; },
-            [theme](int i) { g_prefs.accent = i; if (g_prefs.vivaldiTheme) VivaldiThemeSetOn(false); theme(); }));
-        p.rows.push_back(RHeader(Tr(L"Vivaldi themes", L"\u0422\u0435\u043c\u044b Vivaldi")));
-        if (VivaldiThemeGet().valid) {
-            const std::wstring name = VivaldiThemeGet().name;
-            p.rows.push_back(RToggle(name.c_str(),
-                Tr(L"Its colors for the tab strip, toolbar and menus, and its picture as the start page wallpaper.",
-                   L"\u0415\u0451 \u0446\u0432\u0435\u0442\u0430 \u0434\u043b\u044f \u043f\u0430\u043d\u0435\u043b\u0435\u0439 \u0438 \u043c\u0435\u043d\u044e, \u0430 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0430 \u2014 \u043e\u0431\u043e\u0438 \u0441\u0442\u0430\u0440\u0442\u043e\u0432\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b."),
-                &g_prefs.vivaldiTheme, []() { VivaldiThemeSetOn(g_prefs.vivaldiTheme); }));
-        }
-        p.rows.push_back(RButton(Tr(L"Find a theme", L"\u041d\u0430\u0439\u0442\u0438 \u0442\u0435\u043c\u0443"),
-            Tr(L"themes.vivaldi.net opens in a tab: \u201cDownload theme\u201d there puts the theme on in Lyra.",
-               L"\u041e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f themes.vivaldi.net: \u043a\u043d\u043e\u043f\u043a\u0430 \u00ab\u0421\u043a\u0430\u0447\u0430\u0442\u044c \u0442\u0435\u043c\u0443\u00bb \u0442\u0430\u043c \u0441\u0440\u0430\u0437\u0443 \u0432\u043a\u043b\u044e\u0447\u0438\u0442 \u0435\u0451 \u0432 Lyra."),
-            Tr(L"Open", L"\u041e\u0442\u043a\u0440\u044b\u0442\u044c"),
-            []() { CreateTab(L"https://themes.vivaldi.net/"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
-        p.rows.push_back(RButton(Tr(L"Install from a file", L"\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 \u0444\u0430\u0439\u043b\u0430"),
-            Tr(L"A theme exported from Vivaldi (.zip).", L"\u0422\u0435\u043c\u0430, \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u0430\u044f \u0438\u0437 Vivaldi (.zip)."),
-            Tr(L"Choose\x2026", L"\u0412\u044b\u0431\u0440\u0430\u0442\u044c\x2026"),
-            []() { VivaldiThemePickFile(); }));
+            [theme](int i) { g_prefs.accent = i; if (CustomThemeAccentOn()) CustomThemeSetOption(g_activeTheme, kThemeAccent, false); theme(); }));
         p.rows.push_back(RHeader(Tr(L"Toolbar", L"Панели")));
         p.rows.push_back(RSegmented(Tr(L"Toolbar size", L"Размер панелей"),
             Tr(L"Compact leaves the most room for pages.", L"Компактный оставляет больше места страницам."),
@@ -231,6 +217,27 @@ void BuildPages() {
                L"Вкладки плавно двигаются, подсветка плавно гаснет. Шестерёнка — подробные настройки."),
             &g_prefs.animations, repaint,
             []() { SettingsOpenPage(s_animationsPage); }));
+        g_pages.push_back(std::move(p));
+    }
+    const int themesPage = (int)g_pages.size();
+    {   // Themes
+        SPage p; p.name = Tr(L"Themes", L"Темы"); p.icon = L"\uE91B"; p.tint = Color(88, 86, 214); p.group = 1;
+        p.rows.push_back(RHeader(Tr(L"Installed", L"Установленные")));
+        // Drawn by settings.html from the model's "themes": a preview card per theme (SettingsWindow.cpp).
+        p.rows.push_back(RCustom(L"themes", Tr(L"Installed themes", L"Установленные темы")));
+        p.rows.push_back(RHeader(Tr(L"Add a theme", L"Добавить тему")));
+        p.rows.push_back(RButton(Tr(L"Theme catalog", L"Каталог тем"),
+            Tr(L"Thousands of themes by their authors open in a tab: \u201cDownload theme\u201d there adds the theme here.",
+               L"Тысячи тем от авторов откроются во вкладке: кнопка «Download theme» там сразу добавит тему сюда."),
+            Tr(L"Open", L"Открыть"),
+            []() { CreateTab(L"https://themes.vivaldi.net/"); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
+        p.rows.push_back(RButton(Tr(L"Install from a file", L"Установить из файла"),
+            Tr(L"A theme saved as a .zip file.", L"Тема, сохранённая как .zip-файл."),
+            Tr(L"Choose\x2026", L"Выбрать\x2026"),
+            []() { CustomThemePickFile(); }));
+        p.rows.push_back(RCustom(L"note",
+            Tr(L"Themes are made by their authors and published on themes.vivaldi.net. Lyra is not affiliated with Vivaldi Technologies.",
+               L"Темы созданы их авторами и опубликованы на themes.vivaldi.net. Lyra не связана с Vivaldi Technologies.")));
         g_pages.push_back(std::move(p));
     }
     {   // Tabs
@@ -559,6 +566,50 @@ void BuildPages() {
         g_pages.push_back(std::move(p));
     }
     // ---- detail pages (not in the sidebar) ----------------------------------
+    s_themePages.clear();
+    for (const CustomTheme& th : CustomThemes()) {     // a theme's page, from its gear in Settings > Themes
+        SPage p; p.name = th.name; p.icon = L"\uE91B"; p.tint = Color(88, 86, 214);
+        p.parent = themesPage;
+        const std::wstring id = th.id;
+        static bool unused = false;
+        auto option = [&p, id](const wchar_t* label, const wchar_t* desc, CustomThemeOption what) {
+            SRow r = RToggle(label, desc, &unused, nullptr);
+            r.getInt = [id, what]() {
+                for (const CustomTheme& t : CustomThemes())
+                    if (t.id == id) return (what == kThemeColors ? t.useColors : what == kThemeAccent ? t.useAccent : t.useWallpaper) ? 1 : 0;
+                return 0;
+            };
+            r.setInt = [id, what](int on) { CustomThemeSetOption(id, what, on != 0); };
+            p.rows.push_back(std::move(r));
+        };
+        p.rows.push_back(RHeader(Tr(L"What the theme changes", L"Что меняет тема")));
+        option(Tr(L"Colors", L"Цвета"),
+               Tr(L"Tab strip, toolbar, address field and menus; light or dark follows the theme.",
+                  L"Панель вкладок, панель инструментов, адресная строка и меню; светлая или тёмная — как у темы."),
+               kThemeColors);
+        option(Tr(L"Accent color", L"Акцентный цвет"),
+               Tr(L"Highlights, the loading line, chosen items.", L"Подсветка, линия загрузки, выбранные пункты."),
+               kThemeAccent);
+        if (!th.picture.empty())
+            option(Tr(L"Start page wallpaper", L"Обои стартовой страницы"),
+                   Tr(L"Turning the theme on puts its picture on the start page. The picture stays among the wallpapers anyway.",
+                      L"Когда тема включается, её картинка становится обоями. Среди обоев она есть в любом случае."),
+                   kThemeWallpaper);
+        else
+            p.rows.push_back(RInfo(Tr(L"Start page wallpaper", L"Обои стартовой страницы"), Tr(L"Not in this theme", L"В этой теме нет")));
+        p.rows.push_back(RHeader(L""));
+        p.rows.push_back(RButton(Tr(L"Delete theme", L"Удалить тему"),
+            Tr(L"Its picture also leaves the wallpapers.", L"Её картинка тоже пропадёт из обоев."),
+            Tr(L"Delete\x2026", L"Удалить\x2026"),
+            [id, themesPage]() {
+                if (MessageBoxW(g_setHwnd, Tr(L"Delete this theme?", L"Удалить эту тему?"), Tr(L"Lyra Settings", L"Настройки Lyra"),
+                                MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+                CustomThemeDelete(id);
+                SettingsOpenPage(themesPage);
+            }));
+        s_themePages.push_back((int)g_pages.size());
+        g_pages.push_back(std::move(p));
+    }
     {   // Animations, from the gear next to Appearance > Animations
         SPage p; p.name = Tr(L"Animations", L"Анимации"); p.icon = L"\uE945"; p.tint = kTintPurple;
         p.parent = appearancePage;

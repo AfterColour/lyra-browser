@@ -38,7 +38,7 @@
 #include "ui/TabDrag.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
-#include "browser/VivaldiTheme.h"
+#include "browser/CustomThemes.h"
 #include "ui/WindowFrame.h"
 #include "app/Updater.h"
 
@@ -802,7 +802,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ContextMenuShow();
         return 0;
     case WM_APP_THEME:
-        VivaldiThemeDownloaded(wParam, lParam);
+        CustomThemeDownloaded(wParam, lParam);
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);
