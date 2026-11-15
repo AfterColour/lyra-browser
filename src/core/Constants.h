@@ -43,6 +43,7 @@ constexpr UINT WM_APP_ADBLOCK      = WM_APP + 7;   // a filter list was converte
 constexpr UINT WM_APP_TAB_PAINTED  = WM_APP + 6;   // a switched-to tab has drawn; wParam tab id (TabTransition)
 constexpr UINT WM_APP_WALLPAPER    = WM_APP + 18;  // the picture of the day arrived: start pages show it
 constexpr UINT WM_APP_UPDATE       = WM_APP + 17;  // the update state changed (app/Updater.cpp)
+constexpr UINT WM_APP_PREVIEWS     = WM_APP + 23;  // small copies of pictures are ready (ui/Previews.cpp)
 constexpr UINT WM_APP_DNR          = WM_APP + 22;  // an extension's network rules were converted (browser/Extensions.cpp)
 constexpr UINT WM_APP_EXT_INSTALL  = WM_APP + 21;  // an extension was downloaded; lParam see browser/ExtensionStore.cpp
 constexpr UINT WM_APP_THEME        = WM_APP + 20;  // a theme was downloaded; wParam ok, lParam new std::wstring* (the .zip)

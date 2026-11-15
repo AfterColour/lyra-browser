@@ -3,6 +3,7 @@
 #include "app/Http.h"
 #include "app/Log.h"
 #include "browser/CustomThemes.h"
+#include "ui/Previews.h"
 #include "core/Constants.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
@@ -106,7 +107,12 @@ void StartConfigSave(const std::string& utf8Json) {
 std::wstring WallpaperParams() {
     std::wstring p = L"&wpdir=" + ToWide(UrlEncode(ToUtf8(FileUrl(Dir() + L"\\"))));
     const std::wstring custom = CustomName();
-    if (!custom.empty()) p += L"&custom=" + ToWide(UrlEncode(ToUtf8(custom))) + L"&cv=" + std::to_wstring(WriteTime(Dir() + L"\\" + custom));
+    if (!custom.empty()) {
+        p += L"&custom=" + ToWide(UrlEncode(ToUtf8(custom))) + L"&cv=" + std::to_wstring(WriteTime(Dir() + L"\\" + custom));
+        // its small copy for the tiles (customp); none while it is being made
+        const std::wstring preview = PreviewFor(Dir() + L"\\" + custom, Dir() + L"\\custom-preview.jpg");
+        if (!preview.empty()) p += L"&customp=" + ToWide(UrlEncode(ToUtf8(preview.substr(preview.find_last_of(L'\\') + 1))));
+    }
     p += CustomThemeWallpaperParams();
     const std::wstring bing = Dir() + L"\\bing.jpg";
     if (GetFileAttributesW(bing.c_str()) != INVALID_FILE_ATTRIBUTES) {

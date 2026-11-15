@@ -31,13 +31,17 @@ struct Fetched {
     std::wstring path, err, from;   // from: where it came from, for the question
 };
 
-// The "Add to Lyra" button. Built with DOM calls (no innerHTML: the stores use Trusted Types).
-// The stores are single-page apps: the address changes without a load, so it looks every 800 ms.
+// The "Add to Lyra" button. It takes the place of the store's own install button, which does not
+// work outside Chrome / Firefox (Chrome Web Store: the button after the item's title with a label
+// and no icon - the share button has one; addons.mozilla.org: GetFirefoxButton); the store's
+// button is hidden. Found nothing (another layout): a floating button at the bottom right.
+// Built with DOM calls (no innerHTML: the stores use Trusted Types). The stores are single-page
+// apps: the button follows the page as it changes.
 const char kStoreScript[] = R"JS((() => {
   if (window.top !== window || window.__lyraStore) return;
   window.__lyraStore = true;
   const LABEL = "%INSTALL%", WAIT = "%WAIT%";
-  let host = null, button = null, label = null;
+  let host = null, button = null, label = null, hidden = null, mode = "";
   const target = () => {
     const h = location.hostname, p = location.pathname;
     let m;
@@ -46,16 +50,32 @@ const char kStoreScript[] = R"JS((() => {
     if (h === "addons.mozilla.org" && (m = p.match(/^\/(?:[^/]+\/)?(?:firefox|android)\/addon\/([^/]+)/))) return { store: "amo", id: decodeURIComponent(m[1]) };
     return null;
   };
+  // The store's install button (its outermost wrapper), or null.
+  const storeButton = () => {
+    if (location.hostname === "chromewebstore.google.com") {
+      const title = document.querySelector("h1");
+      if (!title) return null;
+      for (const b of document.querySelectorAll("button")) {
+        if (!(title.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+        if (b.querySelector('span[jsname="V67aGc"]') && !b.querySelector("svg")) return b.closest("[data-is-touch-wrapper]") || b;
+      }
+      return null;
+    }
+    if (location.hostname === "addons.mozilla.org")
+      return document.querySelector(".GetFirefoxButton, .AMInstallButton");
+    return null;
+  };
   const make = () => {
     host = document.createElement("lyra-store-button");
-    host.style.cssText = "all:initial;position:fixed;right:24px;bottom:24px;z-index:2147483647";
     const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = 'button{font:600 14px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:#fff;' +
-      "background:linear-gradient(135deg,#8b5cf6,#6d28d9);border:0;border-radius:999px;padding:13px 22px 13px 18px;cursor:pointer;" +
-      "box-shadow:0 6px 24px rgba(76,29,149,.45),0 1px 3px rgba(0,0,0,.3);display:flex;align-items:center;gap:10px;" +
-      "transition:transform .15s,box-shadow .15s,opacity .15s}" +
-      "button:hover{transform:translateY(-1px);box-shadow:0 10px 30px rgba(76,29,149,.55),0 1px 3px rgba(0,0,0,.3)}" +
+      "background:linear-gradient(135deg,#8b5cf6,#6d28d9);border:0;border-radius:999px;cursor:pointer;" +
+      "display:flex;align-items:center;gap:9px;white-space:nowrap;transition:transform .15s,box-shadow .15s,opacity .15s}" +
+      ":host(.float) button{padding:13px 22px 13px 18px;box-shadow:0 6px 24px rgba(76,29,149,.45),0 1px 3px rgba(0,0,0,.3)}" +
+      ":host(.float) button:hover{transform:translateY(-1px);box-shadow:0 10px 30px rgba(76,29,149,.55),0 1px 3px rgba(0,0,0,.3)}" +
+      ":host(.inline) button{height:40px;padding:0 22px 0 16px;box-shadow:0 2px 10px -2px rgba(76,29,149,.5)}" +
+      ":host(.inline) button:hover{box-shadow:0 4px 16px -2px rgba(76,29,149,.65);filter:brightness(1.06)}" +
       "button:active{transform:none}button[disabled]{opacity:.75;cursor:default}svg{width:18px;height:18px;flex:none}";
     button = document.createElement("button");
     const NS = "http://www.w3.org/2000/svg";
@@ -66,7 +86,9 @@ const char kStoreScript[] = R"JS((() => {
     label = document.createElement("span");
     label.textContent = LABEL;
     button.append(svg, label);
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       const t = target();
       if (!t || button.disabled) return;
       button.disabled = true;
@@ -76,15 +98,37 @@ const char kStoreScript[] = R"JS((() => {
     });
     root.append(style, button);
   };
+  const setMode = (m) => {
+    if (mode === m) return;
+    mode = m;
+    host.className = m;
+    host.style.cssText = m === "inline"
+      ? "all:initial;display:inline-flex;vertical-align:middle;margin:0"
+      : "all:initial;position:fixed;right:24px;bottom:24px;z-index:2147483647";
+  };
+  const unhide = () => { if (hidden) { hidden.style.removeProperty("display"); hidden = null; } };
   const update = () => {
-    if (!target()) { if (host) host.remove(); return; }
+    if (!target()) { if (host) host.remove(); unhide(); return; }
     if (!document.documentElement) return;
     if (!host) make();
-    if (!host.isConnected) document.documentElement.appendChild(host);
+    const anchor = storeButton();
+    if (anchor) {
+      if (hidden !== anchor) { unhide(); hidden = anchor; }
+      if (anchor.style.getPropertyValue("display") !== "none") anchor.style.setProperty("display", "none", "important");
+      if (!host.isConnected || host.previousSibling !== anchor) anchor.after(host);
+      setMode("inline");
+    } else {
+      unhide();
+      if (host.parentNode !== document.documentElement) document.documentElement.appendChild(host);
+      setMode("float");
+    }
   };
+  let queued = false;
+  const soon = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; update(); }); } };
   update();
   document.addEventListener("DOMContentLoaded", update);
-  setInterval(update, 800);
+  new MutationObserver(soon).observe(document, { childList: true, subtree: true });
+  setInterval(update, 1000);
 })();)JS";
 
 HWND Owner() { return g_setHwnd && IsWindowVisible(g_setHwnd) && GetForegroundWindow() == g_setHwnd ? g_setHwnd : g_hWnd; }

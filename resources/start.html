@@ -482,6 +482,12 @@ const themeUrl = (id) => {
   const th = THEMES.find((x) => x.id === id);
   return th ? (q.get("thdir") || "") + encodeURIComponent(th.id) + "/" + encodeURIComponent(th.f) + "?v=" + th.v : "";
 };
+// Small copies for the picker's tiles (customp, p): the pictures themselves can be huge photos.
+const customThumb = () => q.get("customp") ? WPDIR + encodeURIComponent(q.get("customp")) + "?v=" + (q.get("cv") || 0) : "";
+const themeThumb = (id) => {
+  const th = THEMES.find((x) => x.id === id);
+  return th && th.p ? (q.get("thdir") || "") + encodeURIComponent(th.id) + "/" + encodeURIComponent(th.p) + "?v=" + th.v : "";
+};
 let starsMade = false;
 function applyWallpaper() {
   const wp = cfg.wallpaper, wall = $("wall");
@@ -1118,7 +1124,7 @@ function renderPanel() {
   bing.addEventListener("click", () => pick("bing"));
   walls.appendChild(bing);
   const file = el("button", customUrl() ? "" : "file", (customUrl() ? "" : "+") + "<span></span>");
-  if (customUrl()) file.style.backgroundImage = "url('" + customUrl() + "')";
+  if (customThumb()) file.style.backgroundImage = "url('" + customThumb() + "')";
   file.querySelector("span").textContent = s.walls.file;
   file.setAttribute("aria-pressed", String(wp.kind === "file"));
   file.addEventListener("click", () => {
@@ -1129,7 +1135,7 @@ function renderPanel() {
   walls.appendChild(file);
   for (const theme of THEMES) {
     const th = el("button", "", "<span></span>");
-    th.style.backgroundImage = "url('" + themeUrl(theme.id) + "')";
+    if (themeThumb(theme.id)) th.style.backgroundImage = "url('" + themeThumb(theme.id) + "')";
     th.querySelector("span").textContent = theme.n || s.walls.theme;
     th.setAttribute("aria-pressed", String(wp.kind === "theme" && wp.id === theme.id));
     th.addEventListener("click", () => pick("theme", theme.id));

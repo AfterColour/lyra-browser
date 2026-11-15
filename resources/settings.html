@@ -611,8 +611,9 @@ function wallpaperRow(r) {
       else if (!b.querySelector(".ico")) b.insertAdjacentHTML("afterbegin", '<i class="ico">' + (key === "file" ? "&#xE710;" : "&#xEB9F;") + "</i>");
     };
     set("bing", q.get("bing") === "1" ? dir + "bing.jpg?v=" + (q.get("bv") || 0) : "");
-    set("file", q.get("custom") ? dir + encodeURIComponent(q.get("custom")) + "?v=" + (q.get("cv") || 0) : "");
-    themes.forEach((th) => set("theme:" + th.id, (q.get("thdir") || "") + encodeURIComponent(th.id) + "/" + encodeURIComponent(th.f) + "?v=" + th.v));
+    // (the pictures' small copies: customp, th.p; empty while Lyra is still making them)
+    set("file", q.get("customp") ? dir + encodeURIComponent(q.get("customp")) + "?v=" + (q.get("cv") || 0) : "");
+    themes.forEach((th) => set("theme:" + th.id, th.p ? (q.get("thdir") || "") + encodeURIComponent(th.id) + "/" + encodeURIComponent(th.p) + "?v=" + th.v : ""));
   };
   const mark = () => {
     const w = ensureStart().wallpaper, key = w.kind === "builtin" ? w.id : w.kind === "theme" ? "theme:" + w.id : w.kind;

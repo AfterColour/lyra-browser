@@ -23,6 +23,7 @@
 #include "browser/TabManager.h"
 #include "browser/Wallpaper.h"
 #include "browser/CustomThemes.h"
+#include "ui/Previews.h"
 #include "browser/WebContext.h"
 #include "core/Localization.h"
 #include "core/Settings.h"
@@ -126,10 +127,11 @@ static std::wstring ModelJson() {
     for (size_t k = 0; k < themes.size(); ++k) {
         const CustomTheme& t = themes[k];
         std::wstring pic;
-        if (!t.picture.empty()) {
+        if (!t.picture.empty()) {             // its small copy (decoding the picture itself froze the page)
+            const std::wstring preview = PreviewFor(t.dir + L"\\" + t.picture, t.dir + L"\\_lyra_preview.jpg");
             wchar_t url[2084] = {};
             DWORD len = ARRAYSIZE(url);
-            if (SUCCEEDED(UrlCreateFromPathW((t.dir + L"\\" + t.picture).c_str(), url, &len, 0))) pic = url;
+            if (!preview.empty() && SUCCEEDED(UrlCreateFromPathW(preview.c_str(), url, &len, 0))) pic = url;
         }
         std::wstring summary;
         if (t.useColors) summary += Tr(L"colors", L"цвета");

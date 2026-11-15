@@ -27,6 +27,7 @@
 #include "browser/Downloads.h"
 #include "browser/Extensions.h"
 #include "browser/ExtensionStore.h"
+#include "ui/Previews.h"
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
@@ -813,6 +814,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_DNR:
         ExtensionsDnrReady(lParam);
+        return 0;
+    case WM_APP_PREVIEWS:
+        PreviewsReady();
         return 0;
     case WM_APP_PIP:
         PipMessage(wParam, lParam);

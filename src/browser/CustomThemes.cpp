@@ -10,6 +10,7 @@
 #include "core/StringUtils.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/Previews.h"
 #include "ui/settings/SettingsWindow.h"
 #include <shobjidl.h>
 #include <atomic>
@@ -298,9 +299,11 @@ std::wstring CustomThemeWallpaperParams() {
         WIN32_FILE_ATTRIBUTE_DATA a = {};
         GetFileAttributesExW((t.dir + L"\\" + t.picture).c_str(), GetFileExInfoStandard, &a);
         const long long v = (long long)(((ULONGLONG)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime) / 10000000LL;
+        const std::wstring preview = PreviewFor(t.dir + L"\\" + t.picture, t.dir + L"\\_lyra_preview.jpg");
+        const std::wstring p = preview.empty() ? L"" : preview.substr(preview.find_last_of(L'\\') + 1);
         if (!list.empty()) list += L",";
-        list += L"{\"id\":" + JsString(t.id) + L",\"f\":" + JsString(t.picture) + L",\"n\":" + JsString(t.name) +
-                L",\"v\":" + std::to_wstring(v) + L"}";
+        list += L"{\"id\":" + JsString(t.id) + L",\"f\":" + JsString(t.picture) + L",\"p\":" + JsString(p) +
+                L",\"n\":" + JsString(t.name) + L",\"v\":" + std::to_wstring(v) + L"}";
     }
     if (list.empty()) return L"";
     wchar_t url[2084] = {};
