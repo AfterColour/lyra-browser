@@ -1,5 +1,6 @@
 // Lyra — разрешения сайтов: уведомления и местоположение (запрос, запоминание, показ).
 #include "browser/Permissions.h"
+#include <functional>
 #include "app/Log.h"
 #include "browser/GeoLocation.h"
 #include "browser/Tab.h"
@@ -131,7 +132,10 @@ void Prune() {
 // ---------------------------------------------------------------------------------------------
 constexpr UINT kTrayId = 1;
 bool s_trayAdded = false;
-struct Shown { uint64_t id = 0; WKNotificationManagerRef manager = nullptr; WKPageRef page = nullptr; };
+struct Shown {
+    uint64_t id = 0; WKNotificationManagerRef manager = nullptr; WKPageRef page = nullptr;   // a site's
+    std::function<void()> click; std::function<void(bool)> closed;                        // Lyra's own (extensions)
+};
 Shown s_last;                                    // the notification on screen now (one at a time)
 std::vector<WKNotificationManagerRef> s_managers;
 
@@ -150,15 +154,13 @@ void TrayRemove() {
     s_trayAdded = false;
 }
 
-void OnShow(WKPageRef page, WKNotificationRef n, const void* ci) {
-    auto manager = (WKNotificationManagerRef)ci;
-    std::wstring title, body;
-    if (WKStringRef s = WKNotificationCopyTitle(n)) { title = WKStr(s); WKRelease(s); }
-    if (WKStringRef s = WKNotificationCopyBody(n))  { body = WKStr(s);  WKRelease(s); }
-    std::wstring site = ToWide(OriginKey(WKNotificationGetSecurityOrigin(n)));
-    if (body.empty()) body = site;
-    else if (!site.empty()) body += L"\n" + site;
+// The one notification on screen goes: an extension's is told it closed.
+void ReplaceShown() {
+    if (s_last.closed) { auto closed = std::move(s_last.closed); s_last = {}; closed(false); }
+    s_last = {};
+}
 
+bool ShowBalloon(const std::wstring& title, const std::wstring& body) {
     NOTIFYICONDATAW nid = TrayData();
     nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
     nid.uCallbackMessage = WM_APP_TRAY;
@@ -168,11 +170,33 @@ void OnShow(WKPageRef page, WKNotificationRef n, const void* ci) {
     wcsncpy_s(nid.szTip, kAppName, _TRUNCATE);
     wcsncpy_s(nid.szInfoTitle, title.c_str(), _TRUNCATE);
     wcsncpy_s(nid.szInfo, body.empty() ? L" " : body.c_str(), _TRUNCATE);
-    nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
-    nid.hBalloonIcon = nid.hIcon;
+    // The large picture in the notification needs Lyra's big icon: with the small one Windows refused
+    // the whole notification (ERROR_TIMEOUT) and nothing was shown.
+    HICON big = (HICON)SendMessageW(g_hWnd, WM_GETICON, ICON_BIG, 0);
+    if (!big) big = (HICON)GetClassLongPtrW(g_hWnd, GCLP_HICON);
+    nid.dwInfoFlags = big ? (NIIF_USER | NIIF_LARGE_ICON) : NIIF_INFO;
+    nid.hBalloonIcon = big;
     BOOL ok = Shell_NotifyIconW(s_trayAdded ? NIM_MODIFY : NIM_ADD, &nid);
+    if (!ok) {                                     // then a plain one
+        nid.dwInfoFlags = NIIF_INFO;
+        nid.hBalloonIcon = nullptr;
+        ok = Shell_NotifyIconW(s_trayAdded ? NIM_MODIFY : NIM_ADD, &nid);
+    }
     if (!s_trayAdded && ok) s_trayAdded = true;
-    if (!ok) { Log("notification: Shell_NotifyIcon failed"); return; }
+    if (!ok) Log("notification: Shell_NotifyIcon failed (error %lu)", GetLastError());
+    return ok != FALSE;
+}
+
+void OnShow(WKPageRef page, WKNotificationRef n, const void* ci) {
+    auto manager = (WKNotificationManagerRef)ci;
+    std::wstring title, body;
+    if (WKStringRef s = WKNotificationCopyTitle(n)) { title = WKStr(s); WKRelease(s); }
+    if (WKStringRef s = WKNotificationCopyBody(n))  { body = WKStr(s);  WKRelease(s); }
+    std::wstring site = ToWide(OriginKey(WKNotificationGetSecurityOrigin(n)));
+    if (body.empty()) body = site;
+    else if (!site.empty()) body += L"\n" + site;
+    ReplaceShown();
+    if (!ShowBalloon(title, body)) return;
 
     s_last = { WKNotificationGetID(n), manager, page };
     WKNotificationManagerProviderDidShowNotification(manager, s_last.id);
@@ -326,11 +350,31 @@ void PermissionsAnswer(unsigned long long seq, int answer) {
     PermissionPromptUpdate();
 }
 
+void NotificationShow(const std::wstring& title, const std::wstring& body, std::function<void()> click, std::function<void(bool)> closed) {
+    ReplaceShown();
+    if (!ShowBalloon(title, body)) { if (closed) closed(false); return; }
+    s_last.click = std::move(click);
+    s_last.closed = std::move(closed);
+}
+
+void NotificationHide() {
+    if (!s_last.click) return;          // (only Lyra's own)
+    TrayRemove();
+    s_last = {};
+}
+
 void PermissionsTrayMessage(WPARAM, LPARAM lParam) {
     switch (LOWORD(lParam)) {
     case NIN_BALLOONUSERCLICK:
     case WM_LBUTTONUP: {
-        Shown shown = s_last;
+        Shown shown = std::move(s_last);
+        s_last = {};
+        if (shown.click) {
+            TrayRemove();
+            shown.click();
+            if (shown.closed) shown.closed(true);
+            break;
+        }
         BringTabForward(shown.page);
         if (shown.manager && shown.id) WKNotificationManagerProviderDidClickNotification(shown.manager, shown.id);
         TrayRemove();
@@ -339,6 +383,7 @@ void PermissionsTrayMessage(WPARAM, LPARAM lParam) {
     }
     case NIN_BALLOONTIMEOUT:
         TrayRemove();
+        if (s_last.closed) { auto closed = std::move(s_last.closed); s_last = {}; closed(false); }
         break;
     }
 }

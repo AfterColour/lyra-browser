@@ -2,6 +2,7 @@
 #pragma once
 
 #include "common/Platform.h"
+#include <functional>
 
 // A site asks to show notifications or to know the location: Lyra asks once per site (origin)
 // (a bubble under the address field) and remembers the answer in %LOCALAPPDATA%\Lyra\permissions.txt. Notifications appear as
@@ -28,6 +29,10 @@ void PermissionsDecideNotifications(WKPageRef page, WKSecurityOriginRef origin, 
 void PermissionsDecideGeolocation(WKPageRef page, WKSecurityOriginRef origin, WKGeolocationPermissionRequestRef request);
 
 void PermissionsTrayMessage(WPARAM wParam, LPARAM lParam);   // WM_APP_TRAY (main window)
+// Lyra's own notification (extensions'), shown the way sites' are; one at a time: a new one
+// replaces it (`closed(false)`). A click calls `click`, then `closed(true)`; timing out `closed(false)`.
+void NotificationShow(const std::wstring& title, const std::wstring& body, std::function<void()> click, std::function<void(bool)> closed);
+void NotificationHide();                              // takes Lyra's own notification away (no callback)
 void PermissionsGeolocationResult(LPARAM lParam);              // WM_APP_GEO (main window)
 void PermissionsReset();                              // Settings > Privacy: forget every answer
 size_t PermissionsCount();

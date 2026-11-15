@@ -561,7 +561,21 @@ const dnr = {
         onAdded: makeEvent(), onRemoved: makeEvent(),
       },
       commands: { getAll: stub([]), onCommand: makeEvent("commands.onCommand") },
-      notifications: { create: (...a) => withCallback(Promise.resolve(String(typeof a[0] === "string" ? a[0] : Date.now())), splitCallback(a)), clear: stub(true), getAll: stub({}), onClicked: makeEvent(), onClosed: makeEvent(), onButtonClicked: makeEvent() },
+      notifications: {
+        create: (...a) => {
+          const cb = splitCallback(a);
+          const named = typeof a[0] === "string";
+          return withCallback(call("notifications.create", { id: named ? a[0] : "", options: (named ? a[1] : a[0]) || {} }), cb);
+        },
+        update: (id, options, cb) => withCallback(call("notifications.update", { id: String(id), options: options || {} }), cb),
+        clear: (id, cb) => withCallback(call("notifications.clear", { id: String(id) }), cb),
+        getAll: (cb) => withCallback(call("notifications.getAll", {}), cb),
+        getPermissionLevel: stub("granted"),
+        onClicked: makeEvent("notifications.onClicked"), onClosed: makeEvent("notifications.onClosed"),
+        onButtonClicked: makeEvent("notifications.onButtonClicked"), onShowSettings: makeEvent(), onPermissionLevelChanged: makeEvent(),
+        TemplateType: { BASIC: "basic", IMAGE: "image", LIST: "list", PROGRESS: "progress" },
+        PermissionLevel: { GRANTED: "granted", DENIED: "denied" },
+      },
       webNavigation: { onBeforeNavigate: quiet(), onCommitted: quiet(), onCompleted: quiet(), onDOMContentLoaded: quiet(), onErrorOccurred: quiet(), onHistoryStateUpdated: quiet(), onReferenceFragmentUpdated: quiet(), onCreatedNavigationTarget: quiet(), getFrame: stub(null), getAllFrames: stub([]) },
       webRequest: { onBeforeRequest: quiet(), onBeforeSendHeaders: quiet(), onSendHeaders: quiet(), onHeadersReceived: quiet(), onResponseStarted: quiet(), onCompleted: quiet(), onErrorOccurred: quiet(), onBeforeRedirect: quiet(), onAuthRequired: quiet(), handlerBehaviorChanged: stub(undefined) },
       declarativeNetRequest: dnr,

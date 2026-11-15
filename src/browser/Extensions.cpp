@@ -4,6 +4,7 @@
 #include "browser/AdBlock.h"
 #include "browser/Bookmarks.h"
 #include "browser/History.h"
+#include "browser/Permissions.h"
 #include "browser/ExtensionStore.h"
 #include "browser/ExtensionDnr.h"
 #include "core/Constants.h"
@@ -1329,6 +1330,53 @@ std::string HistoryOp(const Extension& e, const JsonValue& msg, const std::strin
     return BmError("unknown operation");
 }
 
+// ---- notifications (chrome.notifications) ----------------------------------------------------------
+// Shown as Lyra shows sites' notifications (Windows notifications), one at a time.
+std::pair<std::wstring, std::string> s_note;          // the extension and id on screen now
+
+void ExtEvent(const std::wstring& extId, const std::string& name, const std::string& args) {
+    auto h = s_hosts.find(extId);
+    if (h != s_hosts.end()) ExtensionPagesEvent(*h->second, "globalThis.__lyraEvent && __lyraEvent(" + JsonQuote(name) + "," + args + ")");
+}
+
+std::string NotificationsOp(const Extension& e, const JsonValue& msg, const std::string& op) {
+    if (!HasPermission(e, "notifications")) return BmError("This extension has no \"notifications\" permission.");
+    std::string id = msg.str("id");
+    const bool mine = s_note.first == e.info.id && s_note.second == id && !id.empty();
+    if (op == "notifications.create" || op == "notifications.update") {
+        if (op == "notifications.update" && !mine) return "{\"value\":false}";
+        if (id.empty()) id = std::to_string(GetTickCount64()) + std::to_string(rand() % 1000);
+        const JsonValue* o = msg.get("options");
+        const std::wstring title = ToWide(o ? o->str("title") : "");
+        std::wstring body = ToWide(o ? o->str("message") : "");
+        if (const JsonValue* items = o ? o->get("items") : nullptr)
+            for (auto& it : items->items)
+                if (it.isObject()) body += L"\n\x2022 " + ToWide(it.str("title")) + L": " + ToWide(it.str("message"));
+        if (o && !o->str("contextMessage").empty()) body += L"\n" + ToWide(o->str("contextMessage"));
+        body += (body.empty() ? L"" : L"\n") + e.info.name;
+        const std::wstring ext = e.info.id;
+        const std::string quoted = JsonQuote(id);
+        s_note = { e.info.id, id };                 // (before: a failed notification is closed at once)
+        NotificationShow(title.empty() ? e.info.name : title, body,
+            [ext, quoted]() { ExtEvent(ext, "notifications.onClicked", "[" + quoted + "]"); },
+            [ext, id, quoted](bool byUser) {
+                if (s_note.first == ext && s_note.second == id) s_note = {};
+                ExtEvent(ext, "notifications.onClosed", "[" + quoted + "," + (byUser ? "true" : "false") + "]");
+            });
+        Log("extensions: notification %s of %ls shown", id.c_str(), e.info.id.c_str());
+        return op == "notifications.create" ? "{\"value\":" + quoted + "}" : "{\"value\":true}";
+    }
+    if (op == "notifications.clear") {
+        if (!mine) return "{\"value\":false}";
+        NotificationHide();
+        s_note = {};
+        return "{\"value\":true}";
+    }
+    if (op == "notifications.getAll")
+        return s_note.first == e.info.id ? "{\"value\":{" + JsonQuote(s_note.second) + ":true}}" : "{\"value\":{}}";
+    return BmError("unknown operation");
+}
+
 bool MenuShows(const MenuItem& m, const ExtensionMenuContext& c, bool inherit) {
     if (!m.visible) return false;
     const bool special = !c.link.empty() || !c.image.empty() || !c.media.empty() || c.editable || c.selection;
@@ -1925,6 +1973,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     if (op.rfind("menus.", 0) == 0) { answer = MenusOp(*e, msg, op); return; }
     if (op.rfind("bookmarks.", 0) == 0) { answer = BookmarksOp(*e, msg, op); return; }
     if (op.rfind("history.", 0) == 0) { answer = HistoryOp(*e, msg, op); return; }
+    if (op.rfind("notifications.", 0) == 0) { answer = NotificationsOp(*e, msg, op); return; }
     if (op == "tabs.query") { answer = "{\"value\":" + TabsQuery(msg.get("info") ? *msg.get("info") : JsonValue()) + "}"; return; }
     if (op == "tabs.get") {
         Tab* t = TabById(msg.get("tabId"));
