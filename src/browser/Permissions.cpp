@@ -59,7 +59,7 @@ void Save() {
 
 std::string OriginKey(WKSecurityOriginRef origin) {
     std::string s;
-    if (origin) if (WKStringRef o = WKSecurityOriginCopyToString(origin)) { s = ToUtf8(WKStr(o)); WKRelease(o); }
+    if (origin) if (WKStringRef o = WKSecurityOriginCopyToString(origin)) { s = WKStrUtf8(o); WKRelease(o); }
     return s;
 }
 

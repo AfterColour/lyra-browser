@@ -192,11 +192,14 @@ static void RefreshHistoryPages() {
 // Rewrites the bookmarks page (a tab restored later must not show old bookmarks) and reloads the
 // open ones, except the tab `skip` (it changed itself).
 static void RefreshBookmarksPages(unsigned long long skip = 0, const std::wstring& extra = L"") {
-    const std::wstring fresh = BookmarksPageUrl();
+    // The page is written (bookmarks, importers) only when a tab shows it: an extension changing
+    // bookmarks one by one wrote it for every change, ~25 ms each.
+    std::wstring fresh;
     for (auto& tp : g_tabs) {
         Tab& t = *tp;
         if (t.state != TabState::Live || !t.page || !IsBookmarksPageUrl(t.url)) continue;
         if (t.id == skip) continue;
+        if (fresh.empty()) fresh = BookmarksPageUrl();
         if (fresh == t.url && extra.empty()) WKPageReload(t.page);
         else LoadInTab(t, fresh + extra);
     }

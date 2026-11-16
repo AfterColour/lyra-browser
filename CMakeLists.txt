@@ -8,10 +8,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Optimised build with a .pdb, so crash offsets in tabs.log (Lyra.exe+0x...)
-# can be resolved. Override with -DCMAKE_BUILD_TYPE=Release / Debug.
+# can be resolved. build.bat asks for it (-DCMAKE_BUILD_TYPE=RelWithDebInfo): with clang-cl,
+# project() above already picks Debug when nothing is given, so a check here came too late and
+# every build until 0.4.0 was unoptimised (/Od /RTC1). Override with -DCMAKE_BUILD_TYPE=Debug.
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif ()
+# RelWithDebInfo inlines only what is marked inline (/Ob1): std::string's operator[] and size()
+# then stay calls in every loop. Inline as Release does.
+string(REPLACE "/Ob1" "/Ob2" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 
 # ----------------------------------------------------------------------------
 #  WebKit (Windows port) build output

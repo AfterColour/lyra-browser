@@ -342,7 +342,7 @@ void InstallAsking(const std::wstring& path, const std::wstring& from) {
 void OnStoreMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void*) {
     WKTypeRef body = WKScriptMessageGetBody(message);
     JsonValue msg;
-    if (body && WKGetTypeID(body) == WKStringGetTypeID() && JsonParse(ToUtf8(WKStr((WKStringRef)body)), msg) && msg.isObject()) {
+    if (body && WKGetTypeID(body) == WKStringGetTypeID() && JsonParse(WKStrUtf8((WKStringRef)body), msg) && msg.isObject()) {
         const std::string store = msg.str("store"), id = msg.str("id");
         if (store == "cws" && id.size() == 32 && id.find_first_not_of("abcdefghijklmnop") == std::string::npos) {
             Fetch(L"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" kChromeVersion L""

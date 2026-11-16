@@ -317,7 +317,7 @@ bool WebPage(const Tab& t) {
 void OnProbe(WKTypeRef result, WKErrorRef, void* ctx) {
     Tab* t = TabById((unsigned long long)(uintptr_t)ctx);
     if (!t || !result || WKGetTypeID(result) != WKStringGetTypeID()) return;
-    std::string s = ToUtf8(WKStr((WKStringRef)result));
+    std::string s = WKStrUtf8((WKStringRef)result);
     std::string f[4];
     for (int k = 0, p = 0; k < 4; ++k) {
         size_t e = s.find('|', p);

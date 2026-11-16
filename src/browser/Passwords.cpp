@@ -287,7 +287,7 @@ void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const 
     if (WKFrameInfoRef frame = WKScriptMessageGetFrameInfo(message)) {
         page = WKFrameInfoGetPage(frame);
         if (WKSecurityOriginRef o = WKFrameInfoCopySecurityOrigin(frame)) {
-            if (WKStringRef s = WKSecurityOriginCopyToString(o)) { origin = ToUtf8(WKStr(s)); WKRelease(s); }
+            if (WKStringRef s = WKSecurityOriginCopyToString(o)) { origin = WKStrUtf8(s); WKRelease(s); }
             WKRelease(o);
         }
     }

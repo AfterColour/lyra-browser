@@ -6,6 +6,7 @@
 std::string ToUtf8(const std::wstring& w);
 std::wstring ToWide(const std::string& s);
 std::wstring WKStr(WKStringRef s);
+std::string WKStrUtf8(WKStringRef s);   // = ToUtf8(WKStr(s)), without the detour
 std::wstring TrimWs(const std::wstring& s);
 std::string UrlEncode(const std::string& s);
 // "%D0%9F+x" -> UTF-8 decoded text ("+" becomes a space)

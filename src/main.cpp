@@ -224,6 +224,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_ctxs.clear();                      // only now can no WebKit callback refer to a TabCtx any more
     ReleaseResources();
     HistorySave();
+    BookmarksFlush();
     DownloadsSave();
     FaviconsShutdown();
     GdiplusShutdown(gdipToken);

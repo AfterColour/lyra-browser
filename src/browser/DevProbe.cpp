@@ -10,7 +10,7 @@
 
 static void OnProbeDone(WKTypeRef result, WKErrorRef error, void* ctx) {
     std::string s;
-    if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = ToUtf8(WKStr((WKStringRef)result));
+    if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = WKStrUtf8((WKStringRef)result);
     else if (error) s = "(error)";
     else s = "(no result)";
     Log("probe tab#%llu: %s", (unsigned long long)(uintptr_t)ctx, s.c_str());

@@ -17,6 +17,7 @@ struct Bookmark {
 constexpr long long kFavoritesFolder = 1;
 constexpr long long kBookmarksFolder = 2;
 
+void BookmarksFlush();              // at exit: the file write still waiting
 void BookmarksLoad();               // also fills Favorites with a few sites on the very first run
 
 const Bookmark* BookmarkGet(long long id);

@@ -8,6 +8,8 @@
 #include "core/Url.h"
 
 #include <map>
+#include <mutex>
+#include <thread>
 
 void (*g_bookmarksChanged)() = nullptr;
 long long g_bookmarksVersion = 0;
@@ -43,6 +45,44 @@ static int IndexOf(long long id) {
     return -1;
 }
 
+// The file is written on a worker thread (creating and replacing a file takes 10-30 ms with the
+// virus scanner looking): a burst of changes - an extension moving bookmarks one by one -
+// writes the last version once. BookmarksFlush() at exit writes what is still waiting.
+static std::mutex s_writeMutex;
+static std::string s_pending;
+static bool s_havePending = false, s_writerRunning = false;
+
+static void WriteFile(const std::string& out) {
+    const std::wstring path = BookmarksPath(), tmp = path + L".tmp";
+    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { Log("bookmarks: cannot write %ls", tmp.c_str()); return; }
+    DWORD written = 0;
+    const BOOL ok = ::WriteFile(f, out.data(), (DWORD)out.size(), &written, nullptr);
+    CloseHandle(f);
+    if (!ok || !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileW(tmp.c_str());
+}
+
+static bool TakePending(std::string& out) {
+    std::lock_guard<std::mutex> lock(s_writeMutex);
+    if (!s_havePending) { s_writerRunning = false; return false; }
+    out.swap(s_pending);
+    s_havePending = false;
+    return true;
+}
+
+void BookmarksFlush() {
+    for (int i = 0; i < 100; ++i) {
+        std::string out;
+        {
+            std::lock_guard<std::mutex> lock(s_writeMutex);
+            if (!s_havePending && !s_writerRunning) return;
+            if (s_havePending) { out.swap(s_pending); s_havePending = false; }
+        }
+        if (!out.empty()) WriteFile(out);
+        else Sleep(10);                                          // the worker is writing one
+    }
+}
+
 static void Save() {
     std::string out = "LyraBookmarks\t1\n";
     for (const Bookmark& b : s_items) {
@@ -50,13 +90,15 @@ static void Save() {
         out += std::to_string(b.id) + "\t" + std::to_string(b.parent) + "\t" + (b.folder ? "F" : "U") + "\t" +
                std::to_string(b.added) + "\t" + ToUtf8(Clean(b.url)) + "\t" + ToUtf8(Clean(b.title)) + "\n";
     }
-    const std::wstring path = BookmarksPath(), tmp = path + L".tmp";
-    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) { Log("bookmarks: cannot write %ls", tmp.c_str()); return; }
-    DWORD written = 0;
-    const BOOL ok = WriteFile(f, out.data(), (DWORD)out.size(), &written, nullptr);
-    CloseHandle(f);
-    if (!ok || !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileW(tmp.c_str());
+    std::lock_guard<std::mutex> lock(s_writeMutex);
+    s_pending.swap(out);
+    s_havePending = true;
+    if (s_writerRunning) return;
+    s_writerRunning = true;
+    std::thread([] {
+        Sleep(100);
+        for (std::string data; TakePending(data);) WriteFile(data);
+    }).detach();
 }
 
 static void Changed() {

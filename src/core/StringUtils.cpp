@@ -20,11 +20,18 @@ std::wstring ToWide(const std::string& s) {
 
 std::wstring WKStr(WKStringRef s) {
     if (!s) return std::wstring();
-    size_t cap = WKStringGetMaximumUTF8CStringSize(s);
-    std::vector<char> buf(cap + 1, 0);
-    size_t n = WKStringGetUTF8CString(s, buf.data(), cap);
-    if (n == 0) return std::wstring();
-    return ToWide(std::string(buf.data()));
+    const size_t len = WKStringGetLength(s);
+    std::wstring w(len, L'\0');
+    if (len) w.resize(WKStringGetCharacters(s, reinterpret_cast<WKChar*>(&w[0]), len));
+    return w;
+}
+
+std::string WKStrUtf8(WKStringRef s) {
+    if (!s) return std::string();
+    std::string out(WKStringGetMaximumUTF8CStringSize(s), '\0');
+    const size_t n = WKStringGetUTF8CString(s, &out[0], out.size());   // counts the closing 0
+    out.resize(n ? n - 1 : 0);
+    return out;
 }
 
 std::wstring TrimWs(const std::wstring& s) {

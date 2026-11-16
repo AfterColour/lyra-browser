@@ -537,7 +537,8 @@ void SaveStore(const Extension& e, const std::string& area) {
     QueueWrite(StoreFile(e, area), std::move(out));
 }
 
-std::string Storage(Extension& e, const JsonValue& msg, const std::string& op) {
+// `changesOut`: what changed, for storage.onChanged ("{}" when nothing did).
+std::string Storage(Extension& e, const JsonValue& msg, const std::string& op, std::string* changesOut = nullptr) {
     const std::string area = msg.str("area", "local");
     if (area != "local" && area != "sync" && area != "session" && area != "managed") return "{\"error\":\"unknown storage area\"}";
     Store& store = StoreOf(e, area);
@@ -591,11 +592,14 @@ std::string Storage(Extension& e, const JsonValue& msg, const std::string& op) {
         return "{\"error\":\"unknown operation\"}";
     }
     SaveStore(e, area);
-    return "{\"value\":" + changes + "}}";
+    changes += "}";
+    if (changesOut) *changesOut = changes;
+    return "{\"value\":" + changes + "}";
 }
 
 // The bridge (window.webkit.messageHandlers.lyraExt): see HandleMessage below.
 void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void* context);
+double MsNow();
 std::string LoadApi();
 std::string ExtJson(const Extension& e, const char* context);
 
@@ -1617,7 +1621,7 @@ void OnFrameScriptDone(WKTypeRef result, WKErrorRef, void* context) {
     std::unique_ptr<FrameScript> c((FrameScript*)context);
     MultiScript* m = c->m;
     if (!m->css) {
-        const std::string r = result && WKGetTypeID(result) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)result)) : std::string();
+        const std::string r = result && WKGetTypeID(result) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)result) : std::string();
         JsonValue v;
         if (!r.empty() && JsonParse(r, v)) {
             if (const JsonValue* err = v.get("e")) { if (c->no == 0 || m->error.empty()) m->error = err->s; }
@@ -2075,7 +2079,7 @@ std::string DictString(WKDictionaryRef d, const char* key) {
     WKStringRef k = WKStringCreateWithUTF8CString(key);
     WKTypeRef v = WKDictionaryGetItemForKey(d, k);
     WKRelease(k);
-    return v && WKGetTypeID(v) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)v)) : std::string();
+    return v && WKGetTypeID(v) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)v) : std::string();
 }
 WKTypeRef DictItem(WKDictionaryRef d, const char* key) {
     WKStringRef k = WKStringCreateWithUTF8CString(key);
@@ -2283,7 +2287,7 @@ void WrHeaders(WKDictionaryRef info, std::vector<std::pair<std::string, std::str
     for (size_t i = 0; keys && i < WKArrayGetSize(keys); ++i) {
         WKStringRef k = (WKStringRef)WKArrayGetItemAtIndex(keys, i);
         WKTypeRef v = WKDictionaryGetItemForKey((WKDictionaryRef)hs, k);
-        out.push_back({ ToUtf8(WKStr(k)), v && WKGetTypeID(v) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)v)) : std::string() });
+        out.push_back({ WKStrUtf8(k), v && WKGetTypeID(v) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)v) : std::string() });
     }
     if (keys) WKRelease(keys);
 }
@@ -2464,13 +2468,16 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
     WKTypeRef body = WKScriptMessageGetBody(message);
     if (!e || !e->info.enabled) { answer = "{\"error\":\"the extension is off\"}"; return; }
     JsonValue msg;
-    // (4 levels: msg.add[i].condition.regexFilter; deeper lists such as requestDomains stay text)
-    if (!body || WKGetTypeID(body) != WKStringGetTypeID() || !JsonParseShallow(ToUtf8(WKStr((WKStringRef)body)), msg, 4) || !msg.isObject()) {
+    const std::string bodyText = body && WKGetTypeID(body) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)body) : std::string();
+    // (4 levels: msg.add[i].condition.regexFilter; deeper lists such as requestDomains stay text.
+    //  storage: the values are only kept and passed on - uBlock Origin sets megabytes of them.)
+    const bool storageOp = bodyText.compare(0, 15, "{\"op\":\"storage.") == 0;
+    if (!body || WKGetTypeID(body) != WKStringGetTypeID() || !JsonParseShallow(bodyText, msg, 4, nullptr, storageOp ? 2 : 1 << 30) || !msg.isObject()) {
         answer = "{\"error\":\"bad message\"}";
         return;
     }
     const std::string op = msg.str("op");
-    if (getenv("LYRA_EXT_TRACE")) Log("exttrace %ls %s %s: %.200s", e->info.id.c_str(), ctx.content ? "content" : "page", op.c_str(), op == "storage.set" ? "" : ToUtf8(WKStr((WKStringRef)body)).c_str());
+    if (getenv("LYRA_EXT_TRACE")) Log("exttrace %ls %s %s: %.200s", e->info.id.c_str(), ctx.content ? "content" : "page", op.c_str(), op == "storage.set" ? "" : WKStrUtf8((WKStringRef)body).c_str());
     WKPageRef fromPage = nullptr;
     WKFrameInfoRef fromFrame = WKScriptMessageGetFrameInfo(message);
     bool mainFrame = true;
@@ -2483,11 +2490,9 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         return;
     }
     if (op.rfind("storage.", 0) == 0) {
-        answer = Storage(*e, msg, op);
-        if (op != "storage.get") {
-            JsonValue a;
-            if (JsonParse(answer, a)) if (const JsonValue* v = a.get("value")) StorageChanged(*e, v->raw, msg.str("area", "local"));
-        }
+        std::string changes;
+        answer = Storage(*e, msg, op, &changes);
+        if (op != "storage.get" && !changes.empty()) StorageChanged(*e, changes, msg.str("area", "local"));
         return;
     }
     const JsonValue* payload = msg.get("message");
@@ -2810,8 +2815,16 @@ bool TabFrameExtension(WKScriptMessageRef message, std::wstring& id) {
     return false;
 }
 
+// Milliseconds since an earlier MsNow() (GetTickCount64 counts in 16 ms steps).
+double MsNow() {
+    static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return c.QuadPart * 1000.0 / freq.QuadPart;
+}
+
 void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const void* context) {
-    const ULONGLONG started = GetTickCount64();
+    const double started = MsNow();
     std::string answer;
     bool deferred = false;
     HandlerCtx frameCtx;
@@ -2823,11 +2836,11 @@ void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const 
     }
     if (!context) answer = "{\"error\":\"extension not found\"}";
     else HandleMessage(*(const HandlerCtx*)context, message, reply, answer, deferred);
-    const ULONGLONG took = GetTickCount64() - started;
-    if (took >= 30) {
+    const double took = MsNow() - started;
+    if (took >= (getenv("LYRA_SLOW_MS") ? atof(getenv("LYRA_SLOW_MS")) : 30.0)) {
         WKTypeRef body = WKScriptMessageGetBody(message);
-        const std::string text = body && WKGetTypeID(body) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)body)) : std::string();
-        Log("extensions: slow message (%llu ms, %zu bytes in, %zu out): %.120s", took, text.size(), answer.size(), text.c_str());
+        const std::string text = body && WKGetTypeID(body) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)body) : std::string();
+        Log("extensions: slow message (%.1f ms, %zu bytes in, %zu out): %.120s", took, text.size(), answer.size(), text.c_str());
     }
     if (deferred) return;
     WKStringRef r = WKStringCreateWithUTF8CStringWithLength(answer.data(), answer.size());

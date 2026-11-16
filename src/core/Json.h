@@ -29,7 +29,9 @@ struct JsonValue {
 bool JsonParse(const std::string& text, JsonValue& out, std::string* error = nullptr);
 // The same, but objects and arrays at `buildDepth` or deeper (the top value is depth 0) are not
 // built: they keep their type and raw text only. For big messages read a few levels deep.
-bool JsonParseShallow(const std::string& text, JsonValue& out, int buildDepth, std::string* error = nullptr);
+// String members of objects at `rawMembersFrom` or deeper keep only their raw text (`s` stays
+// empty): for values that are only passed on, such as the items of storage.set.
+bool JsonParseShallow(const std::string& text, JsonValue& out, int buildDepth, std::string* error = nullptr, int rawMembersFrom = 1 << 30);
 // The members of an object, each value as its JSON text; nested values are skipped, not built
 // (fast for big objects whose values are only passed on).
 bool JsonObjectMembers(const std::string& text, std::vector<std::pair<std::string, std::string>>& out, std::string* error = nullptr);

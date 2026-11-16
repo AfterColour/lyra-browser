@@ -76,7 +76,7 @@ void OnArticle(WKTypeRef result, WKErrorRef, void* ctx) {
     Tab* t = TabById((unsigned long long)(uintptr_t)ctx);
     if (!t || !t->page) return;
     std::string json;
-    if (result && WKGetTypeID(result) == WKStringGetTypeID()) json = ToUtf8(WKStr((WKStringRef)result));
+    if (result && WKGetTypeID(result) == WKStringGetTypeID()) json = WKStrUtf8((WKStringRef)result);
     if (json.empty()) { Log("reader: no article on tab#%llu", t->id); MessageBeep(MB_ICONWARNING); return; }
 
     std::string page = ReadResource(L"reader.html");

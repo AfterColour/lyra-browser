@@ -10,6 +10,7 @@ struct Parser {
     size_t p = 0;
     std::string error;
     int buildDepth = 1 << 30;           // objects and arrays this deep keep only their type and raw text
+    int rawMembersFrom = 1 << 30;       // string members this deep keep only their raw text
 
     explicit Parser(const std::string& text) : t(text) {}
 
@@ -45,8 +46,14 @@ struct Parser {
         if (t[p] != '"') return fail("string expected");
         ++p;
         while (p < t.size() && t[p] != '"') {
+            if (t[p] != '\\') {
+                size_t e = p;
+                while (e < t.size() && t[e] != '"' && t[e] != '\\') ++e;
+                out.append(t, p, e - p);
+                p = e;
+                continue;
+            }
             char c = t[p++];
-            if (c != '\\') { out += c; continue; }
             if (p >= t.size()) break;
             c = t[p++];
             switch (c) {
@@ -144,7 +151,13 @@ struct Parser {
                 if (p >= t.size() || t[p] != ':') return fail("':' expected");
                 ++p;
                 JsonValue item;
-                if (!value(item, depth + 1)) return false;
+                skip();
+                if (depth + 1 >= rawMembersFrom && p < t.size() && t[p] == '"') {
+                    const size_t from = p;
+                    if (!skipString()) return false;
+                    item.type = JsonValue::String;
+                    item.raw = t.substr(from, p - from);
+                } else if (!value(item, depth + 1)) return false;
                 v.members.emplace_back(std::move(key), std::move(item));
                 skip();
                 if (p < t.size() && t[p] == ',') {
@@ -213,12 +226,13 @@ bool JsonValue::flag(const std::string& key, bool fallback) const {
 
 bool JsonParse(const std::string& text, JsonValue& out, std::string* error) { return JsonParseShallow(text, out, 1 << 30, error); }
 
-bool JsonParseShallow(const std::string& text, JsonValue& out, int buildDepth, std::string* error) {
+bool JsonParseShallow(const std::string& text, JsonValue& out, int buildDepth, std::string* error, int rawMembersFrom) {
     const bool bom = text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF;
     const std::string stripped = bom ? text.substr(3) : std::string();
     const std::string& body = bom ? stripped : text;
     Parser parser(body);
     parser.buildDepth = buildDepth;
+    parser.rawMembersFrom = rawMembersFrom;
     out = JsonValue();
     bool ok = parser.value(out, 0);
     if (ok) {
