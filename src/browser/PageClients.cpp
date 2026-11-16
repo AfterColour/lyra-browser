@@ -232,11 +232,12 @@ static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKF
 }
 
 // Only the main frame decides whether a response is shown or saved.
-static void OnDecidePolicyForResponse(WKPageRef, WKNavigationResponseRef nr, WKFramePolicyListenerRef listener,
+static void OnDecidePolicyForResponse(WKPageRef page, WKNavigationResponseRef nr, WKFramePolicyListenerRef listener,
                                       WKTypeRef, const void*) {
     bool mainFrame = true;
     if (WKFrameInfoRef fi = WKNavigationResponseCopyFrameInfo(nr)) {
         mainFrame = WKFrameInfoGetIsMainFrame(fi);
+        if (!mainFrame) ExtensionsFrameSeen(page, fi);   // extensions may run scripts in it
         WKRelease(fi);
     }
     bool attachment = false;

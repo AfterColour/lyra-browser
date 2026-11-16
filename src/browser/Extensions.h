@@ -82,3 +82,4 @@ struct ExtensionMenuGroup { std::wstring extId, name; std::vector<ExtensionMenuE
 bool ExtensionsHaveMenus();
 std::vector<ExtensionMenuGroup> ExtensionMenus(const ExtensionMenuContext& c);
 void ExtensionMenuClicked(const std::wstring& extId, const std::string& itemId, const ExtensionMenuContext& c, unsigned long long tabId);
+void ExtensionsFrameSeen(WKPageRef page, WKFrameInfoRef frame);   // a subframe's response (for executeScript allFrames)

@@ -304,13 +304,13 @@ function (EXT) {
         const cb = splitCallback(args);
         const tabId = typeof args[0] === "number" ? args.shift() : null;
         const d = args[0] || {};
-        return withCallback(call("scripting.executeScript", { tabId, code: d.code, files: d.file ? [d.file] : undefined }).then((r) => (r || []).map((x) => x.result)), cb);
+        return withCallback(call("scripting.executeScript", { tabId, code: d.code, files: d.file ? [d.file] : undefined, allFrames: !!d.allFrames, frameIds: typeof d.frameId === "number" ? [d.frameId] : undefined }).then((r) => (r || []).map((x) => x.result)), cb);
       },
       insertCSS: (...args) => {
         const cb = splitCallback(args);
         const tabId = typeof args[0] === "number" ? args.shift() : null;
         const d = args[0] || {};
-        return withCallback(call("scripting.insertCSS", { tabId, css: d.code, files: d.file ? [d.file] : undefined }), cb);
+        return withCallback(call("scripting.insertCSS", { tabId, css: d.code, files: d.file ? [d.file] : undefined, allFrames: !!d.allFrames, frameIds: typeof d.frameId === "number" ? [d.frameId] : undefined }), cb);
       },
       removeCSS: stub(undefined),
       setZoom: stub(undefined),
@@ -341,11 +341,11 @@ function (EXT) {
         inj = inj || {};
         const target = inj.target || {};
         const code = inj.func ? "(" + inj.func.toString() + ").apply(null, " + JSON.stringify(inj.args || []) + ")" : undefined;
-        return withCallback(call("scripting.executeScript", { tabId: target.tabId, code, files: inj.files, world: inj.world || "ISOLATED" }), cb);
+        return withCallback(call("scripting.executeScript", { tabId: target.tabId, code, files: inj.files, world: inj.world || "ISOLATED", allFrames: !!target.allFrames, frameIds: target.frameIds }), cb);
       },
       ExecutionWorld: { ISOLATED: "ISOLATED", MAIN: "MAIN" },
       StyleOrigin: { AUTHOR: "AUTHOR", USER: "USER" },
-      insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files }), cb),
+      insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files, allFrames: !!(inj.target || {}).allFrames, frameIds: (inj.target || {}).frameIds }), cb),
       removeCSS: stub(undefined),
       registerContentScripts: (scripts, cb) => withCallback(call("scripting.registerContentScripts", { scripts: scripts || [] }).then(() => undefined), cb),
       getRegisteredContentScripts: (...args) => { const cb = splitCallback(args); const f = args[0] || {}; return withCallback(call("scripting.getRegisteredContentScripts", { ids: Array.isArray(f.ids) ? f.ids : null }), cb); },
@@ -589,4 +589,6 @@ const dnr = {
 
   globalThis.chrome = api;
   globalThis.browser = api;
+  // One of its pages inside a tab: Lyra sends it messages and events from now on.
+  if (location.protocol === "lyra-extension:" && EXT.context === "extension") call("frame.hello", {}).catch(() => {});
 }

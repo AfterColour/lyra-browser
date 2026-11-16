@@ -28,6 +28,7 @@
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKContextPrivate.h>
 #include <WebKit/WKSecurityOriginRef.h>
+#include <WebKit/WKFrameHandleRef.h>
 #include <WebKit/WKPageConfigurationRef.h>
 #include <WebKit/WKPreferencesRefPrivate.h>
 #include <shobjidl.h>
@@ -958,9 +959,47 @@ void ExtensionPagesEvent(Host& h, const std::string& script, WKPageRef except = 
             if (WKViewGetPage(v) != except) Eval(WKViewGetPage(v), script);
 }
 
+// ---- the extension's pages inside tabs ------------------------------------------------------------
+// A password manager's menu in an iframe on a site, an options page opened in a tab: each says hello
+// when it loads (frame.hello) and from then on gets runtime messages, ports and events like the
+// extension's other pages. Delivered only while the frame still shows the extension's page (it may
+// have been navigated to a site since); forgotten when the tab's page changes or the tab closes.
+struct TabFrame { std::wstring ext; WKPageRef page = nullptr; WKFrameInfoRef frame = nullptr; uint64_t frameId = 0; unsigned long long tabId = 0; };
+std::vector<TabFrame> s_tabFrames;
+
+uint64_t FrameIdOf(WKFrameInfoRef f) {
+    if (!f) return 0;
+    WKFrameHandleRef h = WKFrameInfoCreateFrameHandleRef(f);
+    if (!h) return 0;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+    const uint64_t id = WKFrameHandleGetFrameID(h);   // (one process: no collision)
+#pragma warning(pop)
+    WKRelease(h);
+    return id;
+}
+
+void ForgetTabFrames(const std::function<bool(const TabFrame&)>& gone) {
+    for (auto it = s_tabFrames.begin(); it != s_tabFrames.end();) {
+        if (gone(*it)) { if (it->frame) WKRelease(it->frame); it = s_tabFrames.erase(it); }
+        else ++it;
+    }
+}
+
+// The script, run only if the frame still shows this extension's page.
+std::string InExtensionFrame(const std::wstring& extId, const std::string& script) {
+    return "(location.protocol===" + JsonQuote(ToUtf8(kExtScheme) + ":") + "&&location.host===" + JsonQuote(ToUtf8(extId)) +
+           ")?(" + script + "):false";
+}
+
+void FramesEvent(const std::wstring& extId, const std::string& script) {
+    for (auto& f : s_tabFrames)
+        if (f.ext == extId) EvalInWorld(f.page, L"", InExtensionFrame(extId, script), nullptr, nullptr, f.frame);
+}
+
 void Broadcast(const std::string& name, const std::string& argsJson) {
     const std::string script = "globalThis.__lyraEvent && __lyraEvent(" + JsonQuote(name) + "," + argsJson + ")";
-    for (auto& [id, h] : s_hosts) ExtensionPagesEvent(*h, script);
+    for (auto& [id, h] : s_hosts) { ExtensionPagesEvent(*h, script); FramesEvent(id, script); }
 }
 
 // ---- context menu items (chrome.contextMenus) -------------------------------------------------
@@ -1335,8 +1374,10 @@ std::string HistoryOp(const Extension& e, const JsonValue& msg, const std::strin
 std::pair<std::wstring, std::string> s_note;          // the extension and id on screen now
 
 void ExtEvent(const std::wstring& extId, const std::string& name, const std::string& args) {
+    const std::string script = "globalThis.__lyraEvent && __lyraEvent(" + JsonQuote(name) + "," + args + ")";
     auto h = s_hosts.find(extId);
-    if (h != s_hosts.end()) ExtensionPagesEvent(*h->second, "globalThis.__lyraEvent && __lyraEvent(" + JsonQuote(name) + "," + args + ")");
+    if (h != s_hosts.end()) ExtensionPagesEvent(*h->second, script);
+    FramesEvent(extId, script);
 }
 
 std::string NotificationsOp(const Extension& e, const JsonValue& msg, const std::string& op) {
@@ -1442,6 +1483,7 @@ void StorageChanged(const Extension& e, const std::string& changes, const std::s
     const std::string script = "globalThis.__lyraEvent && (__lyraEvent('storage.onChanged',[" + changes + "," + JsonQuote(area) +
                                "]), __lyraEvent('storage." + area + ".onChanged',[" + changes + "]))";
     if (auto it = s_hosts.find(e.info.id); it != s_hosts.end()) ExtensionPagesEvent(*it->second, script);
+    FramesEvent(e.info.id, script);
     if (e.scripts.empty()) return;
     for (auto& t : g_tabs)
         if (Visible(*t) && t->page) EvalInWorld(t->page, World(e), script, nullptr, nullptr);
@@ -1452,22 +1494,58 @@ std::string DeliverScript(int callId, const std::string& message, const std::str
     return "globalThis.__lyraDeliverMessage ? __lyraDeliverMessage(" + std::to_string(callId) + "," + message + "," + sender + ") : false";
 }
 
+// A frame that did not take the message (no longer the extension's page, or gone) will not
+// answer: one fewer to wait for.
+void OnFrameDelivered(WKTypeRef result, WKErrorRef, void* context) {
+    const int callId = (int)(intptr_t)context;
+    if (result && WKGetTypeID(result) == WKBooleanGetTypeID() && WKBooleanGetValue((WKBooleanRef)result)) return;
+    auto it = s_calls.find(callId);
+    if (it != s_calls.end() && --it->second.waiting <= 0) Complete(callId, "{\"value\":null}");
+}
+
 void OnTabDelivered(WKTypeRef result, WKErrorRef, void* context) {
     const int callId = (int)(intptr_t)context;
     const bool ok = result && WKGetTypeID(result) == WKBooleanGetTypeID() && WKBooleanGetValue((WKBooleanRef)result);
     if (!ok) Complete(callId, kNoReceiver);
 }
 
-struct ScriptCall { int callId; bool css; };
-void OnScriptDone(WKTypeRef result, WKErrorRef, void* context) {
-    std::unique_ptr<ScriptCall> c((ScriptCall*)context);
-    if (c->css) { Complete(c->callId, "{\"value\":null}"); return; }
-    std::string r = result && WKGetTypeID(result) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)result)) : std::string();
-    JsonValue v;
-    if (r.empty() || !JsonParse(r, v)) { Complete(c->callId, "{\"error\":\"the script could not run in this tab\"}"); return; }
-    if (const JsonValue* err = v.get("e")) { Complete(c->callId, "{\"error\":" + JsonQuote(err->s) + "}"); return; }
-    const JsonValue* value = v.get("r");
-    Complete(c->callId, "{\"value\":[{\"frameId\":0,\"result\":" + (value ? value->raw : std::string("null")) + "}]}");
+// ---- the frames of a tab's page (scripting.executeScript allFrames / frameIds) ----------------------
+// The C API has no frame tree: a subframe is seen when its response arrives (PageClients) and kept,
+// with a small number of its own (the frameId extensions see), until the tab's page changes.
+struct SeenFrame { int no = 0; uint64_t frameId = 0; WKFrameInfoRef frame = nullptr; };
+std::map<unsigned long long, std::vector<SeenFrame>> s_seenFrames;
+std::map<unsigned long long, int> s_nextFrameNo;
+
+void ForgetSeenFrames(unsigned long long tabId) {
+    auto it = s_seenFrames.find(tabId);
+    if (it == s_seenFrames.end()) return;
+    for (auto& f : it->second) if (f.frame) WKRelease(f.frame);
+    s_seenFrames.erase(it);
+}
+
+// Every frame's result in one answer: [{frameId, result}], the main frame first.
+struct MultiScript { int callId = 0; bool css = false; int pending = 0; std::vector<std::pair<int, std::string>> results; std::string error; };
+struct FrameScript { MultiScript* m; int no; };
+
+void OnFrameScriptDone(WKTypeRef result, WKErrorRef, void* context) {
+    std::unique_ptr<FrameScript> c((FrameScript*)context);
+    MultiScript* m = c->m;
+    if (!m->css) {
+        const std::string r = result && WKGetTypeID(result) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)result)) : std::string();
+        JsonValue v;
+        if (!r.empty() && JsonParse(r, v)) {
+            if (const JsonValue* err = v.get("e")) { if (c->no == 0 || m->error.empty()) m->error = err->s; }
+            else { const JsonValue* value = v.get("r"); m->results.push_back({ c->no, value ? value->raw : std::string("null") }); }
+        } else if (c->no == 0 && m->error.empty()) m->error = "the script could not run in this tab";
+    }
+    if (--m->pending > 0) return;
+    std::unique_ptr<MultiScript> done(m);
+    if (done->css) { Complete(done->callId, "{\"value\":null}"); return; }
+    if (done->results.empty()) { Complete(done->callId, "{\"error\":" + JsonQuote(done->error.empty() ? "the script could not run in this tab" : done->error) + "}"); return; }
+    std::sort(done->results.begin(), done->results.end(), [](auto& a, auto& b) { return a.first < b.first; });
+    std::string s = "[";
+    for (auto& [no, raw] : done->results) { if (s.size() > 1) s += ","; s += "{\"frameId\":" + std::to_string(no) + ",\"result\":" + raw + "}"; }
+    Complete(done->callId, "{\"value\":" + s + "]}");
 }
 
 std::string Files(const Extension& e, const JsonValue* files) {
@@ -1893,13 +1971,20 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         // of those: to the others.
         const std::string sender = SenderJson(*e, ctx.content, fromPage, mainFrame);
         std::vector<WKPageRef> targets = ExtensionPages(host, fromPage);
-        if (targets.empty()) { answer = kNoReceiver; return; }
-        const int callId = NewCall(reply, (int)targets.size());
+        // and its pages inside tabs (not the frame that sent it)
+        const uint64_t fromId = ctx.tabFrame ? FrameIdOf(fromFrame) : 0;
+        std::vector<const TabFrame*> frames;
+        for (auto& f : s_tabFrames)
+            if (f.ext == e->info.id && !(ctx.tabFrame && f.page == fromPage && f.frameId == fromId)) frames.push_back(&f);
+        if (targets.empty() && frames.empty()) { answer = kNoReceiver; return; }
+        const int callId = NewCall(reply, (int)(targets.size() + frames.size()));
         deferred = true;
+        const std::string script = DeliverScript(callId, messageJson, sender);
         for (WKPageRef p : targets) {
-            const std::string script = DeliverScript(callId, messageJson, sender);
             if (p == host->bgPage) ToBackground(*host, script); else Eval(p, script);
         }
+        for (const TabFrame* f : frames)
+            EvalInWorld(f->page, L"", InExtensionFrame(e->info.id, script), (void*)(intptr_t)callId, OnFrameDelivered, f->frame);
         return;
     }
     if (op == "port.connect") {
@@ -1921,6 +2006,16 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
             if (t && t->page && !e->scripts.empty()) { PortEnd r; r.page = t->page; r.content = true; r.tabId = t->id; receivers.push_back(r); }
         } else {
             for (WKPageRef p : ExtensionPages(host, fromPage)) { PortEnd r; r.page = p; receivers.push_back(r); }
+            const uint64_t fromId = ctx.tabFrame ? FrameIdOf(fromFrame) : 0;
+            for (auto& f : s_tabFrames)
+                if (f.ext == e->info.id && !(ctx.tabFrame && f.page == fromPage && f.frameId == fromId)) {
+                    PortEnd r;
+                    r.page = f.page;
+                    r.frame = f.frame;
+                    WKRetain(f.frame);
+                    r.tabId = f.tabId;
+                    receivers.push_back(r);
+                }
         }
         const int id = s_nextPort++;
         if (receivers.empty()) {
@@ -1963,6 +2058,22 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         if (it != s_calls.end()) {
             if (msg.flag("answered")) Complete(callId, "{\"value\":" + (msg.get("value") ? msg.get("value")->raw : std::string("null")) + "}");
             else if (--it->second.waiting <= 0) Complete(callId, "{\"value\":null}");
+        }
+        answer = "{\"value\":null}";
+        return;
+    }
+    if (op == "frame.hello") {
+        if (ctx.tabFrame && fromFrame && fromPage) {
+            const uint64_t id = FrameIdOf(fromFrame);
+            ForgetTabFrames([&](const TabFrame& f) { return f.page == fromPage && f.frameId == id; });
+            TabFrame f;
+            f.ext = e->info.id;
+            f.page = fromPage;
+            f.frame = fromFrame;
+            WKRetain(fromFrame);
+            f.frameId = id;
+            if (Tab* t = TabOfPage(fromPage)) f.tabId = t->id;
+            s_tabFrames.push_back(f);
         }
         answer = "{\"value\":null}";
         return;
@@ -2045,9 +2156,22 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
             script = api + "(() => { try { const r = (0, eval)(" + JsonQuote(code) + "); return JSON.stringify({ r: r === undefined ? null : r }); } "
                      "catch (e) { return JSON.stringify({ e: String(e && e.message || e) }); } })()";
         }
+        // Which frames: the main frame (0), all of them, or those asked for by number.
+        std::vector<std::pair<int, WKFrameInfoRef>> frames;
+        const JsonValue* ids = msg.get("frameIds");
+        const bool all = msg.flag("allFrames");
+        std::set<int> wanted;
+        if (ids && ids->isArray()) for (auto& v : ids->items) if (v.type == JsonValue::Number) wanted.insert((int)v.n);
+        if (wanted.empty() || wanted.count(0)) frames.push_back({ 0, nullptr });
+        if (all || !wanted.empty())
+            if (auto it = s_seenFrames.find(t->id); it != s_seenFrames.end())
+                for (auto& f : it->second) if (all || wanted.count(f.no)) frames.push_back({ f.no, f.frame });
+        if (frames.empty()) { answer = "{\"error\":\"No frame with this id.\"}"; return; }
         const int callId = NewCall(reply, 1);
         deferred = true;
-        EvalInWorld(t->page, mainWorld ? std::wstring() : World(*e), script, new ScriptCall{ callId, css }, OnScriptDone);
+        auto* m = new MultiScript{ callId, css, (int)frames.size() };
+        for (auto& [no, frame] : frames)
+            EvalInWorld(t->page, mainWorld ? std::wstring() : World(*e), script, new FrameScript{ m, no }, OnFrameScriptDone, frame);
         return;
     }
     if (op == "debug.log") {
@@ -2677,13 +2801,20 @@ void ExtensionsOnTabActivated(Tab* t) {
 }
 
 void ExtensionsOnTabCommitted(Tab* t) {
-    if (!t || s_ports.empty()) return;
+    if (!t) return;
     const unsigned long long id = t->id;
+    ForgetTabFrames([id](const TabFrame& f) { return f.tabId == id; });
+    ForgetSeenFrames(id);
+    s_nextFrameNo.erase(id);
+    if (s_ports.empty()) return;
     DropPorts([id](const PortEnd& end) { return (end.content || end.frame) && end.tabId == id; });
 }
 
 void ExtensionsOnTabRemoved(unsigned long long id) {
     s_tabSeen.erase(id);
+    ForgetTabFrames([id](const TabFrame& f) { return f.tabId == id; });
+    ForgetSeenFrames(id);
+    s_nextFrameNo.erase(id);
     const std::string suffix = ":" + std::to_string(id);    // the buttons' settings for that tab
     for (auto& [eid, a] : s_actions)
         for (auto it = a.values.begin(); it != a.values.end();) {
@@ -3061,4 +3192,16 @@ void ExtensionMenuClicked(const std::wstring& extId, const std::string& itemId, 
     auto h = s_hosts.find(extId);
     if (h == s_hosts.end()) return;
     ExtensionPagesEvent(*h->second, "globalThis.__lyraEvent && __lyraEvent('contextMenus.onClicked',[" + info + "," + tab + "])");
+}
+
+void ExtensionsFrameSeen(WKPageRef page, WKFrameInfoRef frame) {
+    Tab* t = page && frame ? TabOfPage(page) : nullptr;
+    if (!t) return;
+    const uint64_t id = FrameIdOf(frame);
+    auto& list = s_seenFrames[t->id];
+    for (auto& f : list)
+        if (f.frameId == id) { WKRetain(frame); WKRelease(f.frame); f.frame = frame; return; }   // (it navigated)
+    if (list.size() >= 200) return;
+    WKRetain(frame);
+    list.push_back({ ++s_nextFrameNo[t->id], id, frame });
 }
