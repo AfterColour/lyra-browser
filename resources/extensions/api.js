@@ -215,9 +215,21 @@ function (EXT) {
   };
 
   // ---- storage ---------------------------------------------------------------------------------
-  const storageChanged = makeEvent("storage.onChanged");
+  // In a web page, Lyra sends storage changes only once a script here listens for them (uBlock
+  // Origin writes megabytes of cache that its page scripts never read).
+  let storageWatched = false;
+  const watchStorage = (ev) => {
+    if (EXT.context !== "content") return ev;
+    const add = ev.addListener;
+    ev.addListener = (f) => {
+      if (!storageWatched) { storageWatched = true; call("storage.watch", {}).catch(() => {}); }
+      add(f);
+    };
+    return ev;
+  };
+  const storageChanged = watchStorage(makeEvent("storage.onChanged"));
   const area = (name) => {
-    const ev = makeEvent("storage." + name + ".onChanged");
+    const ev = watchStorage(makeEvent("storage." + name + ".onChanged"));
     return {
       get: (keys, cb) => {
         if (isFunction(keys)) { cb = keys; keys = null; }
@@ -310,7 +322,7 @@ function (EXT) {
         const cb = splitCallback(args);
         const tabId = typeof args[0] === "number" ? args.shift() : null;
         const d = args[0] || {};
-        return withCallback(call("scripting.insertCSS", { tabId, css: d.code, files: d.file ? [d.file] : undefined, allFrames: !!d.allFrames, frameIds: typeof d.frameId === "number" ? [d.frameId] : undefined }), cb);
+        return withCallback(call("scripting.insertCSS", { tabId, css: d.code, files: d.file ? [d.file] : undefined, allFrames: !!d.allFrames, frameIds: typeof d.frameId === "number" ? [d.frameId] : undefined, origin: d.cssOrigin || "author" }), cb);
       },
       removeCSS: stub(undefined),
       setZoom: stub(undefined),
@@ -345,7 +357,7 @@ function (EXT) {
       },
       ExecutionWorld: { ISOLATED: "ISOLATED", MAIN: "MAIN" },
       StyleOrigin: { AUTHOR: "AUTHOR", USER: "USER" },
-      insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files, allFrames: !!(inj.target || {}).allFrames, frameIds: (inj.target || {}).frameIds }), cb),
+      insertCSS: (inj, cb) => withCallback(call("scripting.insertCSS", { tabId: (inj.target || {}).tabId, css: inj.css, files: inj.files, allFrames: !!(inj.target || {}).allFrames, frameIds: (inj.target || {}).frameIds, origin: inj.origin || "AUTHOR" }), cb),
       removeCSS: stub(undefined),
       registerContentScripts: (scripts, cb) => withCallback(call("scripting.registerContentScripts", { scripts: scripts || [] }).then(() => undefined), cb),
       getRegisteredContentScripts: (...args) => { const cb = splitCallback(args); const f = args[0] || {}; return withCallback(call("scripting.getRegisteredContentScripts", { ids: Array.isArray(f.ids) ? f.ids : null }), cb); },
@@ -540,8 +552,85 @@ const dnr = {
       deleteAll: (cb) => hist("deleteAll", {}, cb),
       onVisited: makeEvent("history.onVisited"), onVisitRemoved: makeEvent("history.onVisitRemoved"),
     };
+    // Firefox's contentScripts.register (extensions built for Firefox, uBlock Origin among them):
+    // Lyra's registered scripts for this session, inline code too.
+    const m = EXT.manifest;
+    if ((m.browser_specific_settings && m.browser_specific_settings.gecko) || (m.applications && m.applications.gecko)) {
+      let csSeq = 0;
+      const files = (list) => (list || []).filter((x) => x && x.file).map((x) => x.file);
+      const codes = (list) => (list || []).filter((x) => x && x.code).map((x) => x.code);
+      api.contentScripts = {
+        register: (o) => {
+          o = o || {};
+          const id = "lyra-cs-" + Date.now().toString(36) + "-" + (++csSeq);
+          return call("scripting.registerContentScripts", { scripts: [{
+            id, matches: o.matches || [], excludeMatches: o.excludeMatches || [], js: files(o.js), css: files(o.css),
+            lyraJsCode: codes(o.js), lyraCssCode: codes(o.css), allFrames: !!o.allFrames, runAt: o.runAt || "document_idle",
+            persistAcrossSessions: false,
+          }] }).then(() => ({ unregister: () => call("scripting.unregisterContentScripts", { ids: [id] }).then(() => undefined) }));
+        },
+      };
+    }
     if (asks("bookmarks")) api.bookmarks = bookmarks;
     if (asks("history")) api.history = history;
+    // webRequest: Lyra asks this page's listeners about the tabs' loads (__lyraWebRequest) and the
+    // engine waits for blocking ones: { cancel }, { redirectUrl }, { requestHeaders }.
+    const wrListeners = new Map();
+    let wrSeq = 0;
+    const wrEvent = (name) => {
+      const mine = [];
+      return {
+        addListener(cb, filter, spec) {
+          if (!isFunction(cb) || mine.some((l) => l.cb === cb)) return;
+          const id = ++wrSeq;
+          mine.push({ cb, id });
+          wrListeners.set(id, cb);
+          const s = Array.isArray(spec) ? spec : [];
+          call("webRequest.listen", { id, event: name, filter: filter || {}, blocking: s.includes("blocking"), headers: s.includes("requestHeaders") || s.includes("responseHeaders") }).catch(() => {});
+        },
+        removeListener(cb) {
+          const i = mine.findIndex((l) => l.cb === cb);
+          if (i < 0) return;
+          const [l] = mine.splice(i, 1);
+          wrListeners.delete(l.id);
+          call("webRequest.unlisten", { id: l.id }).catch(() => {});
+        },
+        hasListener: (cb) => mine.some((l) => l.cb === cb),
+        hasListeners: () => mine.length > 0,
+      };
+    };
+    const webRequest = {
+      onBeforeRequest: wrEvent("onBeforeRequest"), onBeforeSendHeaders: wrEvent("onBeforeSendHeaders"), onSendHeaders: wrEvent("onSendHeaders"),
+      onHeadersReceived: wrEvent("onHeadersReceived"), onResponseStarted: wrEvent("onResponseStarted"), onCompleted: wrEvent("onCompleted"),
+      onErrorOccurred: wrEvent("onErrorOccurred"), onBeforeRedirect: wrEvent("onBeforeRedirect"), onAuthRequired: wrEvent("onAuthRequired"),
+      handlerBehaviorChanged: stub(undefined), MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
+      ResourceType: { MAIN_FRAME: "main_frame", SUB_FRAME: "sub_frame", STYLESHEET: "stylesheet", SCRIPT: "script", IMAGE: "image", FONT: "font",
+                      OBJECT: "object", XMLHTTPREQUEST: "xmlhttprequest", PING: "ping", CSP_REPORT: "csp_report", MEDIA: "media", WEBSOCKET: "websocket", OTHER: "other" },
+    };
+    globalThis.__lyraWebRequest = (callId, stage, ids, details) => {
+      const result = {};
+      const merge = (r) => {
+        if (!r || typeof r !== "object") return;
+        if (r.cancel) result.cancel = true;
+        if (r.redirectUrl && !result.redirectUrl) result.redirectUrl = String(r.redirectUrl);
+        if (Array.isArray(r.requestHeaders)) result.requestHeaders = r.requestHeaders.map((h) => ({ name: String(h.name), value: h.value === undefined ? "" : String(h.value) }));
+        if (Array.isArray(r.responseHeaders)) result.responseHeaders = r.responseHeaders.map((h) => ({ name: String(h.name), value: h.value === undefined ? "" : String(h.value) }));
+      };
+      const waits = [];
+      for (const id of ids) {
+        const cb = wrListeners.get(id);
+        if (!cb) continue;
+        try {
+          const r = cb(Object.assign({}, details));
+          if (r && isFunction(r.then)) waits.push(r.then(merge, () => {}));
+          else merge(r);
+        } catch (e) { console.error(e); }
+      }
+      if (!callId) return true;
+      const reply = () => call("webRequest.reply", { callId, stage, response: result }).catch(() => {});
+      if (waits.length) Promise.all(waits).then(reply); else reply();
+      return true;
+    };
     const grantedPermissions = (p) => {
       const have = EXT.manifest.permissions || [];
       return ((p && p.permissions) || []).every((x) => have.includes(x));
@@ -577,7 +666,7 @@ const dnr = {
         PermissionLevel: { GRANTED: "granted", DENIED: "denied" },
       },
       webNavigation: { onBeforeNavigate: quiet(), onCommitted: quiet(), onCompleted: quiet(), onDOMContentLoaded: quiet(), onErrorOccurred: quiet(), onHistoryStateUpdated: quiet(), onReferenceFragmentUpdated: quiet(), onCreatedNavigationTarget: quiet(), getFrame: stub(null), getAllFrames: stub([]) },
-      webRequest: { onBeforeRequest: quiet(), onBeforeSendHeaders: quiet(), onSendHeaders: quiet(), onHeadersReceived: quiet(), onResponseStarted: quiet(), onCompleted: quiet(), onErrorOccurred: quiet(), onBeforeRedirect: quiet(), onAuthRequired: quiet(), handlerBehaviorChanged: stub(undefined) },
+      webRequest,
       declarativeNetRequest: dnr,
       idle: { queryState: stub("active"), setDetectionInterval() {}, onStateChanged: makeEvent() },
       offscreen: { createDocument: stub(undefined), closeDocument: stub(undefined), hasDocument: stub(false) },
@@ -587,6 +676,11 @@ const dnr = {
     if (window.top === window) window.close = () => { call("window.close").catch(() => {}); };
   }
 
+  // WebKit has no requestIdleCallback (uBlock Origin's background uses it).
+  if (!globalThis.requestIdleCallback) {
+    globalThis.requestIdleCallback = (cb, opts) => setTimeout(() => { const end = Date.now() + 15; cb({ didTimeout: false, timeRemaining: () => Math.max(0, end - Date.now()) }); }, 1);
+    globalThis.cancelIdleCallback = (id) => clearTimeout(id);
+  }
   globalThis.chrome = api;
   globalThis.browser = api;
   // One of its pages inside a tab: Lyra sends it messages and events from now on.

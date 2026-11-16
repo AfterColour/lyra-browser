@@ -32,8 +32,10 @@
 #include <WebKit/WKPageConfigurationRef.h>
 #include <WebKit/WKPreferencesRefPrivate.h>
 #include <shobjidl.h>
+#include <wincrypt.h>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <set>
 #include <mutex>
 #include <thread>
@@ -46,6 +48,7 @@ namespace {
 struct ContentScript {
     std::vector<std::string> matches, excludes;     // WebKit user content URL patterns
     std::vector<std::wstring> js, css;              // files, relative to the extension
+    std::vector<std::string> jsCode, cssCode;        // inline (Firefox's contentScripts.register)
     bool atStart = false, allFrames = false;
 };
 
@@ -157,8 +160,12 @@ void AddPatterns(const JsonValue* list, std::vector<std::string>& out) {
 
 void AddFiles(const JsonValue* list, std::vector<std::wstring>& out) {
     if (!list || !list->isArray()) return;
-    for (auto& v : list->items)
-        if (v.isString() && SafeRelative(ToWide(v.s))) out.push_back(ToWide(v.s));
+    for (auto& v : list->items) {
+        if (!v.isString()) continue;
+        std::string p = v.s;
+        while (!p.empty() && p[0] == '/') p.erase(0, 1);   // "/js/vapi.js" (uBlock Origin): from the extension's root
+        if (SafeRelative(ToWide(p))) out.push_back(ToWide(p));
+    }
 }
 
 std::wstring Slug(const std::string& name) {
@@ -385,6 +392,51 @@ void OnExtensionScheme(WKURLSchemeTaskRef task, WKURLRef url, WKStringRef, WKURL
     finish(200, MimeOf(native), ReadText(file, 512u << 20));
 }
 
+// A webRequest redirect to an extension's web-accessible file or to a data: address: its bytes and
+// type, served to the page in place of the load.
+bool RedirectBody(const std::string& target, std::string& mime, std::string& body) {
+    if (target.rfind("data:", 0) == 0) {
+        const size_t comma = target.find(',');
+        if (comma == std::string::npos) return false;
+        std::string meta = target.substr(5, comma - 5), data = target.substr(comma + 1);
+        const bool b64 = meta.size() >= 7 && meta.compare(meta.size() - 7, 7, ";base64") == 0;
+        if (b64) meta.resize(meta.size() - 7);
+        mime = meta.empty() ? "text/plain" : meta.substr(0, meta.find(';'));
+        std::string decoded;
+        for (size_t i = 0; i < data.size(); ++i) {
+            if (data[i] == '%' && i + 2 < data.size() && isxdigit((unsigned char)data[i + 1]) && isxdigit((unsigned char)data[i + 2])) {
+                decoded += (char)strtol(data.substr(i + 1, 2).c_str(), nullptr, 16);
+                i += 2;
+            } else decoded += data[i];
+        }
+        if (!b64) { body = decoded; return true; }
+        DWORD size = 0;
+        if (!CryptStringToBinaryA(decoded.c_str(), (DWORD)decoded.size(), CRYPT_STRING_BASE64, nullptr, &size, nullptr, nullptr)) return false;
+        body.resize(size);
+        return CryptStringToBinaryA(decoded.c_str(), (DWORD)decoded.size(), CRYPT_STRING_BASE64, (BYTE*)body.data(), &size, nullptr, nullptr) != FALSE;
+    }
+    const std::string prefix = ToUtf8(kExtScheme) + "://";
+    if (target.compare(0, prefix.size(), prefix) != 0) return false;
+    const std::string rest = target.substr(prefix.size());
+    const size_t slash = rest.find('/');
+    if (slash == std::string::npos) return false;
+    const std::wstring id = ToWide(rest.substr(0, slash));
+    std::string path = rest.substr(slash + 1);
+    path = path.substr(0, path.find_first_of("?#"));                      // (uBlock Origin adds ?secret=...)
+    const Extension* e = nullptr;
+    for (const Extension& x : s_exts) if (_wcsicmp(x.info.id.c_str(), id.c_str()) == 0) e = &x;
+    if (!e || !e->info.enabled || path.empty() || !SafeRelative(ToWide(path))) return false;
+    if (!std::any_of(e->war.begin(), e->war.end(), [&](const std::string& g) { return GlobMatch(g.c_str(), path.c_str()); })) return false;
+    const std::wstring native = Native(ToWide(path));
+    if (PrivateFile(native)) return false;
+    const std::wstring file = e->info.dir + L"\\" + native;
+    const DWORD attr = GetFileAttributesW(file.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    mime = MimeOf(native);
+    body = ReadText(file, 32u << 20);
+    return true;
+}
+
 void SetSchemeHandler(WKPageConfigurationRef conf, intptr_t from) {
     WKStringRef scheme = WKStringCreateWithUTF8CString(ToUtf8(kExtScheme).c_str());
     WKPageConfigurationSetURLSchemeHandler(conf, scheme, OnExtensionScheme, nullptr, (const void*)from);
@@ -437,16 +489,39 @@ void FlushWrites() {                                          // at exit: what i
     }
 }
 
+// The "local" area read on a worker thread as the extension starts: uBlock Origin keeps ~15 MB there,
+// and parsing it on the first storage.get froze the window for ~150 ms.
+std::map<std::wstring, std::future<Store>> s_storePreload;
+
 Store& StoreOf(const Extension& e, const std::string& area) {
     if (area == "session") return s_session[e.info.id];
     auto& areas = s_stores[e.info.id];
     auto it = areas.find(area);
     if (it != areas.end()) return it->second;
     Store& s = areas[area];
+    if (area == "local")
+        if (auto pre = s_storePreload.find(e.info.id); pre != s_storePreload.end()) {
+            s = pre->second.get();
+            s_storePreload.erase(pre);
+            return s;
+        }
     std::vector<std::pair<std::string, std::string>> members;
     if (JsonObjectMembers(ReadText(StoreFile(e, area)), members))
         for (auto& [k, v] : members) s[k] = std::move(v);
     return s;
+}
+
+void PreloadStore(const Extension& e) {
+    if (s_storePreload.count(e.info.id)) return;
+    if (auto st = s_stores.find(e.info.id); st != s_stores.end() && st->second.count("local")) return;
+    const std::wstring file = StoreFile(e, "local");
+    s_storePreload[e.info.id] = std::async(std::launch::async, [file]() {
+        Store s;
+        std::vector<std::pair<std::string, std::string>> members;
+        if (JsonObjectMembers(ReadText(file), members))
+            for (auto& [k, v] : members) s[k] = std::move(v);
+        return s;
+    });
 }
 
 void SaveStore(const Extension& e, const std::string& area) {
@@ -591,10 +666,15 @@ bool RegisteredToContent(const JsonValue& s, ContentScript& c, bool& mainWorld) 
     };
     files(s.get("js"), c.js);
     files(s.get("css"), c.css);
+    auto code = [](const JsonValue* list, std::vector<std::string>& out) {
+        if (list && list->isArray()) for (auto& v : list->items) if (v.isString() && !v.s.empty()) out.push_back(v.s);
+    };
+    code(s.get("lyraJsCode"), c.jsCode);
+    code(s.get("lyraCssCode"), c.cssCode);
     c.atStart = s.str("runAt") == "document_start";
     c.allFrames = s.flag("allFrames");
     mainWorld = s.str("world") == "MAIN";
-    return !c.matches.empty() && (!c.js.empty() || !c.css.empty());
+    return !c.matches.empty() && (!c.js.empty() || !c.css.empty() || !c.jsCode.empty() || !c.cssCode.empty());
 }
 
 std::string ScriptError(const std::string& text) { return "{\"error\":" + JsonQuote(text) + "}"; }
@@ -705,12 +785,14 @@ void AddAllScripts(WKUserContentControllerRef controller) {
             // in order, in the same world (as Chrome runs them).
             std::string head = mainWorld ? std::string() : "if (!globalThis.__lyraExtension) { globalThis.__lyraExtension = true; (" + s_apiJs + ")(" + ext + "); }\n";
             for (const std::wstring& css : s.css) head += std::string(kCssInjector) + "(" + JsonQuote(ReadText(e.info.dir + L"\\" + Native(css))) + ");\n";
+            for (const std::string& css : s.cssCode) head += std::string(kCssInjector) + "(" + JsonQuote(css) + ");\n";
             if (!head.empty()) AddScript(controller, head, s, into);
             for (const std::wstring& js : s.js) {
                 std::string code = ReadText(e.info.dir + L"\\" + Native(js));
                 if (code.size() >= 3 && (unsigned char)code[0] == 0xEF) code.erase(0, 3);
                 AddScript(controller, code + "\n//# sourceURL=" + ToUtf8(FileUrl(e.info.dir + L"\\" + Native(js))), s, into);
             }
+            for (const std::string& code : s.jsCode) AddScript(controller, code, s, into);
         }
     }
 }
@@ -1477,16 +1559,20 @@ void MenuChildren(const std::vector<MenuItem>& list, const std::string& parent, 
     }
 }
 
-// storage.onChanged everywhere the extension runs: its pages and its scripts in every tab.
+// storage.onChanged everywhere the extension runs: its pages and its scripts in the tabs that
+// listen (storage.watch; forgotten when the tab's page changes).
+std::map<std::wstring, std::set<WKPageRef>> s_storageWatchers;
+
 void StorageChanged(const Extension& e, const std::string& changes, const std::string& area) {
     if (changes == "{}") return;
     const std::string script = "globalThis.__lyraEvent && (__lyraEvent('storage.onChanged',[" + changes + "," + JsonQuote(area) +
                                "]), __lyraEvent('storage." + area + ".onChanged',[" + changes + "]))";
     if (auto it = s_hosts.find(e.info.id); it != s_hosts.end()) ExtensionPagesEvent(*it->second, script);
     FramesEvent(e.info.id, script);
-    if (e.scripts.empty()) return;
+    auto w = s_storageWatchers.find(e.info.id);
+    if (w == s_storageWatchers.end() || w->second.empty()) return;
     for (auto& t : g_tabs)
-        if (Visible(*t) && t->page) EvalInWorld(t->page, World(e), script, nullptr, nullptr);
+        if (Visible(*t) && t->page && w->second.count(t->page)) EvalInWorld(t->page, World(e), script, nullptr, nullptr);
 }
 
 // ---- messages ---------------------------------------------------------------------------------
@@ -1939,6 +2025,440 @@ std::string DnrOp(const Extension& e, const JsonValue& msg, const std::string& o
     return "{\"error\":\"unknown operation\"}";
 }
 
+// ---- webRequest ----------------------------------------------------------------------------------
+// The engine asks Lyra about every resource load of a tab while some extension listens
+// (WKPageSetResourceLoadDecider). Each load goes through onBeforeRequest (cancel, redirect), then
+// onBeforeSendHeaders (change the headers), then onSendHeaders; a stage with blocking listeners
+// waits for their answers (2 s at most), the others are only told. Listeners live in the page that
+// added them; filters (urls, types, tabId) are checked here, so only matching loads reach them.
+struct WrListener {
+    int id = 0;
+    std::wstring ext;
+    WKPageRef page = nullptr;
+    std::string event;
+    std::vector<std::string> urls, types;
+    long long tabId = -1;
+    bool blocking = false, headers = false;
+};
+std::vector<WrListener> s_wrListeners;
+bool s_wrActive = false;
+
+struct WrRequest {
+    WKResourceLoadDecisionRef decision = nullptr;
+    int kind = 0;                 // 0 the request, 1 a redirect of it, 2 its response
+    std::string id;               // requestId: the engine's id of the load
+    int statusCode = 0;
+    std::string redirectUrl, error;
+    std::vector<std::pair<std::string, std::string>> responseHeaders, newResponseHeaders;
+    bool responseHeadersSet = false;
+    int stage = 0;
+    int pending = 0;
+    ULONGLONG stageStarted = 0;
+    std::string url, type, method, initiator, documentUrl;
+    long long tabId = -1;
+    int frameId = 0, parentFrameId = -1;
+    long long time = 0;
+    std::vector<std::pair<std::string, std::string>> headers;      // as the page sends them
+    bool cancel = false, headersSet = false;
+    std::string redirect;
+    std::vector<std::pair<std::string, std::string>> newHeaders;
+};
+std::map<int, WrRequest> s_wrRequests;
+int s_wrNextRequest = 1;
+std::map<uint64_t, WrRequest> s_wrLive;      // loads asked about, until they end: their later events
+
+UINT_PTR s_wrTimer = 0;
+std::map<unsigned long long, uint64_t> s_wrMainFrame;                  // tab -> the engine's id of its main frame
+std::map<unsigned long long, std::map<uint64_t, int>> s_wrFrameNos;     // tab -> engine frame id -> frameId
+
+std::string DictString(WKDictionaryRef d, const char* key) {
+    WKStringRef k = WKStringCreateWithUTF8CString(key);
+    WKTypeRef v = WKDictionaryGetItemForKey(d, k);
+    WKRelease(k);
+    return v && WKGetTypeID(v) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)v)) : std::string();
+}
+WKTypeRef DictItem(WKDictionaryRef d, const char* key) {
+    WKStringRef k = WKStringCreateWithUTF8CString(key);
+    WKTypeRef v = WKDictionaryGetItemForKey(d, k);
+    WKRelease(k);
+    return v;
+}
+
+bool WrMatches(const WrListener& l, const WrRequest& r) {
+    if (!l.urls.empty()) {
+        bool any = false;
+        for (auto& p : l.urls) if (MatchUrl(p, r.url)) { any = true; break; }
+        if (!any) return false;
+    }
+    if (!l.types.empty() && std::find(l.types.begin(), l.types.end(), r.type) == l.types.end()) return false;
+    return l.tabId < 0 || l.tabId == r.tabId;
+}
+
+std::string WrDetails(int id, const WrRequest& r, bool withHeaders) {
+    std::string s = "{\"requestId\":\"" + (r.id.empty() ? std::to_string(id) : r.id) + "\",\"url\":" + JsonQuote(r.url) + ",\"method\":" + JsonQuote(r.method) +
+                    ",\"type\":" + JsonQuote(r.type) + ",\"frameId\":" + std::to_string(r.frameId) + ",\"parentFrameId\":" +
+                    std::to_string(r.parentFrameId) + ",\"tabId\":" + std::to_string(r.tabId) + ",\"timeStamp\":" + std::to_string(r.time);
+    if (!r.initiator.empty() && r.initiator != "null") s += ",\"initiator\":" + JsonQuote(r.initiator) + ",\"originUrl\":" + JsonQuote(r.initiator + "/");
+    if (!r.documentUrl.empty()) s += ",\"documentUrl\":" + JsonQuote(r.documentUrl);
+    if (r.statusCode) s += ",\"statusCode\":" + std::to_string(r.statusCode) + ",\"statusLine\":\"HTTP/1.1 " + std::to_string(r.statusCode) + "\",\"fromCache\":false";
+    if (!r.redirectUrl.empty()) s += ",\"redirectUrl\":" + JsonQuote(r.redirectUrl);
+    if (!r.error.empty()) s += ",\"error\":" + JsonQuote(r.error);
+    if (withHeaders && r.kind == 2) {
+        s += ",\"responseHeaders\":[";
+        for (size_t i = 0; i < r.responseHeaders.size(); ++i)
+            s += (i ? "," : "") + std::string("{\"name\":") + JsonQuote(r.responseHeaders[i].first) + ",\"value\":" + JsonQuote(r.responseHeaders[i].second) + "}";
+        s += "]";
+    } else if (withHeaders) {
+        const auto& hs = r.stage >= 3 && r.headersSet ? r.newHeaders : r.headers;   // onSendHeaders: as changed
+        s += ",\"requestHeaders\":[";
+        for (size_t i = 0; i < hs.size(); ++i)
+            s += (i ? "," : "") + std::string("{\"name\":") + JsonQuote(hs[i].first) + ",\"value\":" + JsonQuote(hs[i].second) + "}";
+        s += "]";
+    }
+    return s + "}";
+}
+
+void WrRun(int id);
+
+// What only informs (no answer awaited) goes out in batches: one evaluation per page every few
+// milliseconds instead of three or four per load, so the extension has time for the loads that wait.
+std::map<std::pair<std::wstring, WKPageRef>, std::string> s_wrBatch;
+UINT_PTR s_wrBatchTimer = 0;
+
+void CALLBACK WrFlushBatch(HWND, UINT, UINT_PTR, DWORD) {
+    if (s_wrBatchTimer) { KillTimer(nullptr, s_wrBatchTimer); s_wrBatchTimer = 0; }
+    auto batch = std::move(s_wrBatch);
+    s_wrBatch.clear();
+    for (auto& [key, script] : batch) {
+        auto h = s_hosts.find(key.first);
+        if (h == s_hosts.end()) continue;
+        if (key.second == h->second->bgPage) ToBackground(*h->second, script);
+        else Eval(key.second, script);
+    }
+}
+
+// Tells the stage's listeners, grouped by the page they live in; blocking ones are waited for.
+void WrFire(int id, WrRequest& r, const char* event, int stage) {
+    std::map<std::pair<std::wstring, WKPageRef>, std::pair<std::vector<int>, std::pair<bool, bool>>> groups;   // ids, (blocking, headers)
+    for (auto& l : s_wrListeners) {
+        if (l.event != event || !WrMatches(l, r)) continue;
+        auto& g = groups[{ l.ext, l.page }];
+        g.first.push_back(l.id);
+        if (l.blocking && (stage < 3 || stage == 4)) g.second.first = true;
+        if (l.headers) g.second.second = true;
+    }
+    for (auto& [key, g] : groups) {
+        auto h = s_hosts.find(key.first);
+        if (h == s_hosts.end()) continue;
+        std::string ids = "[";
+        for (size_t i = 0; i < g.first.size(); ++i) ids += (i ? "," : "") + std::to_string(g.first[i]);
+        const int callId = g.second.first ? id : 0;
+        if (callId) ++r.pending;
+        const std::string script = "globalThis.__lyraWebRequest && __lyraWebRequest(" + std::to_string(callId) + "," + std::to_string(stage) + "," + ids +
+                                   "]," + WrDetails(id, r, g.second.second && (stage >= 2 || r.kind == 2)) + ");";
+        if (!callId) {
+            s_wrBatch[key] += script;
+            if (!s_wrBatchTimer) s_wrBatchTimer = SetTimer(nullptr, 0, 15, WrFlushBatch);
+            continue;
+        }
+        if (key.second == h->second->bgPage) ToBackground(*h->second, script);
+        else Eval(key.second, script);
+    }
+    r.stageStarted = GetTickCount64();
+}
+
+void WrFinish(int id) {
+    auto it = s_wrRequests.find(id);
+    if (it == s_wrRequests.end()) return;
+    WrRequest r = std::move(it->second);
+    s_wrRequests.erase(it);
+    if (getenv("LYRA_WR_STATS")) {
+        static long long sum[3]; static int cnt[3];
+        const int k = r.kind < 3 ? r.kind : 0;
+        sum[k] += NowUnixMs() - r.time; ++cnt[k];
+        if (cnt[k] % 50 == 0) Log("webRequest: kind %d: %d answered, %.1f ms on average", k, cnt[k], (double)sum[k] / cnt[k]);
+    }
+    if (r.cancel) { WKResourceLoadDecisionComplete(r.decision, 1, nullptr, nullptr, nullptr); return; }
+    if (r.kind == 2) {                                        // the response: its headers changed?
+        if (!r.responseHeadersSet) { WKResourceLoadDecisionComplete(r.decision, 0, nullptr, nullptr, nullptr); return; }
+        r.headers = r.responseHeaders;
+        r.newHeaders = r.newResponseHeaders;
+        r.headersSet = true;
+        r.redirect.clear();
+    } else if (r.kind == 1 && !r.redirect.empty() && r.redirect.rfind("http://", 0) != 0 && r.redirect.rfind("https://", 0) != 0) {
+        WKResourceLoadDecisionComplete(r.decision, 1, nullptr, nullptr, nullptr);   // (a redirect cannot be answered with bytes)
+        return;
+    }
+    if (!r.redirect.empty()) {
+        if (r.redirect.rfind("http://", 0) == 0 || r.redirect.rfind("https://", 0) == 0) {
+            WKStringRef u = WKStringCreateWithUTF8CString(r.redirect.c_str());
+            WKResourceLoadDecisionComplete(r.decision, 2, u, nullptr, nullptr);
+            WKRelease(u);
+        } else {
+            std::string mime, body;
+            if (RedirectBody(r.redirect, mime, body)) {          // the extension's own file, or data:
+                Log("webRequest: %s answered with %s (%zu bytes)", r.url.substr(0, 100).c_str(), r.redirect.substr(0, r.redirect.find('?')).substr(0, 120).c_str(), body.size());
+                WKStringRef m = WKStringCreateWithUTF8CString(mime.c_str());
+                WKResourceLoadDecisionRespond(r.decision, m, body.data(), body.size());
+                WKRelease(m);
+            } else {
+                WKResourceLoadDecisionComplete(r.decision, 1, nullptr, nullptr, nullptr);
+            }
+        }
+        return;
+    }
+    if (!r.headersSet) { WKResourceLoadDecisionComplete(r.decision, 0, nullptr, nullptr, nullptr); return; }
+    std::vector<WKTypeRef> names, values;
+    auto lower = [](std::string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; };
+    std::map<std::string, std::string> before, after;
+    for (auto& [n, v] : r.headers) before[lower(n)] = v;
+    for (auto& [n, v] : r.newHeaders) {
+        after[lower(n)] = v;
+        auto b = before.find(lower(n));
+        if (b == before.end() || b->second != v) {
+            names.push_back(WKStringCreateWithUTF8CString(n.c_str()));
+            values.push_back(WKStringCreateWithUTF8CString(v.c_str()));
+        }
+    }
+    for (auto& [n, v] : r.headers)
+        if (!after.count(lower(n))) {
+            names.push_back(WKStringCreateWithUTF8CString(n.c_str()));
+            values.push_back(WKBooleanCreate(false));      // removed
+        }
+    WKArrayRef na = WKArrayCreateAdoptingValues(names.data(), names.size());
+    WKArrayRef va = WKArrayCreateAdoptingValues(values.data(), values.size());
+    WKResourceLoadDecisionComplete(r.decision, 0, nullptr, na, va);
+    WKRelease(na);
+    WKRelease(va);
+}
+
+void WrRun(int id) {
+    for (;;) {
+        auto it = s_wrRequests.find(id);
+        if (it == s_wrRequests.end()) return;
+        WrRequest& r = it->second;
+        if (r.pending > 0) return;
+        if (r.kind == 1) {                                    // a redirect: told, then decided like a new request
+            if (r.stage == 0) { r.stage = 6; WrFire(id, r, "onBeforeRedirect", 6); r.url = r.redirectUrl; r.redirectUrl.clear(); r.statusCode = 0; r.stage = 1; WrFire(id, r, "onBeforeRequest", 1); continue; }
+            break;
+        }
+        if (r.kind == 2) {                                    // the response: onHeadersReceived, then onResponseStarted
+            if (r.stage == 0) { r.stage = 4; WrFire(id, r, "onHeadersReceived", 4); continue; }
+            if (r.stage == 4) { r.stage = 5; WrFire(id, r, "onResponseStarted", 5); continue; }
+            break;
+        }
+        if (r.stage == 0) { r.stage = 1; WrFire(id, r, "onBeforeRequest", 1); continue; }
+        if (r.stage == 1) {
+            if (r.cancel || !r.redirect.empty()) break;
+            r.stage = 2; WrFire(id, r, "onBeforeSendHeaders", 2); continue;
+        }
+        if (r.stage == 2) {
+            r.stage = 3;
+            WrFire(id, r, "onSendHeaders", 3);
+            continue;
+        }
+        break;
+    }
+    WrFinish(id);
+}
+
+void CALLBACK WrTick(HWND, UINT, UINT_PTR, DWORD) {
+    const ULONGLONG now = GetTickCount64();
+    std::vector<int> late;
+    for (auto& [id, r] : s_wrRequests) if (r.pending > 0 && now - r.stageStarted > 2000) late.push_back(id);
+    for (int id : late) {
+        auto it = s_wrRequests.find(id);
+        if (it == s_wrRequests.end()) continue;
+        Log("webRequest: no answer for %s in 2 s (stage %d), going on", it->second.url.substr(0, 120).c_str(), it->second.stage);
+        it->second.pending = 0;
+        WrRun(id);
+    }
+    if (s_wrRequests.empty() && s_wrTimer) { KillTimer(nullptr, s_wrTimer); s_wrTimer = 0; }
+}
+
+void WrHeaders(WKDictionaryRef info, std::vector<std::pair<std::string, std::string>>& out) {
+    WKTypeRef hs = DictItem(info, "headers");
+    if (!hs || WKGetTypeID(hs) != WKDictionaryGetTypeID()) return;
+    WKArrayRef keys = WKDictionaryCopyKeys((WKDictionaryRef)hs);
+    for (size_t i = 0; keys && i < WKArrayGetSize(keys); ++i) {
+        WKStringRef k = (WKStringRef)WKArrayGetItemAtIndex(keys, i);
+        WKTypeRef v = WKDictionaryGetItemForKey((WKDictionaryRef)hs, k);
+        out.push_back({ ToUtf8(WKStr(k)), v && WKGetTypeID(v) == WKStringGetTypeID() ? ToUtf8(WKStr((WKStringRef)v)) : std::string() });
+    }
+    if (keys) WKRelease(keys);
+}
+
+uint64_t DictUInt(WKDictionaryRef d, const char* key) {
+    WKTypeRef v = DictItem(d, key);
+    return v && WKGetTypeID(v) == WKUInt64GetTypeID() ? WKUInt64GetValue((WKUInt64Ref)v) : 0;
+}
+
+// A load already asked about: redirected, answered, finished or failed.
+void WrLoadEvent(const std::string& event, WKDictionaryRef info, WKResourceLoadDecisionRef decision) {
+    const uint64_t load = DictUInt(info, "loadId");
+    auto live = s_wrLive.find(load);
+    if (!s_wrActive || live == s_wrLive.end()) {
+        if (live != s_wrLive.end() && (event == "finished" || event == "failed")) s_wrLive.erase(live);
+        WKResourceLoadDecisionComplete(decision, 0, nullptr, nullptr, nullptr);
+        return;
+    }
+    if (event == "finished" || event == "failed") {
+        WrRequest r = std::move(live->second);
+        s_wrLive.erase(live);
+        WKResourceLoadDecisionComplete(decision, 0, nullptr, nullptr, nullptr);
+        r.error = event == "failed" ? DictString(info, "error") : std::string();
+        r.kind = 3;
+        WrFire(0, r, event == "failed" ? "onErrorOccurred" : "onCompleted", 7);
+        return;
+    }
+    WrRequest r = live->second;                                 // (a copy: the load goes on)
+    r.decision = decision;
+    r.stage = 0;
+    r.pending = 0;
+    r.cancel = r.headersSet = r.responseHeadersSet = false;
+    r.redirect.clear();
+    r.time = NowUnixMs();
+    if (event == "redirect") {
+        r.kind = 1;
+        r.statusCode = (int)DictUInt(info, "statusCode");
+        r.redirectUrl = DictString(info, "url");          // (onBeforeRedirect sees the old address)
+        live->second.url = r.redirectUrl;                       // what it loads from now on
+    } else {
+        r.kind = 2;
+        r.statusCode = (int)DictUInt(info, "statusCode");
+        live->second.statusCode = r.statusCode;
+        r.responseHeaders.clear();
+        WrHeaders(info, r.responseHeaders);
+    }
+    const int id = s_wrNextRequest++;
+    s_wrRequests[id] = std::move(r);
+    if (!s_wrTimer) s_wrTimer = SetTimer(nullptr, 0, 250, WrTick);
+    WrRun(id);
+}
+
+void OnDecideResourceLoad(WKPageRef page, WKDictionaryRef info, WKResourceLoadDecisionRef decision, const void*) {
+    const std::string event = info ? DictString(info, "event") : std::string();
+    if (!event.empty() && event != "request") { WrLoadEvent(event, info, decision); return; }
+    Tab* t = s_wrActive ? TabOfPage(page) : nullptr;
+    if (!t || !info) { WKResourceLoadDecisionComplete(decision, 0, nullptr, nullptr, nullptr); return; }
+    WrRequest r;
+    r.decision = decision;
+    const uint64_t load = DictUInt(info, "loadId");
+    if (load) r.id = std::to_string(load);
+    r.url = DictString(info, "url");
+    r.method = DictString(info, "method");
+    r.type = DictString(info, "type");
+    r.initiator = DictString(info, "initiator");
+    r.tabId = (long long)t->id;
+    r.time = NowUnixMs();
+    uint64_t frame = 0;
+    if (WKTypeRef f = DictItem(info, "frameId")) if (WKGetTypeID(f) == WKUInt64GetTypeID()) frame = WKUInt64GetValue((WKUInt64Ref)f);
+    if (r.type == "main_frame") {
+        s_wrMainFrame[t->id] = frame;
+        s_wrFrameNos[t->id].clear();
+        r.frameId = 0;
+        r.parentFrameId = -1;
+    } else {
+        auto mf = s_wrMainFrame.find(t->id);
+        if (mf != s_wrMainFrame.end() && mf->second == frame) r.frameId = 0;
+        else {
+            auto& nos = s_wrFrameNos[t->id];
+            r.frameId = nos.emplace(frame, (int)nos.size() + 1).first->second;
+        }
+        r.parentFrameId = r.type == "sub_frame" || r.frameId != 0 ? 0 : -1;
+        r.documentUrl = r.frameId == 0 ? ToUtf8(t->url) : std::string();
+    }
+    WrHeaders(info, r.headers);
+    if (load) {                                                 // its later events (redirects, response, end)
+        WrRequest& keep = s_wrLive[load];
+        keep = r;
+        keep.decision = nullptr;
+        while (s_wrLive.size() > 4000) s_wrLive.erase(s_wrLive.begin());
+    }
+    const int id = s_wrNextRequest++;
+    s_wrRequests[id] = std::move(r);
+    if (!s_wrTimer) s_wrTimer = SetTimer(nullptr, 0, 250, WrTick);
+    WrRun(id);
+}
+
+void WrSetPage(WKPageRef page, bool on) {
+    if (page) WKPageSetResourceLoadDecider(page, on ? OnDecideResourceLoad : nullptr, nullptr);
+}
+
+// The engine asks only while some listener could take a load.
+void WrUpdateActive() {
+    bool any = false;
+    for (auto& l : s_wrListeners)
+        if (l.event == "onBeforeRequest" || l.event == "onBeforeSendHeaders" || l.event == "onSendHeaders") { any = true; break; }
+    if (any == s_wrActive) return;
+    s_wrActive = any;
+    Log("webRequest: %s", any ? "listening (tabs' loads go through extensions)" : "off");
+    for (auto& t : g_tabs) WrSetPage(t->page, any);
+    if (!any)                                           // what still waits goes on
+        for (auto& [id, r] : s_wrRequests) r.pending = 0;
+    std::vector<int> ids;
+    for (auto& [id, r] : s_wrRequests) ids.push_back(id);
+    if (!any) for (int id : ids) WrRun(id);
+}
+
+void WrForget(const std::function<bool(const WrListener&)>& gone) {
+    const size_t before = s_wrListeners.size();
+    s_wrListeners.erase(std::remove_if(s_wrListeners.begin(), s_wrListeners.end(), gone), s_wrListeners.end());
+    if (s_wrListeners.size() != before) WrUpdateActive();
+}
+
+std::string WebRequestOp(const Extension& e, const JsonValue& msg, const std::string& op, WKPageRef fromPage) {
+    if (op == "webRequest.listen") {
+        if (!HasPermission(e, "webRequest")) return "{\"error\":\"This extension has no \\\"webRequest\\\" permission.\"}";
+        WrListener l;
+        l.id = msg.get("id") ? (int)msg.get("id")->n : 0;
+        l.ext = e.info.id;
+        l.page = fromPage;
+        l.event = msg.str("event");
+        if (const JsonValue* f = msg.get("filter")) {
+            StringList(f->get("urls"), l.urls);
+            StringList(f->get("types"), l.types);
+            if (const JsonValue* tab = f->get("tabId"); tab && tab->type == JsonValue::Number) l.tabId = (long long)tab->n;
+        }
+        l.blocking = msg.flag("blocking") && HasPermission(e, "webRequestBlocking");
+        l.headers = msg.flag("headers");
+        s_wrListeners.push_back(std::move(l));
+        WrUpdateActive();
+        return "{\"value\":null}";
+    }
+    if (op == "webRequest.unlisten") {
+        const int id = msg.get("id") ? (int)msg.get("id")->n : 0;
+        const std::wstring ext = e.info.id;
+        WrForget([&](const WrListener& l) { return l.id == id && l.ext == ext && l.page == fromPage; });
+        return "{\"value\":null}";
+    }
+    if (op == "webRequest.reply") {
+        const int callId = msg.get("callId") ? (int)msg.get("callId")->n : 0;
+        const int stage = msg.get("stage") ? (int)msg.get("stage")->n : 0;
+        auto it = s_wrRequests.find(callId);
+        if (it == s_wrRequests.end() || it->second.stage != stage || it->second.pending <= 0) return "{\"value\":null}";
+        WrRequest& r = it->second;
+        if (const JsonValue* resp = msg.get("response"); resp && resp->isObject()) {
+            if (resp->flag("cancel")) r.cancel = true;
+            const std::string redirect = resp->str("redirectUrl");
+            if (!redirect.empty() && r.redirect.empty()) r.redirect = redirect;
+            if (const JsonValue* hs = resp->get("responseHeaders"); hs && hs->isArray() && r.kind == 2) {
+                r.responseHeadersSet = true;
+                r.newResponseHeaders.clear();
+                for (auto& h : hs->items) if (h.isObject() && !h.str("name").empty()) r.newResponseHeaders.push_back({ h.str("name"), h.str("value") });
+            }
+            if (const JsonValue* hs = resp->get("requestHeaders"); hs && hs->isArray()) {
+                r.headersSet = true;
+                r.newHeaders.clear();
+                for (auto& h : hs->items) if (h.isObject() && !h.str("name").empty()) r.newHeaders.push_back({ h.str("name"), h.str("value") });
+            }
+        }
+        if (--r.pending <= 0) WrRun(callId);
+        return "{\"value\":null}";
+    }
+    return "{\"error\":\"unknown operation\"}";
+}
+
 void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompletionListenerRef reply, std::string& answer, bool& deferred) {
     Extension* e = Find(ctx.id);
     WKTypeRef body = WKScriptMessageGetBody(message);
@@ -1950,12 +2470,18 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         return;
     }
     const std::string op = msg.str("op");
+    if (getenv("LYRA_EXT_TRACE")) Log("exttrace %ls %s %s: %.200s", e->info.id.c_str(), ctx.content ? "content" : "page", op.c_str(), op == "storage.set" ? "" : ToUtf8(WKStr((WKStringRef)body)).c_str());
     WKPageRef fromPage = nullptr;
     WKFrameInfoRef fromFrame = WKScriptMessageGetFrameInfo(message);
     bool mainFrame = true;
     if (fromFrame) { fromPage = WKFrameInfoGetPage(fromFrame); mainFrame = WKFrameInfoGetIsMainFrame(fromFrame); }
     Host* host = s_hosts.count(e->info.id) ? s_hosts[e->info.id].get() : nullptr;
 
+    if (op == "storage.watch") {
+        if (ctx.content && fromPage) s_storageWatchers[e->info.id].insert(fromPage);
+        answer = "{\"value\":null}";
+        return;
+    }
     if (op.rfind("storage.", 0) == 0) {
         answer = Storage(*e, msg, op);
         if (op != "storage.get") {
@@ -2082,6 +2608,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
 
     // ---- the extension's own pages from here on ----
     if (op.rfind("menus.", 0) == 0) { answer = MenusOp(*e, msg, op); return; }
+    if (op.rfind("webRequest.", 0) == 0) { answer = WebRequestOp(*e, msg, op, fromPage); return; }
     if (op.rfind("bookmarks.", 0) == 0) { answer = BookmarksOp(*e, msg, op); return; }
     if (op.rfind("history.", 0) == 0) { answer = HistoryOp(*e, msg, op); return; }
     if (op.rfind("notifications.", 0) == 0) { answer = NotificationsOp(*e, msg, op); return; }
@@ -2144,6 +2671,18 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         if (!t || !t->page) { answer = "{\"error\":\"No tab with this id.\"}"; return; }
         const bool css = op == "scripting.insertCSS";
         const bool mainWorld = msg.str("world") == "MAIN";
+        // The user's level (cssOrigin "user"): wins over the page's !important styles. Until the page changes.
+        if (css && _stricmp(msg.str("origin").c_str(), "user") == 0) {
+            bool allFrames = msg.flag("allFrames");
+            if (const JsonValue* ids = msg.get("frameIds"); ids && ids->isArray())
+                for (auto& v : ids->items) if (v.type == JsonValue::Number && v.n != 0) allFrames = true;
+            const std::string text = msg.str("css") + Files(*e, msg.get("files"));
+            WKStringRef s = WKStringCreateWithUTF8CStringWithLength(text.data(), text.size());
+            WKPageInjectUserStyleSheet(t->page, s, allFrames);
+            WKRelease(s);
+            answer = "{\"value\":null}";
+            return;
+        }
         std::string script;
         if (css) {
             const std::string text = msg.str("css") + Files(*e, msg.get("files"));
@@ -2384,6 +2923,7 @@ std::wstring BackgroundUrl(const Extension& e) {
 }
 
 void StopBackground(const std::wstring& id) {
+    WrForget([&](const WrListener& l) { return l.ext == id; });
     auto it = s_hosts.find(id);
     if (it == s_hosts.end()) return;
     Host& h = *it->second;
@@ -2404,6 +2944,7 @@ void StopBackground(const std::wstring& id) {
 std::map<std::wstring, std::unique_ptr<std::wstring>> s_navIds;
 
 void StartBackground(const Extension& e, const std::wstring& installReason, bool atStartup) {
+    PreloadStore(e);
     if (!e.info.enabled) return;
     const std::wstring url = BackgroundUrl(e);
     Host& h = EnsureHost(e);
@@ -2450,7 +2991,11 @@ std::wstring InstallReason(const Extension& e) {
 
 // ---- options pages and such: a window of their own -------------------------------------------
 void ForgetExtensionWindow(HWND h, WKViewRef view) {
-    if (view) { WKPageRef page = WKViewGetPage(view); DropPorts([page](const PortEnd& end) { return !end.content && end.page == page; }); }
+    if (view) {
+        WKPageRef page = WKViewGetPage(view);
+        DropPorts([page](const PortEnd& end) { return !end.content && end.page == page; });
+        WrForget([page](const WrListener& l) { return l.page == page; });
+    }
     for (auto& [id, host] : s_hosts) host->windows.erase(std::remove(host->windows.begin(), host->windows.end(), h), host->windows.end());
     // The page's own window (a child) is destroyed only after this WM_DESTROY of its frame; it
     // still uses its WebView then, so it goes first and the WebView is let go after (as tabs do).
@@ -2778,6 +3323,7 @@ void ExtensionsDnrReady(LPARAM lParam) {
 }
 
 void ExtensionsOnTabCreated(Tab* t) {
+    if (t && s_wrActive) WrSetPage(t->page, true);
     if (!t || !Visible(*t) || s_hosts.empty()) return;
     Broadcast("tabs.onCreated", "[" + TabJson(*t) + "]");
 }
@@ -2802,6 +3348,8 @@ void ExtensionsOnTabActivated(Tab* t) {
 
 void ExtensionsOnTabCommitted(Tab* t) {
     if (!t) return;
+    if (t->page) WKPageRemoveInjectedUserStyleSheets(t->page);   // extensions' user styles were for the old page
+    for (auto& [ext, pages] : s_storageWatchers) pages.erase(t->page);
     const unsigned long long id = t->id;
     ForgetTabFrames([id](const TabFrame& f) { return f.tabId == id; });
     ForgetSeenFrames(id);
@@ -2850,6 +3398,7 @@ void ExtensionRemove(const std::wstring& id) {
     StopBackground(id);
     s_dnr.erase(id);
     s_stores.erase(id);
+    s_storePreload.erase(id);
     s_registered.erase(id);
     s_menus.erase(id);
     s_menusLoaded.erase(id);
@@ -3204,4 +3753,8 @@ void ExtensionsFrameSeen(WKPageRef page, WKFrameInfoRef frame) {
     if (list.size() >= 200) return;
     WKRetain(frame);
     list.push_back({ ++s_nextFrameNo[t->id], id, frame });
+}
+
+void ExtensionsSetupPage(WKPageRef page) {
+    if (s_wrActive) WrSetPage(page, true);
 }

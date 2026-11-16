@@ -267,6 +267,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     if (!view) { Log("CreateTab: WKViewCreate failed"); return nullptr; }
 
     WKPageRef page = WKViewGetPage(view);
+    ExtensionsSetupPage(page);
     HWND viewWnd = WKViewGetWindow(view);
     if (!page || !viewWnd) {            // nothing usable was created: do not keep a half-initialised tab
         Log("CreateTab: view has no page/hwnd -> releasing view");
@@ -321,6 +322,7 @@ bool UnloadTab(Tab& t, const std::string& state) {
     WKRelease(conf);
     if (!view) return false;
     WKPageRef page = WKViewGetPage(view);
+    ExtensionsSetupPage(page);
     HWND hwnd = WKViewGetWindow(view);
     if (!page || !hwnd) {
         if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
@@ -383,6 +385,7 @@ void PrepareSpareTab() {
     WKRelease(conf);
     if (!view) return;
     WKPageRef page = WKViewGetPage(view);
+    ExtensionsSetupPage(page);
     HWND viewWnd = WKViewGetWindow(view);
     if (!page || !viewWnd) {
         if (viewWnd && IsWindow(viewWnd)) DestroyWindow(viewWnd);
