@@ -38,6 +38,7 @@
 #include "browser/TabSleep.h"
 #include "browser/ContextMenu.h"
 #include "browser/SplitView.h"
+#include "browser/SystemProxy.h"
 #include "ui/TabDrag.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
@@ -861,6 +862,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_WALLPAPER:
         RefreshStartPages();
+        return 0;
+    case WM_APP_PROXY:
+        SystemProxyChanged(lParam);
         return 0;
     case WM_APP_OPEN_URL: {
         std::unique_ptr<std::wstring> url((std::wstring*)lParam);

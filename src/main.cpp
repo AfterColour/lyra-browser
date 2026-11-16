@@ -28,6 +28,7 @@
 #include "browser/Session.h"
 #include "browser/Downloads.h"
 #include "browser/Favicons.h"
+#include "browser/SystemProxy.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
 #include "app/CrashHandler.h"
@@ -165,6 +166,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     WKContextSetCacheModel(g_context, kWKCacheModelPrimaryWebBrowser);
 
     g_dataStore = CreateWebsiteDataStore();
+    SystemProxyInit();                                 // the Windows proxy (VPN clients' "system proxy" mode)
 
     g_preferences = WKPreferencesCreate();
     ApplyWebPrefs();                                   // JS, images, storage, fonts... from settings
@@ -215,6 +217,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     AdBlockShutdown();
     PermissionsShutdown();
     if (g_preferences) { WKRelease(g_preferences); g_preferences = nullptr; }
+    SystemProxyShutdown();
     if (g_dataStore)   { WKRelease(g_dataStore);   g_dataStore = nullptr; }
     if (g_context)     { WKRelease(g_context);     g_context = nullptr; }
     Log("WebKit context released");

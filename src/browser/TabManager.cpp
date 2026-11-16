@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/SystemProxy.h"
 #include "browser/Extensions.h"
 #include "browser/PictureInPicture.h"
 #include "browser/AdBlock.h"
@@ -472,6 +473,7 @@ static WKWebsiteDataStoreRef s_privateStore = nullptr;
 
 void CreatePrivateTab() {
     if (!s_privateStore) s_privateStore = WKWebsiteDataStoreCreateNonPersistentDataStore();
+    SystemProxyApply(s_privateStore);
     WKPageConfigurationRef conf = CreatePageConfiguration();
     if (s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
     Tab* t = CreateTabWithConfiguration(conf, false);
@@ -484,6 +486,7 @@ void CreatePrivateTab() {
 
 Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
     if (privateTab && !s_privateStore) s_privateStore = WKWebsiteDataStoreCreateNonPersistentDataStore();
+    if (privateTab) SystemProxyApply(s_privateStore);
     WKPageConfigurationRef conf = CreatePageConfiguration();
     if (privateTab && s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
     Tab* t = CreateTabWithConfiguration(conf, false, !background);
@@ -499,6 +502,7 @@ Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
 static void ReleasePrivateStoreIfUnused() {
     if (!s_privateStore) return;
     for (auto& t : g_tabs) if (t->privateTab) return;
+    SystemProxyForget(s_privateStore);
     WKRelease(s_privateStore);
     s_privateStore = nullptr;
     Log("private: the last private tab closed, its data is gone");
