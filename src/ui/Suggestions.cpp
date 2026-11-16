@@ -274,7 +274,7 @@ void SuggestUpdate() {
 }
 
 void SuggestHide() {
-    if (s_popup && IsWindowVisible(s_popup)) { PopupRevealStop(s_popup); ShowWindow(s_popup, SW_HIDE); }
+    if (s_popup && IsWindowVisible(s_popup)) { PopupFadeOut(s_popup); PopupRevealStop(s_popup); ShowWindow(s_popup, SW_HIDE); }
     s_sel = s_hover = -1;
 }
 

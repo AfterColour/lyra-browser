@@ -24,7 +24,8 @@ float AnimFactor(float dt, float tauMs);
 // downloads list, address suggestions). Call right after ShowWindow; the window must already
 // have its final position and size. Nothing happens with animations off.
 void PopupReveal(HWND popup);
-void PopupRevealStop(HWND popup);   // before the popup is resized, hidden or destroyed
+void PopupRevealStop(HWND popup);
+bool PopupRevealing(HWND popup);    // still growing to its full height   // before the popup is resized, hidden or destroyed
 // Shows a popup that is already in place without a flash of an unpainted (white) window: it is
 // painted while DWM keeps it hidden, then appears (and unfolds, see PopupReveal).
 void PopupShow(HWND popup, bool activate);
@@ -32,3 +33,7 @@ void PopupShow(HWND popup, bool activate);
 // and End after it.
 void PopupShowBegin(HWND popup);
 void PopupShowEnd(HWND popup);
+// A popup about to be destroyed or hidden fades out instead of vanishing: its picture goes into
+// a click-through window just below it, which fades on its own once the popup is gone. Call
+// right before DestroyWindow / ShowWindow(SW_HIDE). Nothing happens with animations off.
+void PopupFadeOut(HWND popup);

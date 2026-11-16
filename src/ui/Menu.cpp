@@ -266,6 +266,7 @@ void CloseLevelsFrom(int li) {
     while ((int)s_levels.size() > std::max(li, 0)) {
         HWND w = s_levels.back().wnd;
         s_levels.pop_back();
+        if (w && li <= 0) PopupFadeOut(w);              // the whole menu goes: it fades (submenus just close)
         if (w) { PopupRevealStop(w); DestroyWindow(w); }
     }
     if (s_subLevel >= (int)s_levels.size()) s_subLevel = -1;

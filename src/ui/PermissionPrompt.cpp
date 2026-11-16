@@ -187,6 +187,7 @@ void PermissionPromptClose() {
     HWND h = s_popup;
     s_popup = nullptr;
     s_seq = 0;
+    PopupFadeOut(h);
     PopupRevealStop(h);
     DestroyWindow(h);
 }

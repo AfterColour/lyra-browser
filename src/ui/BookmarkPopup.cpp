@@ -185,6 +185,7 @@ void BookmarkPopupClose() {
     HWND h = s_popup;
     s_popup = nullptr;
     s_edit = nullptr;
+    PopupFadeOut(h);
     PopupRevealStop(h);
     DestroyWindow(h);
     s_id = 0;

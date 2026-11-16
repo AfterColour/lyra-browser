@@ -1,5 +1,6 @@
 // Lyra — расширения браузера (см. Extensions.h).
 #include "browser/Extensions.h"
+#include "ui/Animation.h"
 #include "app/Log.h"
 #include "browser/AdBlock.h"
 #include "browser/Bookmarks.h"
@@ -3191,7 +3192,8 @@ LRESULT CALLBACK PopupProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     WKViewRef view = (WKViewRef)GetWindowLongPtrW(h, GWLP_USERDATA);
     switch (m) {
     case WM_SIZE:
-        if (view) { RECT r; GetClientRect(h, &r); SetWindowPos(WKViewGetWindow(view), nullptr, 0, 0, r.right, r.bottom, SWP_NOZORDER); }
+        // (Not while it unfolds: the page keeps its full size and is only uncovered.)
+        if (view && !PopupRevealing(h)) { RECT r; GetClientRect(h, &r); SetWindowPos(WKViewGetWindow(view), nullptr, 0, 0, r.right, r.bottom, SWP_NOZORDER); }
         return 0;
     case WM_SETFOCUS:
         if (view) SetFocus(WKViewGetWindow(view));
@@ -3284,7 +3286,12 @@ void PlacePopup(int cssW, int cssH) {
     int x = a.x + (int)S(4) - w;
     x = std::max((int)mi.rcWork.left + 4, std::min(x, (int)mi.rcWork.right - w - 4));
     const int y = std::max((int)mi.rcWork.top, std::min((int)a.y, (int)mi.rcWork.bottom - h - 4));
+    // The first placement brings it from off-screen: it unfolds there like Lyra's own popups.
+    const bool first = !s_popup.shown;
+    if (!first) PopupRevealStop(s_popup.wnd);          // a new size while unfolding: straight to it
+    if (first) PopupShowBegin(s_popup.wnd);
     SetWindowPos(s_popup.wnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+    if (first) PopupShowEnd(s_popup.wnd);
     if (!s_popup.shown) {
         s_popup.shown = true;
         KillTimer(s_popup.wnd, 1);
@@ -3294,6 +3301,7 @@ void PlacePopup(int cssW, int cssH) {
 }
 
 void ClosePopup() {
+    if (s_popup.shown) PopupFadeOut(s_popup.wnd);
     if (s_popup.wnd) DestroyWindow(s_popup.wnd);       // (WM_DESTROY forgets it)
 }
 

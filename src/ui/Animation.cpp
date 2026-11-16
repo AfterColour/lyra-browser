@@ -93,6 +93,15 @@ std::vector<Reveal> s_reveals;
 UINT_PTR s_revealTimer = 0;
 constexpr DWORD kRevealMs = 150;
 
+// The window itself grows from its top edge (its contents stay where they are: every popup lays
+// out from the top). Growing the window, not cutting it with a region, keeps DWM's rounded
+// corners, border and shadow on the visible part - with a region they showed at the full size
+// at once, an empty plate under the unfolding menu.
+void SetRevealHeight(const Reveal& r, int h) {
+    SetWindowPos(r.hwnd, nullptr, 0, 0, r.full.right - r.full.left, h,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
 void CALLBACK RevealStep(HWND, UINT, UINT_PTR, DWORD) {
     const DWORD now = GetTickCount();
     for (size_t i = 0; i < s_reveals.size();) {
@@ -102,10 +111,8 @@ void CALLBACK RevealStep(HWND, UINT, UINT_PTR, DWORD) {
         const int fullH = r.full.bottom - r.full.top;
         const int h = std::max(1, (int)std::lround(fullH * (0.35f + 0.65f * e)));
         if (IsWindow(r.hwnd)) {
-            // The window is cut from below (its contents stay where they are); the region keeps
-            // the rounded corners of the final shape only at the end.
-            if (t >= 1.f) SetWindowRgn(r.hwnd, nullptr, TRUE);
-            else SetWindowRgn(r.hwnd, CreateRectRgn(0, 0, r.full.right - r.full.left, h), TRUE);
+            SetRevealHeight(r, t >= 1.f ? fullH : h);
+            UpdateWindow(r.hwnd);                                         // the new strip now, not after the next step
         }
         if (t >= 1.f || !IsWindow(r.hwnd)) s_reveals.erase(s_reveals.begin() + i);
         else ++i;
@@ -125,14 +132,14 @@ void PopupReveal(HWND popup) {
     GetWindowRect(popup, &r.full);
     r.start = GetTickCount();
     s_reveals.push_back(r);
-    SetWindowRgn(popup, CreateRectRgn(0, 0, r.full.right - r.full.left, (int)((r.full.bottom - r.full.top) * 0.35f)), TRUE);
+    SetRevealHeight(r, std::max(1, (int)((r.full.bottom - r.full.top) * 0.35f)));
     if (!s_revealTimer) s_revealTimer = SetTimer(nullptr, 0, 10, RevealStep);
 }
 
 void PopupRevealStop(HWND popup) {
     for (size_t i = 0; i < s_reveals.size(); ++i) {
         if (s_reveals[i].hwnd != popup) continue;
-        if (IsWindow(popup)) SetWindowRgn(popup, nullptr, TRUE);
+        if (IsWindow(popup)) SetRevealHeight(s_reveals[i], s_reveals[i].full.bottom - s_reveals[i].full.top);
         s_reveals.erase(s_reveals.begin() + i);
         break;
     }
@@ -148,6 +155,122 @@ void PopupShowEnd(HWND popup) {
     PopupReveal(popup);
     const BOOL cloak = FALSE;
     DwmSetWindowAttribute(popup, 13 /* DWMWA_CLOAK */, &cloak, sizeof(cloak));
+}
+
+// ----------------------------------------------------------------------------
+//  Popups fading out
+// ----------------------------------------------------------------------------
+namespace {
+struct Ghost {
+    HWND hwnd;
+    HDC dc;
+    HBITMAP bmp, old;
+    DWORD start;
+};
+std::vector<Ghost> s_ghosts;
+UINT_PTR s_ghostTimer = 0;
+constexpr DWORD kFadeMs = 140;
+
+void FreeGhost(Ghost& g) {
+    if (IsWindow(g.hwnd)) DestroyWindow(g.hwnd);
+    SelectObject(g.dc, g.old);
+    DeleteObject(g.bmp);
+    DeleteDC(g.dc);
+}
+
+LRESULT CALLBACK GhostProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        for (auto& g : s_ghosts)
+            if (g.hwnd == h) {
+                RECT r;
+                GetClientRect(h, &r);
+                BitBlt(dc, 0, 0, r.right, r.bottom, g.dc, 0, 0, SRCCOPY);
+            }
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_NCHITTEST) return HTTRANSPARENT;
+    if (m == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    return DefWindowProcW(h, m, w, l);
+}
+
+void CALLBACK GhostStep(HWND, UINT, UINT_PTR, DWORD) {
+    const DWORD now = GetTickCount();
+    for (size_t i = 0; i < s_ghosts.size();) {
+        Ghost& g = s_ghosts[i];
+        const float t = std::min(1.f, (float)(now - g.start) / (float)kFadeMs * ((float)std::max(25, g_prefs.animSpeed) / 100.f));
+        const float e = t * t;                                            // ease-in: leaves quickly at the end
+        if (t >= 1.f || !IsWindow(g.hwnd)) { FreeGhost(g); s_ghosts.erase(s_ghosts.begin() + i); continue; }
+        SetLayeredWindowAttributes(g.hwnd, 0, (BYTE)std::lround(255.f * (1.f - e)), LWA_ALPHA);
+        ++i;
+    }
+    if (s_ghosts.empty() && s_ghostTimer) {
+        KillTimer(nullptr, s_ghostTimer);
+        s_ghostTimer = 0;
+    }
+}
+
+bool Windows11() {
+    static const bool yes = [] {
+        using Fn = LONG(WINAPI*)(OSVERSIONINFOW*);
+        auto fn = (Fn)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion");
+        OSVERSIONINFOW v = { sizeof(v) };
+        return fn && fn(&v) == 0 && v.dwBuildNumber >= 22000;
+    }();
+    return yes;
+}
+}  // namespace
+
+bool PopupRevealing(HWND popup) {
+    for (auto& r : s_reveals) if (r.hwnd == popup) return true;
+    return false;
+}
+
+void PopupFadeOut(HWND popup) {
+    if (!popup || !IsWindow(popup) || !IsWindowVisible(popup) || !g_prefs.animations || !AnimHoverEnabled()) return;
+    RECT wr;
+    GetWindowRect(popup, &wr);
+    const int w = wr.right - wr.left, h = wr.bottom - wr.top;
+    if (w <= 0 || h <= 0 || w > 4000 || h > 4000) return;
+    // Still unfolding: the visible part only would be wrong to copy whole; it just goes.
+    for (auto& r : s_reveals) if (r.hwnd == popup) return;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc = GhostProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"LyraPopupGhost";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    Ghost g = {};
+    HDC screen = GetDC(nullptr);
+    g.dc = CreateCompatibleDC(screen);
+    g.bmp = CreateCompatibleBitmap(screen, w, h);
+    ReleaseDC(nullptr, screen);
+    g.old = (HBITMAP)SelectObject(g.dc, g.bmp);
+    if (!PrintWindow(popup, g.dc, 2 /* PW_RENDERFULLCONTENT */)) {
+        SelectObject(g.dc, g.old); DeleteObject(g.bmp); DeleteDC(g.dc);
+        return;
+    }
+    g.hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                             L"LyraPopupGhost", L"", WS_POPUP, wr.left, wr.top, w, h,
+                             GetWindow(popup, GW_OWNER), nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!g.hwnd) { SelectObject(g.dc, g.old); DeleteObject(g.bmp); DeleteDC(g.dc); return; }
+    SetLayeredWindowAttributes(g.hwnd, 0, 255, LWA_ALPHA);
+    if (Windows11()) {                                   // the popup's own rounded corners (DWMWCP_ROUND: 8 px)
+        const int d = MulDiv(16, (int)GetDpiForWindow(popup), 96) + 1;
+        SetWindowRgn(g.hwnd, CreateRoundRectRgn(0, 0, w + 1, h + 1, d, d), FALSE);
+    }
+    g.start = GetTickCount();
+    s_ghosts.push_back(g);
+    // Right below the popup: it shows the same picture until the popup goes, then fades.
+    SetWindowPos(g.hwnd, popup, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    UpdateWindow(g.hwnd);
+    if (!s_ghostTimer) s_ghostTimer = SetTimer(nullptr, 0, 10, GhostStep);
 }
 
 void PopupShow(HWND popup, bool activate) {

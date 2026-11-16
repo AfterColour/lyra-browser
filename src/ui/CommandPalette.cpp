@@ -236,6 +236,7 @@ void Close() {
     HWND w = s_wnd;
     s_wnd = nullptr;
     s_edit = nullptr;
+    PopupFadeOut(w);
     DestroyWindow(w);
 }
 

@@ -286,6 +286,7 @@ void FindBarClose() {
     s_count = -1;
     s_index = 0;
     s_pendingStep = false;
+    PopupFadeOut(h);
     PopupRevealStop(h);
     DestroyWindow(h);
     // Back to the page.

@@ -467,6 +467,7 @@ void DownloadsPopupClose() {
     if (!s_popup) return;
     HWND h = s_popup;
     s_popup = nullptr;
+    PopupFadeOut(h);
     PopupRevealStop(h);
     DestroyWindow(h);
     s_closedAt = GetTickCount();
