@@ -495,7 +495,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_CTLCOLOREDIT:
-        if ((HWND)lParam == g_urlEdit) {
+        if ((HWND)lParam == g_urlEdit || TabGroupIsEdit((HWND)lParam)) {
             HDC hdc = (HDC)wParam;
             SetTextColor(hdc, ToColorRef(g_th.text));
             SetBkColor(hdc, ToColorRef(g_th.pillFocus));
@@ -511,6 +511,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // A command sent as a message (no control): the same as choosing it from the menu.
         if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_UPDATE) {
             RunCommand(LOWORD(wParam));
+            return 0;
+        }
+        if (TabGroupIsEdit((HWND)lParam) && HIWORD(wParam) == EN_KILLFOCUS) {
+            TabGroupEditFinish(true);                    // clicked away: the name stays
             return 0;
         }
         if ((HWND)lParam == g_urlEdit && HIWORD(wParam) == EN_KILLFOCUS) {
@@ -558,6 +562,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_LBUTTONDOWN: {
+        if (TabGroupEditingId()) TabGroupEditFinish(true);   // a click in the chrome ends a group's renaming
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // divider / gutter
         // The active tab is in picture-in-picture: a click on its empty page brings it back.
         if (Tab* t = ActiveTab())

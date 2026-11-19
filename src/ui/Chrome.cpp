@@ -212,6 +212,7 @@ static std::wstring GroupLabelText(const TabGroup& g) {
 
 // The width of a group's label in the horizontal layouts: a dot, or the text in a chip.
 static float GroupLabelWidth(const TabGroup& g) {
+    if (TabGroupEditingId() == g.id) return std::floor(S(170));   // room for the name field
     const std::wstring text = GroupLabelText(g);
     if (text.empty() || !g_fTab) return std::floor(S(22));
     static Bitmap bmp(1, 1, PixelFormat32bppPARGB);
@@ -422,6 +423,7 @@ static void ApplyCurrent() {
         auto it = s_groupCur.find(s_target.groupIds[k]);
         if (it != s_groupCur.end()) g_L.groups[k] = it->second;
     }
+    TabGroupEditReposition();                            // a group's name field follows its label
     if (g_L.mode != kLayoutVertical) g_L.newTab = s_newTabCur;
     if (g_L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
         g_L.pill = g_L.tabs[g_active];
@@ -1058,9 +1060,18 @@ static void DrawChrome(Graphics& g, int w, int h) {
             endX = std::max(endX, tr.GetRight());
             endY = std::max(endY, tr.GetBottom());
         }
-        const std::wstring text = GroupLabelText(*grp);
+        const bool renaming = TabGroupEditingId() == grp->id;
+        const std::wstring text = renaming ? std::wstring() : GroupLabelText(*grp);
+        if (renaming) {                                  // the name field (ui: TabGroupStartRename)
+            const RectF fr = vertical ? r : RectF(r.X + S(2), r.Y + S(3), r.Width - S(4), r.Height - S(6));
+            FillRound(g, T.pillFocus, fr, S(6));
+            GraphicsPath fp;
+            AddRound(fp, RectF(fr.X + 0.5f, fr.Y + 0.5f, fr.Width - 1, fr.Height - 1), S(6));
+            Pen fpen(c, std::max(1.f, std::round(S(1.5f))));
+            g.DrawPath(&fpen, &fp);
+        }
         if (vertical) {
-            hoverFill(r, hit, dwn(Hit::GroupLabel, (int)k), S(6));
+            if (!renaming) hoverFill(r, hit, dwn(Hit::GroupLabel, (int)k), S(6));
             const float d = std::floor(S(10));
             FillRound(g, c, RectF(std::floor(r.X + S(9) + (S(14) - d) / 2), std::floor(r.Y + (r.Height - d) / 2), d, d), d / 2);
             const float cs = S(16);
@@ -1068,7 +1079,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             DrawGlyph(g, grp->collapsed ? L"\uE76C" : L"\uE70D", chev, T.text2, g_fIconSm.get());
             const float tx = r.X + S(9) + S(14) + S(7), tr = chev.X - S(4);
             const std::wstring shown = text.empty() ? std::wstring(Tr(L"Group", L"Группа")) : text;
-            if (tr - tx > S(10)) {
+            if (!renaming && tr - tx > S(10)) {
                 SolidBrush tb(text.empty() ? T.text2 : T.text);
                 g.DrawString(shown.c_str(), -1, g_fTabBold.get(), RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
             }
@@ -1080,7 +1091,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             const float lh = std::max(2.f, std::round(S(2)));
             if (!grp->collapsed && endX > r.GetRight() + S(2))         // a line under its tabs
                 FillRound(g, c, RectF(r.X + S(4), r.GetBottom() + S(1), endX - r.X - S(8), lh), lh / 2);
-            if (text.empty()) {                          // no name: a coloured dot
+            if (renaming) {
+            } else if (text.empty()) {                   // no name: a coloured dot
                 hoverFill(r, hit, dwn(Hit::GroupLabel, (int)k), S(6));
                 const float d = std::floor(S(10));
                 FillRound(g, c, RectF(std::floor(r.X + (r.Width - d) / 2), std::floor(r.Y + (r.Height - d) / 2), d, d), d / 2);

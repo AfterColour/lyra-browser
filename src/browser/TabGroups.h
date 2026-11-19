@@ -33,7 +33,13 @@ void TabGroupAddTab(unsigned id, int tabIndex);      // the tab moves to the end
 void TabGroupRemoveTab(int tabIndex);                // the tab leaves (it moves right after the group)
 void TabGroupSetCollapsed(unsigned id, bool collapsed);
 void TabGroupToggle(unsigned id);
-void TabGroupRenameDialog(unsigned id);
+// Renaming happens on the label itself: an edit field takes its place (Enter or clicking away
+// keeps the name, Esc keeps the old one).
+void TabGroupStartRename(unsigned id);
+unsigned TabGroupEditingId();                        // the group being renamed, 0: none
+bool TabGroupIsEdit(HWND h);
+void TabGroupEditFinish(bool keep);
+void TabGroupEditReposition();                       // the labels moved (Chrome.cpp)
 void TabGroupSetColor(unsigned id, int color);
 void TabGroupUngroup(unsigned id);
 void TabGroupCloseTabs(unsigned id);

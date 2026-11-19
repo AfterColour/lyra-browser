@@ -8,8 +8,9 @@
 #include "core/Localization.h"
 #include "core/StringUtils.h"
 #include "ui/Chrome.h"
+#include "ui/AddressBar.h"
 #include "ui/Commands.h"
-#include "ui/Dialogs.h"
+#include "ui/WindowFrame.h"
 #include "ui/MainWindow.h"
 #include "ui/Menu.h"
 #include "ui/Theme.h"
@@ -203,21 +204,95 @@ void TabGroupToggle(unsigned id) {
     if (const TabGroup* g = FindTabGroup(id)) TabGroupSetCollapsed(id, !g->collapsed);
 }
 
-void TabGroupRenameDialog(unsigned id) {
-    TabGroup* g = FindTabGroup(id);
-    if (!g) return;
-    PromptState st;
-    st.message = Tr(L"Group name:", L"Название группы:");
-    st.value = g->name;
-    if (!PromptDialog(g_hWnd, Tr(L"Name this group", L"Название группы"), st)) return;
-    g = FindTabGroup(id);                                // (the dialog ran a message loop)
-    if (!g) return;
-    std::wstring name = st.value;
-    for (auto& c : name) if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
-    while (!name.empty() && name.back() == L' ') name.pop_back();
-    while (!name.empty() && name.front() == L' ') name.erase(name.begin());
-    if (name.size() > 60) name.resize(60);
-    g->name = name;
+// ---- Renaming on the label --------------------------------------------------------------
+static HWND s_edit = nullptr;
+static WNDPROC s_editOldProc = nullptr;
+static unsigned s_editId = 0;
+constexpr int kGroupEditId = 1002;
+
+static LRESULT CALLBACK GroupEditProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    switch (msg) {
+    case WM_KEYDOWN:
+        if (w == VK_RETURN) { TabGroupEditFinish(true); return 0; }
+        if (w == VK_ESCAPE) { TabGroupEditFinish(false); return 0; }
+        if (w == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) { SendMessageW(h, EM_SETSEL, 0, -1); return 0; }
+        break;
+    case WM_CHAR:
+        if (w == VK_RETURN || w == VK_ESCAPE || w == 1) return 0;   // no beep
+        break;
+    case WM_SETFOCUS: {                                  // the whole name selected: typing replaces it
+        const LRESULT r = CallWindowProcW(s_editOldProc, h, msg, w, l);
+        SendMessageW(h, EM_SETSEL, 0, -1);
+        return r;
+    }
+    }
+    return CallWindowProcW(s_editOldProc, h, msg, w, l);
+}
+
+unsigned TabGroupEditingId() { return s_editId; }
+bool TabGroupIsEdit(HWND h) { return h && h == s_edit; }
+
+void TabGroupEditReposition() {
+    if (!s_editId || !s_edit) return;
+    int k = -1;
+    for (size_t i = 0; i < g_L.groupIds.size(); ++i) if (g_L.groupIds[i] == s_editId) k = (int)i;
+    if (k < 0 || k >= (int)g_L.groups.size()) { ShowWindow(s_edit, SW_HIDE); return; }
+    const RectF& r = g_L.groups[k];
+    float left, right;
+    if (g_L.mode == kLayoutVertical) { left = r.X + S(30); right = r.GetRight() - S(28); }
+    else { left = r.X + S(10); right = r.GetRight() - S(10); }
+    const int h = g_editTextH;
+    const int x = (int)left, y = (int)(r.Y + (r.Height - (float)h) / 2), w = (int)std::max(10.f, right - left);
+    RECT cur = {};
+    GetWindowRect(s_edit, &cur);
+    MapWindowPoints(nullptr, g_hWnd, (POINT*)&cur, 2);
+    if (cur.left != x || cur.top != y || cur.right - cur.left != w || cur.bottom - cur.top != h)
+        MoveWindow(s_edit, x, y, w, h, TRUE);
+}
+
+void TabGroupStartRename(unsigned id) {
+    const TabGroup* g = FindTabGroup(id);
+    if (!g || !g_hWnd) return;
+    if (s_editId) TabGroupEditFinish(true);
+    if (!s_edit) {
+        s_edit = CreateOpaqueEdit(g_hWnd, kGroupEditId, (HINSTANCE)GetWindowLongPtrW(g_hWnd, GWLP_HINSTANCE));
+        if (!s_edit) return;
+        s_editOldProc = (WNDPROC)SetWindowLongPtrW(s_edit, GWLP_WNDPROC, (LONG_PTR)GroupEditProc);
+        SendMessageW(s_edit, EM_LIMITTEXT, 60, 0);
+    }
+    SendMessageW(s_edit, WM_SETFONT, (WPARAM)g_editFont, FALSE);
+    s_editId = id;
+    if (g->collapsed) TabGroupSetCollapsed(id, false);   // (its tabs show while it is named)
+    SetWindowTextW(s_edit, g->name.c_str());
+    RefreshLayout(true);                                 // the label widens for the field
+    TabGroupEditReposition();
+    ShowWindow(s_edit, SW_SHOW);
+    SetFocus(s_edit);
+    SendMessageW(s_edit, EM_SETSEL, 0, -1);
+    InvalidateChrome();
+}
+
+void TabGroupEditFinish(bool keep) {
+    if (!s_editId) return;
+    const unsigned id = s_editId;
+    s_editId = 0;                                        // (first: hiding the field sends EN_KILLFOCUS)
+    std::wstring name;
+    if (keep && s_edit) {
+        const int n = GetWindowTextLengthW(s_edit);
+        name.resize(n + 1);
+        GetWindowTextW(s_edit, &name[0], n + 1);
+        name.resize(n);
+    }
+    const bool hadFocus = s_edit && GetFocus() == s_edit;
+    if (s_edit) ShowWindow(s_edit, SW_HIDE);
+    if (TabGroup* g = FindTabGroup(id); g && keep) {
+        for (auto& c : name) if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
+        while (!name.empty() && name.back() == L' ') name.pop_back();
+        while (!name.empty() && name.front() == L' ') name.erase(name.begin());
+        g->name = name;
+        Log("group %u renamed", id);
+    }
+    if (hadFocus) FocusWebView();
     Changed();
 }
 
@@ -277,7 +352,7 @@ void TabGroupMenu(unsigned id, POINT screen) {
     DestroyMenu(m);                                      // (destroys the submenu too)
     if (!FindTabGroup(id)) return;
     if (cmd == kNewTab) TabGroupNewTab(id);
-    else if (cmd == kRename) TabGroupRenameDialog(id);
+    else if (cmd == kRename) TabGroupStartRename(id);
     else if (cmd == kCollapse) TabGroupToggle(id);
     else if (cmd == kUngroup) TabGroupUngroup(id);
     else if (cmd == kClose) TabGroupCloseTabs(id);
@@ -314,7 +389,7 @@ bool TabGroupsTabMenuCommand(UINT cmd, int tabIndex, UINT firstId) {
     if (cmd < firstId || cmd >= firstId + 2 + (UINT)g_groups.size()) return false;
     if (cmd == firstId) {
         const unsigned id = TabGroupCreate(tabIndex);
-        if (id) TabGroupRenameDialog(id);                // like Chrome: name it right away (or not)
+        if (id) TabGroupStartRename(id);                 // like Chrome: name it right away (or not)
     } else if (cmd == firstId + 1) {
         TabGroupRemoveTab(tabIndex);
     } else {
