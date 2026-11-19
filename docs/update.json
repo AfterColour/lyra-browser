@@ -1,9 +1,9 @@
 {
-  "version": "0.4.0",
-  "url": "https://github.com/AfterColour/lyra-browser/releases/download/v0.4.0/LyraSetup.exe",
-  "size": 78062592,
-  "sha256": "f15409168e065870268ba6f4c3126cc56d9ebbdcb626af6559972fc872cc1a13",
-  "sig": "B7qLmaJe1OSjZ9DYFcFk8UWtfgR+zBSxIAOfxdMRZflN68DToCU7etC+HamTQZO3EMk5oNI8bKHVWoD7vGdprg==",
-  "date": "2026-11-16",
-  "notes": "https://github.com/AfterColour/lyra-browser/releases/tag/v0.4.0"
+  "version": "0.5.0",
+  "url": "https://github.com/AfterColour/lyra-browser/releases/download/v0.5.0/LyraSetup.exe",
+  "size": 81997824,
+  "sha256": "a6beecba3478748076d19d246067342c9fc9c6d152a2cfb771ea2a417d08b569",
+  "sig": "XKc6uFabUr04KB02LfNTseohSOVo+Qgc1zeXS7A3r3FArZm/avwaFqmhkb+FcMhUsOpytvWVvNta658dgfEJuA==",
+  "date": "2026-11-19",
+  "notes": "https://github.com/AfterColour/lyra-browser/releases/tag/v0.5.0"
 }
