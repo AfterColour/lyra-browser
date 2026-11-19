@@ -19,6 +19,11 @@ constexpr UINT_PTR TIMER_TRANSITION = 4;     // the tab switch cover fades (see 
 
 // Display name used in the window title, dialogs and the About page.
 static const wchar_t kAppName[] = L"Lyra";
+// The project on GitHub. SUPPORT.md lists the ways to support Lyra (donations among them): the
+// links are changed there, without a new version of Lyra.
+static const wchar_t kRepoUrl[] = L"https://github.com/AfterColour/lyra-browser";
+static const wchar_t kSupportUrl[] = L"https://github.com/AfterColour/lyra-browser/blob/main/SUPPORT.md";
+static const wchar_t kIssuesUrl[] = L"https://github.com/AfterColour/lyra-browser/issues";
 
 // Appended to WebKit's standard Windows user agent. Without a "Version/... Safari/..."
 // token many sites (Google, YouTube, ...) treat the browser as unknown and serve a

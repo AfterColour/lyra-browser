@@ -583,6 +583,31 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Developer tools", L"Инструменты разработчика"), L"F12  /  Ctrl+Shift+I", true));
         g_pages.push_back(std::move(p));
     }
+    {   // Support Lyra
+        SPage p; p.group = 5;
+        p.name = Tr(L"Support Lyra", L"Поддержать Lyra");
+        p.icon = L"\uEB51";
+        p.tint = kTintPink;
+        auto open = [](const wchar_t* url) { CreateTab(url); if (g_hWnd) SetForegroundWindow(g_hWnd); };
+        p.rows.push_back(RHeader(Tr(L"Support Lyra", L"Поддержать Lyra")));
+        p.rows.push_back(RCustom(L"note",
+            Tr(L"Lyra is an independent browser with its own WebKit engine, made in spare time. If you like it, you can help it grow.",
+               L"Lyra \x2014 независимый браузер на собственном движке WebKit, его делают в свободное время. Если он вам нравится, вы можете помочь ему развиваться.")));
+        p.rows.push_back(RButton(Tr(L"Donate", L"Пожертвовать"),
+            Tr(L"Ways to support the project with money.", L"Способы поддержать проект деньгами."),
+            Tr(L"Open", L"Открыть"),
+            [open]() { open(kSupportUrl); }));
+        p.rows.push_back(RHeader(Tr(L"Free ways to help", L"Бесплатно")));
+        p.rows.push_back(RButton(Tr(L"Star Lyra on GitHub", L"Звезда на GitHub"),
+            Tr(L"Helps other people find the project.", L"Так проект проще найти другим."),
+            Tr(L"Open", L"Открыть"),
+            [open]() { open(kRepoUrl); }));
+        p.rows.push_back(RButton(Tr(L"Report a bug or suggest an idea", L"Сообщить об ошибке или предложить идею"),
+            Tr(L"Issues on GitHub.", L"Раздел Issues на GitHub."),
+            Tr(L"Open", L"Открыть"),
+            [open]() { open(kIssuesUrl); }));
+        g_pages.push_back(std::move(p));
+    }
     {   // About
         SPage p; p.group = 5;
         p.name = Tr(L"About", L"О программе");

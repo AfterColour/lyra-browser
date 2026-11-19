@@ -17,6 +17,10 @@
 
 Windows 10 and 11, 64-bit.
 
+## Support
+
+If you like Lyra, you can support it on [GitHub Sponsors](https://github.com/sponsors/AfterColour) (other ways: [SUPPORT.md](SUPPORT.md)).
+
 ## Source and license
 
 Lyra's own code is in this repository under the [PolyForm Shield License 1.0.0](LICENSE.md): you
