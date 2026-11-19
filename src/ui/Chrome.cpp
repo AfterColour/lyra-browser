@@ -18,6 +18,7 @@
 #include "browser/Passwords.h"
 #include "core/Localization.h"
 #include "browser/Tab.h"
+#include "browser/TabGroups.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
@@ -43,6 +44,7 @@ static bool s_paintTransparent = false;
 // Animation state. s_target is where everything should be; g_L is what is drawn and hit-tested.
 static Layout s_target;
 static std::map<unsigned long long, RectF> s_tabCur;   // drawn tab rectangles by tab id
+static std::map<unsigned, RectF> s_groupCur;          // drawn group labels by group id
 static RectF s_newTabCur;
 static bool  s_haveCur = false;
 // Width freeze after closing a tab with the mouse
@@ -136,19 +138,29 @@ static void MergeSplitTabs(Layout& L) {
     const bool vertical = L.mode == kLayoutVertical;
     const float step = vertical ? S(1) : S(2);
     const size_t n = L.tabs.size();
-    std::vector<float> size(n);
-    for (size_t i = 0; i < n; ++i) size[i] = vertical ? L.tabs[i].Height : L.tabs[i].Width;
-    if (L.mode == kLayoutCompact && (g_active == li || g_active == ri)) size[g_active == li ? ri : li] = 0;
-    else if (vertical) size[ri] = 0;                    // one row, the halves side by side
-    else { size[li] += step + size[ri]; size[ri] = 0; }
-    float pos = vertical ? L.tabs[li].Y : L.tabs[li].X;     // (tabs before the pair keep their places)
-    for (size_t i = (size_t)li; i < n; ++i) {
-        if (vertical) { L.tabs[i].Y = std::floor(pos); L.tabs[i].Height = size[i]; }
-        else { L.tabs[i].X = std::floor(pos); L.tabs[i].Width = size[i]; }
-        if (size[i] > 0) pos += size[i] + step;
+    RectF& a = L.tabs[li];
+    RectF& b = L.tabs[ri];
+    float removed = 0;                                   // how far what follows the pair moves back
+    if (L.mode == kLayoutCompact && (g_active == li || g_active == ri)) {
+        RectF& gone = g_active == li ? b : a;
+        if (gone.Width > 0) removed = gone.Width + step;
+        if (&gone == &a) b.X = a.X;
+        gone.Width = 0;
+    } else if (vertical) {                               // one row, the halves side by side
+        if (b.Height > 0) removed = b.Height + step;
+        b.Height = 0;
+    } else {                                             // the left half's tab spans both places
+        a.Width = std::max(0.f, b.GetRight() - a.X);
+        b.X = a.GetRight();
+        b.Width = 0;
     }
-    if (vertical) L.newTab.Y = std::floor(pos);
-    else L.newTab.X = std::min(L.newTab.X, std::floor(pos));
+    if (removed > 0) {
+        for (size_t i = (size_t)ri + 1; i < n; ++i) { if (vertical) L.tabs[i].Y -= removed; else L.tabs[i].X -= removed; }
+        for (size_t k = 0; k < L.groups.size(); ++k)
+            if (L.groupFirst[k] > ri) { if (vertical) L.groups[k].Y -= removed; else L.groups[k].X -= removed; }
+        if (vertical) L.newTab.Y -= removed;
+        else L.newTab.X -= removed;
+    }
     if (L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
         L.pill = L.tabs[g_active];
         PlaceReloadInPill(L);
@@ -170,6 +182,8 @@ static void OpenInsertGap(Layout& L) {
         if (vertical) { if (!g_tabs[i]->pinned) L.tabs[i].Y += gap; }
         else L.tabs[i].X += gap;
     }
+    for (size_t k = 0; k < L.groups.size(); ++k)
+        if (L.groupFirst[k] >= s_insertHint) { if (vertical) L.groups[k].Y += gap; else L.groups[k].X += gap; }
     if (vertical) L.newTab.Y += gap;
     else L.newTab.X += gap;
     if (L.mode == kLayoutCompact && g_active >= 0 && g_active < n) {
@@ -186,6 +200,61 @@ static float PlaceExtButtons(Layout& L, float trail, float by, float btn, float 
     return n ? L.ext[0].X : trail;
 }
 
+// The text on a group's label: its name; when collapsed also how many tabs it holds.
+static std::wstring GroupLabelText(const TabGroup& g) {
+    std::wstring s = g.name;
+    if (g.collapsed) {
+        const std::wstring count = std::to_wstring(TabGroupTabCount(g.id));
+        s = s.empty() ? count : s + L"  " + count;
+    }
+    return s;
+}
+
+// The width of a group's label in the horizontal layouts: a dot, or the text in a chip.
+static float GroupLabelWidth(const TabGroup& g) {
+    const std::wstring text = GroupLabelText(g);
+    if (text.empty() || !g_fTab) return std::floor(S(22));
+    static Bitmap bmp(1, 1, PixelFormat32bppPARGB);
+    Graphics mg(&bmp);
+    StringFormat sf(StringFormat::GenericTypographic());
+    RectF box;
+    mg.MeasureString(text.c_str(), -1, g_fTab.get(), PointF(0, 0), &sf, &box);
+    return std::floor(std::clamp(box.Width + S(18), S(26), S(140)));
+}
+
+// Where the group labels go and which tabs a collapsed group hides (TabGroups).
+struct GroupPass {
+    std::vector<int> labelBefore;    // per tab: the label placed before it, or -1
+    std::vector<char> hidden;        // per tab: in a collapsed group
+    std::vector<float> labelW;       // per label (horizontal layouts)
+    float labelsW = 0;               // all labels with their gaps
+    int visible = 0;                 // tabs that get a place
+};
+
+static GroupPass PrepareGroups(Layout& L, float gap) {
+    TabGroupsNormalize();
+    GroupPass p;
+    const size_t n = g_tabs.size();
+    p.labelBefore.assign(n, -1);
+    p.hidden.assign(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned id = g_tabs[i]->group;
+        const TabGroup* g = FindTabGroup(id);
+        if (g && (i == 0 || g_tabs[i - 1]->group != id)) {
+            p.labelBefore[i] = (int)L.groups.size();
+            L.groups.push_back(RectF());
+            L.groupIds.push_back(id);
+            L.groupFirst.push_back((int)i);
+            const float w = GroupLabelWidth(*g);
+            p.labelW.push_back(w);
+            p.labelsW += w + gap;
+        }
+        p.hidden[i] = TabHiddenByGroup((int)i) ? 1 : 0;
+        if (!p.hidden[i]) ++p.visible;
+    }
+    return p;
+}
+
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
     const float w = (float)clientW;
@@ -197,6 +266,8 @@ static void ComputeTarget(Layout& L, int clientW) {
     const size_t n = g_tabs.size();
     const bool dl = !DownloadsList().empty();        // the downloads button shows once there are any
     L.tabs.resize(n);
+    const GroupPass gp = PrepareGroups(L, gap);
+    const int nv = gp.visible;
 
     if (L.mode == kLayoutCompact) {
         L.chromeH = bar;
@@ -213,12 +284,12 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float left = L.fwd.GetRight() + S(8);
         const float right = trail - S(4) - btn - gap;
         const float ty = std::floor((bar - tabH) / 2);
-        float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
+        float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedIn = 0;                                // pinned tabs (not the open one): a fixed narrow width
         for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned && (int)i != g_active) ++pinnedIn;
         const float pinW = std::floor(S(kPinnedW));
         avail = std::max(0.f, avail - pinW * (float)pinnedIn);
-        const int inactive = n ? (int)n - 1 - pinnedIn : 0;
+        const int inactive = nv ? nv - 1 - pinnedIn : 0;
         float inW = S(150), pillW = 0;
         if (inactive == 0) {
             pillW = std::min(avail, S(860));
@@ -234,6 +305,12 @@ static void ComputeTarget(Layout& L, int clientW) {
         }
         float x = left;
         for (size_t i = 0; i < n; ++i) {
+            if (gp.labelBefore[i] >= 0) {
+                const int k = gp.labelBefore[i];
+                L.groups[k] = RectF(std::floor(x), ty, gp.labelW[k], tabH);
+                x += gp.labelW[k] + gap;
+            }
+            if (gp.hidden[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
             const float tw = ((int)i == g_active) ? pillW : g_tabs[i]->pinned ? pinW : inW;
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(tw), tabH);
             x += tw + gap;
@@ -241,7 +318,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         if (g_active >= 0 && g_active < (int)n) L.pill = L.tabs[g_active];
         else L.pill = RectF(left, ty, pillW, tabH);
         PlaceReloadInPill(L);
-        const float nx = std::min(n ? x : left, right + gap);
+        const float nx = std::min(x, right + gap);
         L.newTab = RectF(std::floor(nx), by, btn, btn);
     } else if (L.mode == kLayoutSeparate) {
         const float strip = std::floor(S(d.strip));
@@ -251,16 +328,22 @@ static void ComputeTarget(Layout& L, int clientW) {
         // Tab strip
         const float left = edge, right = L.capMin.X - S(8) - btn - gap;
         const float ty = std::floor((strip - tabH) / 2);
-        const float avail = std::max(0.f, right - left - gap * (float)(n ? n - 1 : 0));
+        const float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedN = 0;
         for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned) ++pinnedN;
         const float pinW = std::floor(S(kPinnedW));
-        const size_t normal = n - (size_t)pinnedN;
+        const size_t normal = (size_t)std::max(0, nv - pinnedN);
         float tw = normal ? std::max(0.f, avail - pinW * (float)pinnedN) / (float)normal : 0.f;
         tw = std::max(S(28), std::min(tw, S(200)));
         if (s_frozen) tw = std::min(tw, s_frozenTabW);
         float x = left;
         for (size_t i = 0; i < n; ++i) {
+            if (gp.labelBefore[i] >= 0) {
+                const int k = gp.labelBefore[i];
+                L.groups[k] = RectF(std::floor(x), ty, gp.labelW[k], tabH);
+                x += gp.labelW[k] + gap;
+            }
+            if (gp.hidden[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
             const float w = g_tabs[i]->pinned ? pinW : tw;
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(w), tabH);
             x += w + gap;
@@ -308,9 +391,16 @@ static void ComputeTarget(Layout& L, int clientW) {
             if (++col == cols) { col = 0; y += rowH + cgap; }
         }
         if (anyPinned) y += (col ? rowH + cgap : 0.f) + S(4);
+        const float indent = std::floor(S(10));
         for (size_t i = 0; i < n; ++i) {
             if (g_tabs[i]->pinned) continue;
-            L.tabs[i] = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
+            if (gp.labelBefore[i] >= 0) {
+                L.groups[gp.labelBefore[i]] = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
+                y += rowH + S(1);
+            }
+            const float in = g_tabs[i]->group ? indent : 0.f;
+            if (gp.hidden[i]) { L.tabs[i] = RectF(S(6) + in, std::floor(y), L.sideW - S(12) - in, 0); continue; }
+            L.tabs[i] = RectF(S(6) + in, std::floor(y), L.sideW - S(12) - in, rowH);
             y += rowH + S(1);
         }
         L.newTab = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
@@ -327,6 +417,10 @@ static void ApplyCurrent() {
     for (size_t i = 0; i < n; ++i) {
         auto it = s_tabCur.find(g_tabs[i]->id);
         if (it != s_tabCur.end()) g_L.tabs[i] = it->second;
+    }
+    for (size_t k = 0; k < s_target.groups.size(); ++k) {
+        auto it = s_groupCur.find(s_target.groupIds[k]);
+        if (it != s_groupCur.end()) g_L.groups[k] = it->second;
     }
     if (g_L.mode != kLayoutVertical) g_L.newTab = s_newTabCur;
     if (g_L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
@@ -367,6 +461,20 @@ void ComputeLayout(int clientW, bool animate) {
         next[g_tabs[i]->id] = cur;
     }
     s_tabCur.swap(next);
+    std::map<unsigned, RectF> nextGroups;
+    for (size_t k = 0; k < s_target.groups.size(); ++k) {
+        const RectF& to = s_target.groups[k];
+        auto it = s_groupCur.find(s_target.groupIds[k]);
+        RectF cur = to;
+        if (anim) {
+            if (it != s_groupCur.end()) cur = it->second;
+            else if (vertical) cur = RectF(to.X, to.Y, to.Width, 0);
+            else cur = RectF(to.X, to.Y, 0, to.Height);
+        }
+        if (!Near(cur, to)) moving = true;
+        nextGroups[s_target.groupIds[k]] = cur;
+    }
+    s_groupCur.swap(nextGroups);
     if (!anim) s_newTabCur = s_target.newTab;
     else if (!Near(s_newTabCur, s_target.newTab)) moving = true;
     s_haveCur = true;
@@ -501,11 +609,19 @@ bool ChromeAnimStep(float dt) {
         moving = true;                                   // a tab is being created/closed: next frame
     } else if (s_haveCur) {
         const float k = AnimTabsEnabled() ? AnimFactor(dt, kTabTauMs) : 1.f;
+        const float k2 = k;
         for (size_t i = 0; i < g_tabs.size() && i < s_target.tabs.size(); ++i) {
             auto it = s_tabCur.find(g_tabs[i]->id);
             if (it == s_tabCur.end()) continue;
             const RectF& to = s_target.tabs[i];
             it->second = Near(it->second, to) ? to : Lerp(it->second, to, k);
+            if (!Near(it->second, to)) moving = true;
+        }
+        for (size_t k = 0; k < s_target.groups.size(); ++k) {
+            auto it = s_groupCur.find(s_target.groupIds[k]);
+            if (it == s_groupCur.end()) continue;
+            const RectF& to = s_target.groups[k];
+            it->second = Near(it->second, to) ? to : Lerp(it->second, to, k2);
             if (!Near(it->second, to)) moving = true;
         }
         if (s_target.mode != kLayoutVertical) {
@@ -661,8 +777,11 @@ Hit HitTest(int px, int py) {
     for (int i = n - 1; i >= 0; --i)
         if (CloseVisible(i) && CloseRect(i).Contains(x, y)) return MakeHit(Hit::TabClose, i);
     if (inTop && L.pill.Contains(x, y)) return MakeHit(Hit::Pill);
+    for (size_t k = 0; k < L.groups.size(); ++k)
+        if (L.groups[k].Width >= 1.f && L.groups[k].Height >= 1.f && L.groups[k].Contains(x, y)) return MakeHit(Hit::GroupLabel, (int)k);
     for (int i = n - 1; i >= 0; --i) {
         const RectF& r = L.tabs[i];
+        if (TabHiddenByGroup(i) || r.Width < 1.f || r.Height < 1.f) continue;
         if (x >= r.X && x < r.GetRight() + S(2) && y >= r.Y && y < r.GetBottom()) return MakeHit(Hit::TabBody, i);
     }
     if (L.mode == kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
@@ -921,8 +1040,65 @@ static void DrawChrome(Graphics& g, int w, int h) {
     tf.SetLineAlignment(StringAlignmentCenter);
     int splitL = -1, splitR = -1;
     const bool splitPair = SplitStripPair(&splitL, &splitR) && splitR < n;
+
+    // Tab groups: the label before each group's tabs, a line in the group's colour along them.
+    for (size_t k = 0; k < L.groups.size() && k < L.groupIds.size(); ++k) {
+        const TabGroup* grp = FindTabGroup(L.groupIds[k]);
+        const RectF& r = L.groups[k];
+        if (!grp || r.Width < 1.f || r.Height < 1.f) continue;
+        const Color c = TabGroupColor(grp->color);
+        const Hit hit = MakeHit(Hit::GroupLabel, (int)k);
+        // The group's extent: from the label to its last tab that has a place.
+        int first = -1, last = -1;
+        TabGroupRange(grp->id, &first, &last);
+        float endX = r.GetRight(), endY = r.GetBottom();
+        for (int i = std::max(first, 0); i <= last && i < n; ++i) {
+            const RectF tr = (L.mode == kLayoutCompact && i == g_active) ? L.pill : L.tabs[i];
+            if (tr.Width < 1.f || tr.Height < 1.f) continue;
+            endX = std::max(endX, tr.GetRight());
+            endY = std::max(endY, tr.GetBottom());
+        }
+        const std::wstring text = GroupLabelText(*grp);
+        if (vertical) {
+            hoverFill(r, hit, dwn(Hit::GroupLabel, (int)k), S(6));
+            const float d = std::floor(S(10));
+            FillRound(g, c, RectF(std::floor(r.X + S(9) + (S(14) - d) / 2), std::floor(r.Y + (r.Height - d) / 2), d, d), d / 2);
+            const float cs = S(16);
+            const RectF chev(r.GetRight() - S(6) - cs, r.Y + (r.Height - cs) / 2, cs, cs);
+            DrawGlyph(g, grp->collapsed ? L"\uE76C" : L"\uE70D", chev, T.text2, g_fIconSm.get());
+            const float tx = r.X + S(9) + S(14) + S(7), tr = chev.X - S(4);
+            const std::wstring shown = text.empty() ? std::wstring(Tr(L"Group", L"Группа")) : text;
+            if (tr - tx > S(10)) {
+                SolidBrush tb(text.empty() ? T.text2 : T.text);
+                g.DrawString(shown.c_str(), -1, g_fTabBold.get(), RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
+            }
+            if (!grp->collapsed && endY > r.GetBottom() + S(2)) {     // a bar along its tabs
+                const float bw = std::max(2.f, std::round(S(2)));
+                FillRound(g, c, RectF(r.X + S(3), r.GetBottom() + S(3), bw, endY - r.GetBottom() - S(6)), bw / 2);
+            }
+        } else {
+            const float lh = std::max(2.f, std::round(S(2)));
+            if (!grp->collapsed && endX > r.GetRight() + S(2))         // a line under its tabs
+                FillRound(g, c, RectF(r.X + S(4), r.GetBottom() + S(1), endX - r.X - S(8), lh), lh / 2);
+            if (text.empty()) {                          // no name: a coloured dot
+                hoverFill(r, hit, dwn(Hit::GroupLabel, (int)k), S(6));
+                const float d = std::floor(S(10));
+                FillRound(g, c, RectF(std::floor(r.X + (r.Width - d) / 2), std::floor(r.Y + (r.Height - d) / 2), d, d), d / 2);
+            } else {                                     // the name in a chip of the group's colour
+                const RectF chip(r.X + S(2), r.Y + S(3), r.Width - S(4), r.Height - S(6));
+                const float hv = std::max(HoverAmount(hit), dwn(Hit::GroupLabel, (int)k) ? 1.f : 0.f);
+                FillRound(g, Mix(c, g_dark ? Color(255, 255, 255) : Color(0, 0, 0), 0.12f * hv), chip, S(5));
+                SolidBrush tb(g_dark ? Color(32, 33, 36) : Color(255, 255, 255));
+                StringFormat cf(&tf);
+                cf.SetAlignment(StringAlignmentCenter);
+                g.DrawString(text.c_str(), -1, g_fTab.get(), RectF(chip.X + S(6), chip.Y, chip.Width - S(12), chip.Height), &cf, &tb);
+            }
+        }
+    }
+
     for (int i = 0; i < n; ++i) {
         if (IsCompactActive(i)) continue;
+        if (TabHiddenByGroup(i)) continue;               // (in a collapsed group)
         const RectF& r = L.tabs[i];
         if (r.Width < 1.f || r.Height < 1.f) continue;   // (the right half of a split view: drawn with the left)
         const Tab& tab = *g_tabs[i];

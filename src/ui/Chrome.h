@@ -33,11 +33,15 @@ struct Layout {
     std::vector<RectF> ext;          // extensions' buttons, left of downloads (ExtensionButtons())
     RectF capMin, capMax, capClose;
     std::vector<RectF> tabs;         // one per tab; in the compact layout the active one is the address field
+    // Tab groups (browser/TabGroups): a label before each group's first tab.
+    std::vector<RectF> groups;
+    std::vector<unsigned> groupIds;  // the group of each label
+    std::vector<int> groupFirst;     // the index of its first tab
 };
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }

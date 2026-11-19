@@ -6,6 +6,7 @@
 #include "browser/AdBlock.h"
 #include "browser/History.h"
 #include "browser/StartPage.h"
+#include "browser/TabGroups.h"
 #include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/PageClients.h"
@@ -183,6 +184,7 @@ void SelectTab(int i) {
     }
     g_tabs[i]->hiddenSince = 0;
     g_active = i;
+    TabGroupsTabSelected(*g_tabs[i]);   // a collapsed group opens
     TouchMru(g_tabs[i]->id);
     // The compact layout depends on the active tab; LayoutWebViews puts the new view in place
     // (still parked views are already rendered) and parks or hides the others.
@@ -305,9 +307,11 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     g_tabs.push_back(std::move(tab));
     Log("tab#%llu CREATED view=%p page=%p hwnd=%p popup=%d (tabs=%d)", raw->id, (void*)raw->view,
         (void*)raw->page, (void*)raw->hwnd, (int)openedByPage, (int)g_tabs.size());
+    if (openedByPage) TabGroupsTabOpenedFrom(*raw, ActiveTab());   // into its opener's group
     ExtensionsOnTabCreated(raw);
     RefreshLayout(true);                 // the new tab grows in
-    if (select) SelectTab((int)g_tabs.size() - 1);
+    int at = -1;
+    if (select && FindTab(raw->id, &at)) SelectTab(at);
     else ShowWindow(raw->hwnd, SW_HIDE);
     return raw;
 }
@@ -500,10 +504,12 @@ Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab) {
     if (privateTab) SystemProxyApply(s_privateStore);
     WKPageConfigurationRef conf = CreatePageConfiguration();
     if (privateTab && s_privateStore) WKPageConfigurationSetWebsiteDataStore(conf, s_privateStore);
+    Tab* opener = ActiveTab();
     Tab* t = CreateTabWithConfiguration(conf, false, !background);
     WKRelease(conf);
     if (!t) return nullptr;
     t->privateTab = privateTab;
+    if (opener && opener != t && !privateTab && !opener->privateTab) TabGroupsTabOpenedFrom(*t, opener);
     t->url = input;                                // shown until the page commits
     InvalidateChrome();
     Navigate(t->page, ResolveNavigation(input));
@@ -603,6 +609,7 @@ void SetTabPinned(int index, bool pinned) {
     const int count = PinnedTabCount();
     t.pinned = pinned;
     Log("tab#%llu %s", t.id, pinned ? "pinned" : "unpinned");
+    if (pinned) t.group = 0;                              // (pinned tabs are not grouped)
     if (FindTab(t.id, &index)) MoveTab(index, pinned ? count : count - 1);
     RefreshLayout(true);
     InvalidateChrome();
@@ -618,11 +625,16 @@ void DropTabAt(unsigned long long id, int insertAt) {
     const int pinnedOthers = PinnedTabCount() - (t->pinned ? 1 : 0);
     // Right after the last pinned tab: a pinned tab stays pinned, an ordinary one stays ordinary.
     const bool pinned = to < pinnedOthers || (t->pinned && to == pinnedOthers);
-    if (to == from && pinned == t->pinned) return;
+    if (to == from && pinned == t->pinned) {             // not moved; the group may still change
+        const unsigned group = t->group;
+        TabGroupsAfterDrop(from);
+        if (group != t->group) { RefreshLayout(true); InvalidateChrome(); }
+        return;
+    }
     if (pinned && SplitHas(*t)) SplitClose();
     Log("tab#%llu moved %d -> %d%s", id, from, to, pinned != t->pinned ? (pinned ? " (pinned)" : " (unpinned)") : "");
     t->pinned = pinned;
-    if (FindTab(id, &from)) MoveTab(from, to);
+    if (FindTab(id, &from)) { MoveTab(from, to); TabGroupsAfterDrop(to); }
     RefreshLayout(true);
     InvalidateChrome();
 }

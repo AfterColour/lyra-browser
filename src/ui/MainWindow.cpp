@@ -17,6 +17,7 @@
 #include "browser/StartPage.h"
 #include "app/Log.h"
 #include "browser/Tab.h"
+#include "browser/TabGroups.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
@@ -613,6 +614,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Key:      PasswordsSiteMenu(); break;
             case Hit::Reader:   ReaderToggle(); break;
             case Hit::Translate: TranslateToggle(); break;
+            case Hit::GroupLabel:
+                if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupToggle(g_L.groupIds[up.index]);
+                break;
             default: break;
             }
         }
@@ -629,10 +633,18 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_RBUTTONUP: {                                 // the tab menu
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::ExtAction) { ExtensionButtonMenu(h.index); return 0; }
+        if (h.kind == Hit::GroupLabel) {
+            if (h.index >= 0 && h.index < (int)g_L.groupIds.size()) {
+                POINT gp = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                ClientToScreen(hWnd, &gp);
+                TabGroupMenu(g_L.groupIds[h.index], gp);
+            }
+            return 0;
+        }
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
-        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin };
+        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin, kGroups = 1000 };
         HMENU m = CreatePopupMenu();
         {
             const Tab& target = *g_tabs[h.index];
@@ -653,6 +665,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 AppendMenuW(m, MF_STRING, kSplitWith, Tr(L"Split view with new tab", L"Разделённый экран с новой вкладкой"));
             }
             if (!(target.pinned || (h.index != g_active && open && open->pinned))) AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            if (!target.pinned) {                        // tab groups
+                TabGroupsAppendTabMenu(m, h.index, kGroups);
+                AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            }
         }
         const std::wstring why = TabSleepBlocker(*g_tabs[h.index]);
         std::wstring sleepText = Tr(L"Put tab to sleep", L"Усыпить вкладку");
@@ -678,7 +694,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         int index = -1;
         Tab* t = FindTab(id, &index);
         if (!t) return 0;
-        if (cmd == kPin) SetTabPinned(index, !t->pinned);
+        if (cmd >= kGroups) TabGroupsTabMenuCommand((UINT)cmd, index, kGroups);
+        else if (cmd == kPin) SetTabPinned(index, !t->pinned);
         else if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
         else if (cmd == kSplitSwap) SplitSwap();
         else if (cmd == kSplitClose) SplitClose();

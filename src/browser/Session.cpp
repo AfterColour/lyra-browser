@@ -4,9 +4,11 @@
 //   LyraSession 1
 //   clean 0|1          1 = written when Lyra closed normally
 //   active <index>
+//   group <id> <colour> <collapsed> <name>   a tab group (browser/TabGroups.cpp)
 //   tab                one block per tab, in order
 //   url <address>      Lyra's own pages as their lyra:// alias
 //   title <title>
+//   group <id>         the tab's group; optional
 //   state <base64>     WebKit's session state (back/forward list); optional
 //   end
 #include "browser/Session.h"
@@ -14,6 +16,7 @@
 #include "browser/Reader.h"
 #include "app/Log.h"
 #include "browser/StartPage.h"
+#include "browser/TabGroups.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "browser/WebContext.h"
@@ -103,7 +106,7 @@ std::string PageState(WKPageRef page) {
     return out;
 }
 
-struct SavedTab { std::wstring url, title; std::string state; bool pinned = false; };
+struct SavedTab { std::wstring url, title; std::string state; bool pinned = false; unsigned group = 0; };
 
 std::string s_lastSignature;
 DWORD s_lastSave = 0;
@@ -118,7 +121,9 @@ std::string Build(bool clean, std::string* signature) {
         ++saved;
     }
     out << "LyraSession 1\nclean " << (clean ? 1 : 0) << "\nactive " << activeSaved << "\n";
-    sig << g_active << '|';
+    const std::string groups = TabGroupsSessionLines();
+    out << groups;
+    sig << g_active << '|' << groups;
     for (auto& tp : g_tabs) {
         const Tab& t = *tp;
         if (t.state != TabState::Live || t.privateTab) continue;
@@ -130,9 +135,10 @@ std::string Build(bool clean, std::string* signature) {
         else if (t.page && !IsInternalPageUrl(t.url) && !t.url.empty()) state = PageState(t.page);
         out << "tab\nurl " << OneLine(url) << "\ntitle " << OneLine(t.title) << "\n";
         if (t.pinned) out << "pinned 1\n";
+        if (t.group) out << "group " << t.group << "\n";
         if (!state.empty()) out << "state " << state << "\n";
         out << "end\n";
-        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << (t.pinned ? 1 : 0) << '\n';
+        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << (t.pinned ? 1 : 0) << '|' << t.group << '\n';
     }
     if (signature) *signature = sig.str();
     return out.str();
@@ -180,6 +186,7 @@ bool SessionRestore(bool pinnedOnly) {
     std::ifstream f(SessionFile(), std::ios::binary);
     if (!f) return false;
     std::vector<SavedTab> tabs;
+    std::vector<TabGroup> groups;
     bool clean = false;
     int active = 0;
     std::string line;
@@ -195,7 +202,12 @@ bool SessionRestore(bool pinnedOnly) {
         else if (line == "end") { if (inTab && !cur.url.empty()) tabs.push_back(cur); inTab = false; }
         else if (const char* v = value("clean")) clean = atoi(v) != 0;
         else if (const char* v = value("active")) active = atoi(v);
-        else if (!inTab) continue;
+        else if (!inTab) {
+            TabGroup g;
+            if (const char* gv = value("group")) if (TabGroupsSessionParse(gv, &g)) groups.push_back(g);
+            continue;
+        }
+        else if (const char* v = value("group")) cur.group = (unsigned)strtoul(v, nullptr, 10);
         else if (const char* v = value("url")) cur.url = FromUtf8(v);
         else if (const char* v = value("title")) cur.title = FromUtf8(v);
         else if (const char* v = value("state")) cur.state = v;
@@ -218,6 +230,7 @@ bool SessionRestore(bool pinnedOnly) {
     if (tabs.empty() || (tabs.size() == 1 && tabs[0].url == kStartAlias && !tabs[0].pinned)) return false;
     Log("session: restoring %zu tab(s) (previous exit %s)", tabs.size(), clean ? "normal" : "NOT clean");
 
+    std::vector<std::pair<Tab*, unsigned>> grouped;
     for (auto& s : tabs) {
         WKPageConfigurationRef conf = CreatePageConfigurationForTab();
         Tab* t = CreateTabWithConfiguration(conf, false, false);
@@ -229,6 +242,13 @@ bool SessionRestore(bool pinnedOnly) {
         t->url = s.url;
         t->title = s.title.empty() ? HostOf(s.url) : s.title;
         t->pinned = s.pinned;
+        if (!pinnedOnly && s.group) grouped.push_back({ t, s.group });
+    }
+    // Groups only once every tab exists (each new tab lays the list out, which drops groups
+    // that have no tabs yet).
+    if (!pinnedOnly) {
+        for (auto& [tab, group] : grouped) tab->group = group;
+        TabGroupsRestore(groups);
     }
     // (pinned ones first, as they were saved: nothing to sort)
     if (g_tabs.empty() || pinnedOnly) return false;     // the caller opens its start tab after them
