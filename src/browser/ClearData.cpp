@@ -40,7 +40,7 @@ void ClearBrowsingData(const ClearDataChoice& c, std::function<void()> done) {
 
     if (c.history) {
         HistoryClearSince(sinceMs);
-        g_closedUrls.clear();                            // no times kept for them: all of them
+        g_closedTabs.clear();                            // no times kept for them: all of them
         RefreshStartPages();
     }
     if (c.downloads) DownloadsClear();

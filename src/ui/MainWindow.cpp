@@ -18,6 +18,7 @@
 #include "app/Log.h"
 #include "browser/Tab.h"
 #include "browser/TabGroups.h"
+#include "browser/SiteZoom.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
@@ -619,6 +620,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Key:      PasswordsSiteMenu(); break;
             case Hit::Reader:   ReaderToggle(); break;
             case Hit::Translate: TranslateToggle(); break;
+            case Hit::Zoom:     SiteZoomReset(); break;
             case Hit::GroupLabel:
                 if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupToggle(g_L.groupIds[up.index]);
                 break;

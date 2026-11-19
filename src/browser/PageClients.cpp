@@ -1,6 +1,9 @@
 // Lyra — колбэки WebKit для страницы: навигация, сбои, alert/confirm/prompt, выбор файла.
 #include "browser/ContextMenu.h"
 #include "browser/PageClients.h"
+#include "ui/LinkStatus.h"
+#include "browser/SiteZoom.h"
+#include <WebKit/WKHitTestResultRef.h>
 #include "browser/CustomThemes.h"
 #include "browser/ExtensionStore.h"
 #include "browser/Extensions.h"
@@ -98,6 +101,7 @@ static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     TranslatePageCommitted(*t);
     ExtensionsOnTabCommitted(t);
     SyncTab(*t);
+    SiteZoomApply(*t);                   // the new page's site keeps its own zoom
     ExtensionsOnTabUpdated(t);
     Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
     InvalidateChrome();
@@ -429,6 +433,16 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
         Log("tab#%llu audio %s", t->id, t->audible ? "on" : "off");
         InvalidateChrome();
         MediaControlsAudioChanged();
+    };
+    ui.mouseDidMoveOverElement = [](WKPageRef, WKHitTestResultRef hit, WKEventModifiers, WKTypeRef, const void* ci) {
+        Tab* t = ResolveTab(ci, "hover");
+        if (!t) return;
+        std::wstring url;
+        if (hit) if (WKURLRef link = WKHitTestResultCopyAbsoluteLinkURL(hit)) {
+            if (WKStringRef s = WKURLCopyString(link)) { url = WKStr(s); WKRelease(s); }
+            WKRelease(link);
+        }
+        LinkStatusUpdate(*t, url);                       // the link's address in the page's corner
     };
     ui.decidePolicyForNotificationPermissionRequest = [](WKPageRef page, WKSecurityOriginRef origin,
             WKNotificationPermissionRequestRef request, const void*) { PermissionsDecideNotifications(page, origin, request); };

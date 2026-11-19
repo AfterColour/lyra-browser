@@ -4,7 +4,19 @@
 #include "common/Platform.h"
 #include "browser/Tab.h"
 
-extern std::vector<std::wstring> g_closedUrls;
+// Closed tabs for Ctrl+Shift+T and the menu's "Recently closed" (most recent last): enough to
+// bring one back as it was - its back/forward list, its place, its group, pinned or not.
+struct ClosedTab {
+    std::wstring url, title;
+    std::string  state;          // WebKit's session state, raw (may be empty)
+    int          index = -1;     // where it stood
+    unsigned     group = 0;
+    std::wstring groupName;      // to make the group again if it is gone
+    int          groupColor = 0;
+    bool         groupCollapsed = false;
+    bool         pinned = false;
+};
+extern std::vector<ClosedTab> g_closedTabs;
 
 extern std::vector<std::unique_ptr<Tab>> g_tabs;
 extern int g_active;
@@ -32,7 +44,7 @@ void CreatePrivateTab();             // Ctrl+Shift+N: a private (incognito) tab
 // The page's context menu: `input` (an address or a search) in a new tab, in the background (the
 // open tab stays) or in front, and private or not.
 Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
-void ReopenClosedTab();
+void ReopenClosedTab(int which = -1);   // an index into g_closedTabs; -1: the last closed
 // Moves the tab at `from` so that it ends up at index `to` (the others keep their order).
 void MoveTab(int from, int to);
 // Pinned tabs stay at the start of the list, narrow (only the site icon), and come back after a

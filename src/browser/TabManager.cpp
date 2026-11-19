@@ -7,6 +7,7 @@
 #include "browser/History.h"
 #include "browser/StartPage.h"
 #include "browser/TabGroups.h"
+#include "ui/LinkStatus.h"
 #include "core/Localization.h"
 #include "app/Log.h"
 #include "browser/PageClients.h"
@@ -31,9 +32,9 @@ static void Navigate(WKPageRef page, const std::string& utf8Url);
 static WKPageConfigurationRef CreatePageConfiguration();
 static void DetachTab(Tab& t);
 static void DestroyTab(Tab& t);
-static void RememberClosedTab(const Tab& t);
+static void RememberClosedTab(const Tab& t, int index);
 
-std::vector<std::wstring> g_closedUrls;        // for Ctrl+Shift+T (most recent last)
+std::vector<ClosedTab> g_closedTabs;           // for Ctrl+Shift+T (most recent last)
 
 std::vector<std::unique_ptr<Tab>> g_tabs;
 
@@ -185,6 +186,7 @@ void SelectTab(int i) {
     g_tabs[i]->hiddenSince = 0;
     g_active = i;
     TabGroupsTabSelected(*g_tabs[i]);   // a collapsed group opens
+    LinkStatusHide();
     TouchMru(g_tabs[i]->id);
     // The compact layout depends on the active tab; LayoutWebViews puts the new view in place
     // (still parked views are already rendered) and parks or hides the others.
@@ -570,18 +572,70 @@ static void DestroyTab(Tab& t) {
     Log("tab#%llu destroy: end", id);
 }
 
-static void RememberClosedTab(const Tab& t) {
+static void RememberClosedTab(const Tab& t, int index) {
     if (t.privateTab) return;
-    if (t.url.empty() || t.url == L"about:blank") return;
-    g_closedUrls.push_back(t.url);
-    if (g_closedUrls.size() > 25) g_closedUrls.erase(g_closedUrls.begin());
+    const std::wstring url = t.lazyPending ? t.lazyUrl : t.url;
+    if (url.empty() || url == L"about:blank") return;
+    ClosedTab c;
+    c.url = url;
+    c.title = t.title;
+    c.index = index;
+    c.group = t.group;
+    if (const TabGroup* g = FindTabGroup(t.group)) { c.groupName = g->name; c.groupColor = g->color; }
+    c.pinned = t.pinned;
+    if (t.lazyPending) c.state = t.lazyState;            // (not loaded: the saved one)
+    else if (t.page && !IsInternalPageUrl(t.url)) c.state = SessionPageState(t.page);
+    g_closedTabs.push_back(std::move(c));
+    if (g_closedTabs.size() > 25) g_closedTabs.erase(g_closedTabs.begin());
 }
 
-void ReopenClosedTab() {
-    if (g_closedUrls.empty()) return;
-    std::wstring url = g_closedUrls.back();
-    g_closedUrls.pop_back();
-    CreateTab(url);
+void ReopenClosedTab(int which) {
+    if (g_closedTabs.empty()) return;
+    if (which < 0 || which >= (int)g_closedTabs.size()) which = (int)g_closedTabs.size() - 1;
+    const ClosedTab c = g_closedTabs[which];
+    g_closedTabs.erase(g_closedTabs.begin() + which);
+    // Like a restored tab: created hidden, it loads its back/forward list when it is shown.
+    WKPageConfigurationRef conf = CreatePageConfigurationForTab();
+    Tab* t = CreateTabWithConfiguration(conf, false, false);
+    WKRelease(conf);
+    if (!t) { g_closedTabs.insert(g_closedTabs.begin() + which, c); return; }
+    const unsigned long long id = t->id;
+    t->lazyPending = true;
+    t->lazyUrl = c.url;
+    t->lazyState = c.state;
+    t->url = c.url;
+    t->title = c.title.empty() ? HostOf(c.url) : c.title;
+    int at = -1;
+    if (c.pinned && FindTab(id, &at)) SetTabPinned(at, true);
+    // Back to its place (pinned ones among the pinned, the others after them).
+    if (FindTab(id, &at)) {
+        const int pinnedOthers = PinnedTabCount() - (t->pinned ? 1 : 0);
+        int to = std::clamp(c.index, 0, (int)g_tabs.size() - 1);
+        to = t->pinned ? std::min(to, pinnedOthers) : std::max(to, pinnedOthers);
+        MoveTab(at, std::clamp(to, 0, (int)g_tabs.size() - 1));
+    }
+    // Into its group, if the group is still there (at the group's end when its place is not next to it).
+    // A group made again for a tab reopened before stands in for the closed one.
+    static std::map<unsigned, unsigned> remade;          // closed group's id -> its new one
+    unsigned group = c.group;
+    if (group && !FindTabGroup(group)) {
+        auto r = remade.find(group);
+        if (r != remade.end() && FindTabGroup(r->second)) group = r->second;
+    }
+    if (group && !t->pinned && FindTabGroup(group) && FindTab(id, &at)) {
+        t->group = group;
+        TabGroupsNormalize();
+        if (!t->group && FindTab(id, &at)) TabGroupAddTab(group, at);
+    } else if (group && !t->pinned && FindTab(id, &at)) {     // its group closed with it: made again
+        if (const unsigned g = TabGroupCreate(at)) {
+            if (TabGroup* grp = FindTabGroup(g)) { grp->name = c.groupName; grp->color = c.groupColor; }
+            remade[c.group] = g;
+        }
+    }
+    Log("tab#%llu reopened (%ls)", id, HostOf(c.url).c_str());
+    if (FindTab(id, &at)) SelectTab(at);
+    RefreshLayout(true);
+    InvalidateChrome();
 }
 
 void MoveTab(int from, int to) {
@@ -655,7 +709,7 @@ void CloseTab(int i) {
 
     Log("CloseTab: begin index=%d tab#%llu loading=%d active=%d tabs=%d", i, g_tabs[i]->id,
         (int)g_tabs[i]->loading, g_active, (int)g_tabs.size());
-    RememberClosedTab(*g_tabs[i]);
+    RememberClosedTab(*g_tabs[i], i);
     ExtensionsOnTabRemoved(g_tabs[i]->id);
 
     // 1) Take the tab out of our own state and cut off callbacks, so nothing that

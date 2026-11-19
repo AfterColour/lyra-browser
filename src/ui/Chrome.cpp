@@ -19,6 +19,7 @@
 #include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabGroups.h"
+#include "browser/SiteZoom.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
 #include "core/Settings.h"
@@ -738,6 +739,39 @@ static RectF TranslateRect() {
     return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
 }
 
+// The zoom badge ("125%"): the open tab's site has its own zoom; a click resets it.
+static bool ZoomShown() {
+    if (IsEditing() || g_L.star.Width <= 0) return false;
+    const Tab* t = ActiveTab();
+    return t && t->page && SiteZoomIsCustom(*t);
+}
+
+static std::wstring ZoomText() {
+    const Tab* t = ActiveTab();
+    return t && t->page ? std::to_wstring((int)std::lround(WKPageGetPageZoomFactor(t->page) * 100)) + L"%" : std::wstring();
+}
+
+static RectF ZoomRect() {
+    const RectF& pill = g_L.pill;
+    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
+    if (KeyShown()) right = KeyRect().X - S(2);
+    if (ReaderShown()) right = ReaderRect().X - S(2);
+    if (TranslateShown()) right = TranslateRect().X - S(2);
+    float w = S(42);
+    if (g_fBadge) {
+        static Bitmap bmp(1, 1, PixelFormat32bppPARGB);
+        Graphics mg(&bmp);
+        StringFormat sf(StringFormat::GenericTypographic());
+        RectF box;
+        const std::wstring text = ZoomText();
+        mg.MeasureString(text.c_str(), -1, g_fText.get(), PointF(0, 0), &sf, &box);
+        w = std::ceil(box.Width + S(12));
+    }
+    const float c = S(22);
+    return RectF(right - w, pill.Y + (pill.Height - c) / 2, w, c);
+}
+
 static RectF AudioRect(int i) {
     const float c = S(22);
     if (IsCompactActive(i)) {                        // inside the address field, left of the star
@@ -772,6 +806,7 @@ Hit HitTest(int px, int py) {
         if (KeyShown() && KeyRect().Contains(x, y)) return MakeHit(Hit::Key);
         if (ReaderShown() && ReaderRect().Contains(x, y)) return MakeHit(Hit::Reader);
         if (TranslateShown() && TranslateRect().Contains(x, y)) return MakeHit(Hit::Translate);
+        if (ZoomShown() && ZoomRect().Contains(x, y)) return MakeHit(Hit::Zoom);
     }
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     for (int i = n - 1; i >= 0; --i)
@@ -1310,6 +1345,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Key, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reader, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Translate, -1)));
+        pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Zoom, -1)));
         if (IsCompactActive(g_active)) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::TabClose, g_active)));
         FillRound(g, editing ? T.pillFocus : Mix(T.pill, T.pillHover, pillHover), pill, rad);
 
@@ -1410,6 +1446,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             if (readerHere) textR = std::min(textR, ReaderRect().X - S(2));
             const bool translateHere = TranslateShown();
             if (translateHere) textR = std::min(textR, TranslateRect().X - S(2));
+            const bool zoomHere = ZoomShown();
+            if (zoomHere) textR = std::min(textR, ZoomRect().X - S(2));
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
@@ -1458,6 +1496,16 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 const RectF tr = TranslateRect();
                 hoverFill(tr, MakeHit(Hit::Translate, -1), dwn(Hit::Translate, -1), S(6));
                 DrawGlyph(g, L"\uE8C1", tr, cur->translated ? T.accent : T.icon, g_fIconSm.get());
+            }
+            if (zoomHere) {                              // "125%": a click goes back to the default
+                const RectF zr = ZoomRect();
+                hoverFill(zr, MakeHit(Hit::Zoom, -1), dwn(Hit::Zoom, -1), S(6));
+                StringFormat zf(StringFormat::GenericTypographic());
+                zf.SetAlignment(StringAlignmentCenter);
+                zf.SetLineAlignment(StringAlignmentCenter);
+                SolidBrush zb(T.icon);
+                const std::wstring zt = ZoomText();
+                g.DrawString(zt.c_str(), -1, g_fText.get(), zr, &zf, &zb);
             }
         }
     }

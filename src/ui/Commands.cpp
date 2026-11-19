@@ -1,4 +1,5 @@
 // Lyra — команды браузера, горячие клавиши и меню «Ещё».
+#include "browser/SiteZoom.h"
 #include "ui/Commands.h"
 #include "ui/FullScreen.h"
 #include "browser/Translate.h"
@@ -43,7 +44,7 @@ static void ShowWebInspector() {
 void SetZoom(double z) {
     z = std::round(z * 100.0) / 100.0;
     g_zoom = std::max(0.25, std::min(5.0, z));
-    for (auto& t : g_tabs) WKPageSetPageZoomFactor(t->page, g_zoom);
+    SiteZoomDefaultChanged();            // (sites with their own zoom keep it)
     SaveSettings();
 }
 
@@ -87,9 +88,9 @@ void RunCommand(int cmd) {
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
     case CMD_CLOSETAB:  CloseTab(g_active); break;
     case CMD_COPYURL:   if (Tab* t = ActiveTab()) CopyToClipboard(t->url); break;
-    case CMD_ZOOMIN:    SetZoom(g_zoom + 0.1); break;
-    case CMD_ZOOMOUT:   SetZoom(g_zoom - 0.1); break;
-    case CMD_ZOOMRESET: SetZoom(1.0); break;
+    case CMD_ZOOMIN:    SiteZoomStep(1); break;           // the open tab's site (browser/SiteZoom)
+    case CMD_ZOOMOUT:   SiteZoomStep(-1); break;
+    case CMD_ZOOMRESET: SiteZoomReset(); break;
     case CMD_SETHOME:
         if (Tab* t = ActiveTab()) { g_homePage = IsStartPageUrl(t->url) ? std::wstring(kStartAlias) : t->url; SaveSettings(); }
         break;
@@ -121,8 +122,24 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_NEWTAB,    Tr(L"New Tab\tCtrl+T", L"Новая вкладка\tCtrl+T"));
     AppendMenuW(m, MF_STRING, CMD_NEWPRIVATE, Tr(L"New Private Tab\tCtrl+Shift+N", L"Новая приватная вкладка\tCtrl+Shift+N"));
     AppendMenuW(m, MF_STRING, CMD_CLOSETAB,  Tr(L"Close Tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
-    AppendMenuW(m, MF_STRING | (g_closedUrls.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
+    AppendMenuW(m, MF_STRING | (g_closedTabs.empty() ? MF_GRAYED : 0), CMD_REOPENTAB,
                 Tr(L"Reopen Closed Tab\tCtrl+Shift+T", L"Вернуть закрытую вкладку\tCtrl+Shift+T"));
+    // The last closed tabs, newest first (a click brings that one back).
+    constexpr UINT kClosedBase = 6000;
+    const int closedShown = std::min<int>((int)g_closedTabs.size(), 10);
+    std::vector<std::wstring> closedLabels;
+    if (closedShown > 1) {
+        HMENU sub = CreatePopupMenu();
+        for (int k = 0; k < closedShown; ++k) {
+            const ClosedTab& c = g_closedTabs[g_closedTabs.size() - 1 - k];
+            std::wstring label = c.title.empty() ? c.url : c.title;
+            if (label.size() > 60) label = label.substr(0, 57) + L"\x2026";
+            for (auto& ch : label) if (ch == L'&') ch = L'+';
+            closedLabels.push_back(label);
+            AppendMenuW(sub, MF_STRING, kClosedBase + k, closedLabels.back().c_str());
+        }
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, Tr(L"Recently Closed", L"Недавно закрытые"));
+    }
     AppendMenuW(m, MF_STRING, CMD_HISTORY,   Tr(L"History\tCtrl+H", L"История\tCtrl+H"));
     AppendMenuW(m, MF_STRING, CMD_BOOKMARKS, Tr(L"Bookmarks\tCtrl+Shift+O", L"Закладки\tCtrl+Shift+O"));
     AppendMenuW(m, MF_STRING, CMD_PASSWORDS, Tr(L"Passwords", L"Пароли"));
@@ -183,7 +200,9 @@ void ShowMoreMenu() {
     ClientToScreen(g_hWnd, &pt);
     int cmd = MenuTrack(m, TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
     DestroyMenu(m);
-    if (cmd) RunCommand(cmd);
+    if (cmd >= (int)kClosedBase && cmd < (int)kClosedBase + closedShown)
+        ReopenClosedTab((int)g_closedTabs.size() - 1 - (cmd - (int)kClosedBase));
+    else if (cmd) RunCommand(cmd);
 }
 
 // ----------------------------------------------------------------------------
