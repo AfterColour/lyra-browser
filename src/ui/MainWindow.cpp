@@ -362,6 +362,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         g_hWnd = hWnd;
         g_fullScreenMsg = RegisterWindowMessageW(L"WebKitFullScreen");
         g_dpi = GetDpiForWindow(hWnd);
+        DragAcceptFiles(hWnd, TRUE);       // files dropped on the window open in Lyra (WM_DROPFILES)
         g_urlEdit = CreateOpaqueEdit(hWnd, ID_URL_EDIT, (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE));
         g_oldEditProc = (WNDPROC)SetWindowLongPtrW(g_urlEdit, GWLP_WNDPROC, (LONG_PTR)UrlEditProc);
         RebuildResources();
@@ -711,6 +712,61 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         else if (cmd == kClose) CloseTabWithMouse(hWnd, index);
         return 0;
     }
+    case WM_MOUSEWHEEL:
+        // Ctrl + wheel over the page or the chrome: the site's zoom (WebKit leaves Ctrl + wheel to
+        // the browser: the page window passes it on to us). High-resolution wheels send smaller
+        // steps: they add up to one notch (120) per zoom step.
+        if (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) {
+            static int notches = 0;
+            notches += GET_WHEEL_DELTA_WPARAM(wParam);
+            while (notches >= WHEEL_DELTA) { notches -= WHEEL_DELTA; SiteZoomStep(1); }
+            while (notches <= -WHEEL_DELTA) { notches += WHEEL_DELTA; SiteZoomStep(-1); }
+            return 0;
+        }
+        break;
+    case WM_DROPFILES: {
+        // Files dragged from Explorer (WebKit's page window takes no drops, so they reach us):
+        // dropped on the page, the first one opens in the open tab, like in other browsers; on the
+        // tab list (or the rest of them) in new tabs. PDFs, pictures, pages and videos show in
+        // the tab, anything else downloads.
+        HDROP drop = (HDROP)wParam;
+        POINT at = {};
+        DragQueryPoint(drop, &at);
+        const bool onPage = at.y >= (LONG)g_L.chromeH && at.x >= (LONG)g_L.sideW;
+        const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        std::vector<std::wstring> urls;
+        for (UINT i = 0; i < count && urls.size() < 20; ++i) {
+            const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+            std::wstring path(len + 1, L'\0');
+            DragQueryFileW(drop, i, &path[0], len + 1);
+            path.resize(len);
+            const DWORD attr = GetFileAttributesW(path.c_str());
+            if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) continue;   // (folders: no listing)
+            wchar_t url[2084] = {};
+            DWORD n = ARRAYSIZE(url);
+            if (SUCCEEDED(UrlCreateFromPathW(path.c_str(), url, &n, 0))) urls.push_back(url);
+        }
+        DragFinish(drop);
+        if (urls.empty()) return 0;
+        Log("drop: %u file(s) on the %s", (unsigned)urls.size(), onPage ? "page" : "tab list");
+        SetForegroundWindow(hWnd);
+        const Tab* cur = ActiveTab();
+        const bool priv = cur && cur->privateTab;
+        size_t first = 0;
+        if (onPage && cur) { NavigateActive(urls[0]); first = 1; }
+        for (size_t i = first; i < urls.size(); ++i) OpenInNewTab(urls[i], i != first || onPage, priv);
+        return 0;
+    }
+    case WM_APPCOMMAND:
+        // The mouse's side buttons (Windows turns them into these), and the keyboard's browser keys.
+        switch (GET_APPCOMMAND_LPARAM(lParam)) {
+        case APPCOMMAND_BROWSER_BACKWARD: GoBack(); return TRUE;
+        case APPCOMMAND_BROWSER_FORWARD:  GoForward(); return TRUE;
+        case APPCOMMAND_BROWSER_REFRESH:  ReloadActive(false); return TRUE;
+        case APPCOMMAND_BROWSER_STOP:     if (Tab* t = ActiveTab()) if (t->loading && t->page) WKPageStopLoading(t->page); return TRUE;
+        default: break;
+        }
+        break;
     case WM_MBUTTONUP: {
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);

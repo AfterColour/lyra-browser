@@ -151,6 +151,7 @@ void BuildPages() {
     const std::function<void()> repaint = []() { InvalidateChrome(); SaveSettings(); };
     static int s_animationsPage = -1;
     static int s_passwordsPage = -1;
+    static int s_permissionsPage = -1;
     {   // General
         SPage p; p.name = Tr(L"General", L"Основные"); p.icon = L"\uE713"; p.tint = kTintGray; p.group = 0;
         p.rows.push_back(RHeader(Tr(L"Startup", L"Запуск")));
@@ -443,19 +444,14 @@ void BuildPages() {
         }
         p.rows.push_back(RHeader(Tr(L"Site permissions", L"Разрешения сайтов")));
         {
-            static std::wstring count;                   // the row label must outlive the page build
-            count = std::to_wstring(PermissionsCount()) + Tr(L" answers remembered (notifications, location)",
-                                                             L" запомненных ответов (уведомления, местоположение)");
-            p.rows.push_back(RButton(Tr(L"Notifications and location", L"Уведомления и местоположение"), count.c_str(),
-                Tr(L"Reset", L"Сбросить"), []() {
-                    if (MessageBoxW(g_setHwnd, Tr(L"Forget every site's answer? Sites will ask again.",
-                                                  L"Забыть ответы для всех сайтов? Сайты спросят снова."),
-                                    Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES)
-                    {
-                        PermissionsReset();
-                        SettingsLanguageChanged();   // rebuilds the pages: the count above
-                    }
-                }));
+            const size_t sites = PermissionsList().size();
+            static std::wstring count;
+            count = sites ? std::to_wstring(sites) + Tr(L" sites: camera, microphone, notifications, location",
+                                                        L" сайт(ов): камера, микрофон, уведомления, местоположение")
+                          : std::wstring(Tr(L"Camera, microphone, notifications, location: no site has asked yet.",
+                                            L"Камера, микрофон, уведомления, местоположение: сайты ещё не спрашивали."));
+            p.rows.push_back(RButton(Tr(L"Site permissions", L"Разрешения сайтов"), count.c_str(),
+                Tr(L"Open", L"Открыть"), []() { SettingsOpenPage(s_permissionsPage); }));
         }
         p.rows.push_back(RHeader(Tr(L"History", L"История")));
         p.rows.push_back(RToggle(Tr(L"Remember history", L"Сохранять историю"),
@@ -783,6 +779,48 @@ void BuildPages() {
         s_passwordsPageIndex = s_passwordsPage;
         g_pages.push_back(std::move(p));
     }
+    {   // Site permissions, from Privacy: every site's remembered answers, each can be reset
+        SPage p; p.name = Tr(L"Site permissions", L"Разрешения сайтов"); p.icon = L"\uE72E"; p.tint = kTintGreen;
+        p.parent = privacyPage;
+        auto kindName = [](const std::string& k) -> const wchar_t* {
+            if (k == "camera") return Tr(L"Camera", L"Камера");
+            if (k == "microphone") return Tr(L"Microphone", L"Микрофон");
+            if (k == "notifications") return Tr(L"Notifications", L"Уведомления");
+            if (k == "geolocation") return Tr(L"Location", L"Местоположение");
+            return L"?";
+        };
+        const std::vector<SitePermissions> sites = PermissionsList();
+        if (sites.empty()) {
+            p.rows.push_back(RCustom(L"note", Tr(L"No site has asked for the camera, the microphone, notifications or the location yet. "
+                                                 L"When one does, your answer is remembered and shows here.",
+                                                 L"Сайты ещё не запрашивали камеру, микрофон, уведомления или местоположение. "
+                                                 L"Когда спросят, ваш ответ запомнится и появится здесь.")));
+        } else {
+            p.rows.push_back(RHeader(Tr(L"Sites", L"Сайты")));
+            for (const SitePermissions& s : sites) {
+                std::wstring desc;
+                for (auto& [kind, allowed] : s.answers) {
+                    if (!desc.empty()) desc += L"  \x00B7  ";
+                    desc += std::wstring(kindName(kind)) + L": " + (allowed ? Tr(L"allowed", L"разрешено") : Tr(L"blocked", L"запрещено"));
+                }
+                const std::string origin = s.origin;
+                p.rows.push_back(RButton(s.site.c_str(), desc.c_str(), Tr(L"Reset", L"Сбросить"),
+                    [origin]() { PermissionsForgetSite(origin); SettingsLanguageChanged(); }));
+            }
+            p.rows.push_back(RHeader(L""));
+            p.rows.push_back(RButton(Tr(L"Reset all", L"Сбросить все"),
+                Tr(L"Every site will ask again.", L"Все сайты спросят снова."), Tr(L"Reset", L"Сбросить"), []() {
+                    if (MessageBoxW(g_setHwnd, Tr(L"Forget every site's answer? Sites will ask again.",
+                                                  L"Забыть ответы для всех сайтов? Сайты спросят снова."),
+                                    Tr(L"Lyra Settings", L"Настройки Lyra"), MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        PermissionsReset();
+                        SettingsLanguageChanged();
+                    }
+                }));
+        }
+        s_permissionsPage = (int)g_pages.size();
+        g_pages.push_back(std::move(p));
+    }
     {   // Clear browsing data, from Privacy
         SPage p; p.name = Tr(L"Clear browsing data", L"Очистка данных"); p.icon = L"\uE74D"; p.tint = kTintGreen;
         p.parent = privacyPage;
@@ -807,7 +845,8 @@ void BuildPages() {
             Tr(L"The downloaded files stay on disk.", L"Сами файлы остаются на диске."),
             &s_clearChoice.downloads, none));
         p.rows.push_back(RToggle(Tr(L"Site permissions", L"Разрешения сайтов"),
-            Tr(L"Notifications and location: sites will ask again.", L"Уведомления и местоположение: сайты спросят снова."),
+            Tr(L"Camera, microphone, notifications and location: sites will ask again.",
+               L"Камера, микрофон, уведомления и местоположение: сайты спросят снова."),
             &s_clearChoice.permissions, none));
         p.rows.push_back(RToggle(Tr(L"Saved passwords", L"Сохранённые пароли"),
             Tr(L"Used in this period. They cannot be restored.", L"Использованные за этот период. Вернуть их нельзя."),

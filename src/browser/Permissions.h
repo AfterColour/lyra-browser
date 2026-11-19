@@ -37,4 +37,12 @@ void NotificationShow(const std::wstring& title, const std::wstring& body, std::
 void NotificationHide();                              // takes Lyra's own notification away (no callback)
 void PermissionsGeolocationResult(LPARAM lParam);              // WM_APP_GEO (main window)
 void PermissionsReset();                              // Settings > Privacy: forget every answer
+// The remembered answers by site (Settings > Privacy > Site permissions): kind -> allowed.
+struct SitePermissions {
+    std::string  origin;             // "https://example.com"
+    std::wstring site;               // "example.com"
+    std::vector<std::pair<std::string, bool>> answers;   // ("camera", true), ("notifications", false)...
+};
+std::vector<SitePermissions> PermissionsList();
+void PermissionsForgetSite(const std::string& origin);   // that site asks again
 size_t PermissionsCount();

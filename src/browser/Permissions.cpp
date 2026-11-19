@@ -468,3 +468,52 @@ void PermissionsReset() {
 }
 
 size_t PermissionsCount() { return s_answers.size(); }
+
+std::vector<SitePermissions> PermissionsList() {
+    std::vector<SitePermissions> out;
+    std::map<std::string, size_t> at;                    // origin -> index in out
+    for (auto& [key, allowed] : s_answers) {
+        const size_t space = key.find(' ');
+        if (space == std::string::npos) continue;
+        const std::string kind = key.substr(0, space), origin = key.substr(space + 1);
+        auto it = at.find(origin);
+        if (it == at.end()) {
+            SitePermissions s;
+            s.origin = origin;
+            std::string host = origin;
+            const size_t scheme = host.find("://");
+            if (scheme != std::string::npos) host = host.substr(scheme + 3);
+            s.site = ToWide(host);
+            it = at.emplace(origin, out.size()).first;
+            out.push_back(std::move(s));
+        }
+        out[it->second].answers.push_back({ kind, allowed });
+    }
+    std::sort(out.begin(), out.end(), [](const SitePermissions& a, const SitePermissions& b) { return a.site < b.site; });
+    return out;
+}
+
+void PermissionsForgetSite(const std::string& origin) {
+    bool notifications = false;
+    for (auto it = s_answers.begin(); it != s_answers.end();) {
+        const size_t space = it->first.find(' ');
+        if (space != std::string::npos && it->first.substr(space + 1) == origin) {
+            if (it->first.compare(0, space, "notifications") == 0) notifications = true;
+            it = s_answers.erase(it);
+        } else ++it;
+    }
+    Save();
+    Log("permissions: %s forgotten", origin.c_str());
+    if (!notifications) return;
+    // WebKit keeps its own copy of the notification policy: drop that site's too.
+    WKMutableArrayRef origins = WKMutableArrayCreate();
+    WKStringRef s = WKStringCreateWithUTF8CString(origin.c_str());
+    WKSecurityOriginRef o = WKSecurityOriginCreateFromString(s);
+    WKArrayAppendItem(origins, o);
+    WKRelease(o);
+    WKRelease(s);
+    WKNotificationManagerRef managers[] = { WKContextGetNotificationManager(g_context),
+                                            WKNotificationManagerGetSharedServiceWorkerNotificationManager() };
+    for (auto m : managers) if (m) WKNotificationManagerProviderDidRemoveNotificationPolicies(m, (WKArrayRef)origins);
+    WKRelease(origins);
+}

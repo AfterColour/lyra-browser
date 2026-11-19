@@ -2,8 +2,8 @@
 //
 // WebKit draws a page that comes into view only with its next rendering update, and a new tab
 // only once its page has loaded: on their own both show the bare window background for a moment.
-// So the page area is covered by a picture of what is about to appear, and the cover dissolves
-// once WebKit has drawn the real thing underneath:
+// So the page area is covered by a picture of what is about to appear, and the cover goes
+// (at once, no dissolve) once WebKit has drawn the real thing underneath:
 //   switching to a tab   its own last picture (taken when it was left);
 //   a new start page     the last picture of the start page (it looks the same in every tab);
 //   closing a tab        the last picture of the tab that comes forward.
@@ -352,22 +352,15 @@ void TransitionTick() {
     const Tab* active = ActiveTab();
     if (s_waitTab != (unsigned long long)-1 && (!active || active->id != s_waitTab)) { HideCover(); return; }
     if (s_waitTab == (unsigned long long)-1 && now - s_shownAt > 300) { HideCover(); return; }
-    if (!s_fadeAt) {
-        // Fade once the page has drawn (and one more frame has reached the screen), or give up.
-        const bool ready = s_paintedAt && now - s_paintedAt >= s_settleMs;
-        if (!ready && now - s_shownAt < s_timeoutMs) return;
-        if (!g_prefs.animations) { HideCover(); return; }
-        s_fadeAt = now;
-    }
-    const float t = std::min(1.f, (float)(now - s_fadeAt) / (float)s_fadeMs);
-    if (t >= 1.f) {
-        HideCover();
-        // What is on screen now is the tab itself, drawn: its picture for the next time (and the
-        // start page's for new tabs).
-        if (Tab* a = ActiveTab()) if (!s_fresh.count(a->id)) Capture(*a);
-        return;
-    }
-    UpdateCover((BYTE)std::lround(255.f * (1.f - t) * (1.f - t)));
+    // Gone at once when the page has drawn (and one more frame has reached the screen), or when
+    // it takes too long. No dissolve: the cover is only there so that no empty page area shows,
+    // and a picture of another page dissolving into this one looked like an animation of its own.
+    const bool ready = s_paintedAt && now - s_paintedAt >= s_settleMs;
+    if (!ready && now - s_shownAt < s_timeoutMs) return;
+    HideCover();
+    // What is on screen now is the tab itself, drawn: its picture for the next time (and the
+    // start page's for new tabs).
+    if (Tab* a = ActiveTab()) if (!s_fresh.count(a->id)) Capture(*a);
 }
 
 void TransitionCancel() {
