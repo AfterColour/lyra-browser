@@ -245,6 +245,15 @@ void PermissionPromptUpdate() {
             if (ask->kind == "geolocation") {
                 v.icon = L"\uE81D";
                 v.what = Tr(L"Know your location", L"Доступ к вашему местоположению");
+            } else if (ask->kind == "camera") {
+                v.icon = L"\uE714";
+                v.what = Tr(L"Use your camera", L"Доступ к камере");
+            } else if (ask->kind == "microphone") {
+                v.icon = L"\uE720";
+                v.what = Tr(L"Use your microphone", L"Доступ к микрофону");
+            } else if (ask->kind == "camera+microphone") {
+                v.icon = L"\uE714";
+                v.what = Tr(L"Use your camera and microphone", L"Доступ к камере и микрофону");
             } else {
                 v.icon = L"\uEA8F";
                 v.what = Tr(L"Show notifications", L"Показ уведомлений");

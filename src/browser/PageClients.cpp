@@ -434,6 +434,8 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
             WKNotificationPermissionRequestRef request, const void*) { PermissionsDecideNotifications(page, origin, request); };
     ui.decidePolicyForGeolocationPermissionRequest = [](WKPageRef page, WKFrameRef, WKSecurityOriginRef origin,
             WKGeolocationPermissionRequestRef request, const void*) { PermissionsDecideGeolocation(page, origin, request); };
+    ui.decidePolicyForUserMediaPermissionRequest = [](WKPageRef page, WKFrameRef, WKSecurityOriginRef origin, WKSecurityOriginRef,
+            WKUserMediaPermissionRequestRef request, const void*) { PermissionsDecideUserMedia(page, origin, request); };
     WKPageSetPageUIClient(page, &ui.base);
 
     WKPageFindClientV0 fc = {};

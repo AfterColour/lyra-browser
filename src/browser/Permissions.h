@@ -13,7 +13,7 @@
 struct PermissionAsk {
     unsigned long long seq = 0;      // unique per question
     unsigned long long tabId = 0;
-    std::string kind;                // "notifications" | "geolocation"
+    std::string kind;                // "notifications" | "geolocation" | "camera" | "microphone" | "camera+microphone"
     std::string origin;              // "https://example.com"
     std::wstring site;               // "example.com"
 };
@@ -27,6 +27,8 @@ void PermissionsShutdown();
 // UI client callbacks (PageClients.cpp).
 void PermissionsDecideNotifications(WKPageRef page, WKSecurityOriginRef origin, WKNotificationPermissionRequestRef request);
 void PermissionsDecideGeolocation(WKPageRef page, WKSecurityOriginRef origin, WKGeolocationPermissionRequestRef request);
+// getUserMedia: the camera, the microphone or both; remembered per site for each device kind.
+void PermissionsDecideUserMedia(WKPageRef page, WKSecurityOriginRef origin, WKUserMediaPermissionRequestRef request);
 
 void PermissionsTrayMessage(WPARAM wParam, LPARAM lParam);   // WM_APP_TRAY (main window)
 // Lyra's own notification (extensions'), shown the way sites' are; one at a time: a new one

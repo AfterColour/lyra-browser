@@ -60,6 +60,12 @@ void ApplyWebPrefs() {
     WKPreferencesSetWebAudioEnabled(g_preferences, g_prefs.webAudio);
     WKPreferencesSetDefaultFontSize(g_preferences, (uint32_t)g_prefs.defaultFont);
     WKPreferencesSetMinimumFontSize(g_preferences, (uint32_t)g_prefs.minFont);
+    // Camera and microphone (navigator.mediaDevices), on secure sites only, as in other browsers.
+    WKPreferencesSetMediaDevicesEnabled(g_preferences, true);
+    WKPreferencesSetMediaCaptureRequiresSecureConnection(g_preferences, true);
+    // Tests: WebKit's pretend camera and microphone instead of the real ones.
+    wchar_t mock[4] = {};
+    if (GetEnvironmentVariableW(L"LYRA_MOCK_CAPTURE", mock, 4) && mock[0] == L'1') WKPreferencesSetMockCaptureDevicesEnabled(g_preferences, true);
 
     // Canvas 2D follows the page tiles: both on the GPU (Skia on ANGLE in the GPU process), or both
     // on the CPU with LYRA_DISABLE_GPU_RASTER=1. A GPU canvas under CPU-painted tiles would be

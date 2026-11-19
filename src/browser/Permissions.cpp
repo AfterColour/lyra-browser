@@ -17,6 +17,7 @@
 #include <WebKit/WKGeolocationManager.h>
 #include <WebKit/WKGeolocationPermissionRequest.h>
 #include <WebKit/WKGeolocationPosition.h>
+#include <WebKit/WKUserMediaPermissionRequest.h>
 #include <WebKit/WKMutableArray.h>
 #include <WebKit/WKMutableDictionary.h>
 #include <WebKit/WKNotification.h>
@@ -63,10 +64,28 @@ std::string OriginKey(WKSecurityOriginRef origin) {
     return s;
 }
 
-// -1 not asked yet, 0 denied, 1 allowed
+// -1 not asked yet, 0 denied, 1 allowed. "camera+microphone": both remembered on their own -
+// allowed when both are, denied when either is.
 int Lookup(const char* kind, const std::string& origin) {
+    if (std::string(kind) == "camera+microphone") {
+        const int c = Lookup("camera", origin), m = Lookup("microphone", origin);
+        if (c == 0 || m == 0) return 0;
+        return c == 1 && m == 1 ? 1 : -1;
+    }
     auto it = s_answers.find(std::string(kind) + " " + origin);
     return it == s_answers.end() ? -1 : it->second ? 1 : 0;
+}
+
+void Remember(const std::string& kind, const std::string& origin, bool allowed) {
+    if (kind == "camera+microphone") { Remember("camera", origin, allowed); Remember("microphone", origin, allowed); return; }
+    s_answers[kind + " " + origin] = allowed;
+}
+
+// The first device of a kind WebKit offers (its list starts with the system's default one).
+WKStringRef FirstDevice(WKArrayRef list) {
+    if (!list || !WKArrayGetSize(list)) return nullptr;
+    WKTypeRef v = WKArrayGetItemAtIndex(list, 0);
+    return v && WKGetTypeID(v) == WKStringGetTypeID() ? (WKStringRef)v : nullptr;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -80,6 +99,17 @@ void Resolve(const Pending& p, bool allowed) {
     if (p.ask.kind == "geolocation") {
         if (allowed) WKGeolocationPermissionRequestAllow((WKGeolocationPermissionRequestRef)p.request);
         else WKGeolocationPermissionRequestDeny((WKGeolocationPermissionRequestRef)p.request);
+    } else if (p.ask.kind == "camera" || p.ask.kind == "microphone" || p.ask.kind == "camera+microphone") {
+        auto r = (WKUserMediaPermissionRequestRef)p.request;
+        WKArrayRef audio = WKUserMediaPermissionRequestAudioDeviceUIDs(r), video = WKUserMediaPermissionRequestVideoDeviceUIDs(r);
+        WKStringRef a = WKUserMediaPermissionRequestRequiresMicrophoneCapture(r) ? FirstDevice(audio) : nullptr;
+        WKStringRef v = WKUserMediaPermissionRequestRequiresCameraCapture(r) ? FirstDevice(video) : nullptr;
+        if (allowed && (a || v)) WKUserMediaPermissionRequestAllow(r, a, v);
+        else WKUserMediaPermissionRequestDeny(r, allowed ? kWKNoCaptureDevices : kWKPermissionDenied);
+        Log("permission %s %s: %s (audio %s, video %s)", p.ask.kind.c_str(), p.ask.origin.c_str(), allowed ? "allowed" : "denied",
+            a ? WKStrUtf8(a).c_str() : "-", v ? WKStrUtf8(v).c_str() : "-");
+        if (audio) WKRelease(audio);
+        if (video) WKRelease(video);
     } else {
         if (allowed) WKNotificationPermissionRequestAllow((WKNotificationPermissionRequestRef)p.request);
         else WKNotificationPermissionRequestDeny((WKNotificationPermissionRequestRef)p.request);
@@ -316,6 +346,18 @@ void PermissionsDecideGeolocation(WKPageRef page, WKSecurityOriginRef origin, WK
     Decide("geolocation", page, origin, request);
 }
 
+void PermissionsDecideUserMedia(WKPageRef page, WKSecurityOriginRef origin, WKUserMediaPermissionRequestRef request) {
+    // Sharing the screen needs a picker of screens and windows: not yet.
+    if (WKUserMediaPermissionRequestRequiresDisplayCapture(request)) {
+        Log("permission: screen sharing asked - not supported yet");
+        WKUserMediaPermissionRequestDeny(request, kWKNoCaptureDevices);
+        return;
+    }
+    const bool cam = WKUserMediaPermissionRequestRequiresCameraCapture(request);
+    const bool mic = WKUserMediaPermissionRequestRequiresMicrophoneCapture(request);
+    Decide(cam && mic ? "camera+microphone" : cam ? "camera" : "microphone", page, origin, request);
+}
+
 const PermissionAsk* PermissionsPendingForTab(unsigned long long tabId) {
     Prune();
     for (auto& p : s_pending) if (p.ask.tabId == tabId) return &p.ask;
@@ -327,7 +369,7 @@ void PermissionsAnswer(unsigned long long seq, int answer) {
     if (it == s_pending.end()) return;
     const PermissionAsk ask = it->ask;
     if (answer >= 0) {
-        s_answers[ask.kind + " " + ask.origin] = answer == 1;
+        Remember(ask.kind, ask.origin, answer == 1);
         Save();
         if (ask.kind == "notifications") {
             WKStringRef s = WKStringCreateWithUTF8CString(ask.origin.c_str());
