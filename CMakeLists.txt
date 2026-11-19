@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.26)   # copy_directory_if_different
 # The one place the version lives: Lyra.exe's version info, Settings > About and the
 # installer all take it from here (see cmake/LyraVersion.h.in).
-project(Lyra VERSION 0.4.0 LANGUAGES CXX RC)
+project(Lyra VERSION 0.5.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
