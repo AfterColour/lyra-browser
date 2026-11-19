@@ -23,6 +23,7 @@
 #include "ui/FullScreen.h"
 #include "ui/MainWindow.h"
 #include "ui/TabTransition.h"
+#include "ui/Theme.h"
 
 static void UpdateWindowTitle();
 static void Navigate(WKPageRef page, const std::string& utf8Url);
@@ -266,6 +267,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     RECT r = { left, top, std::max<LONG>(cr.right, left + 1), std::max<LONG>(cr.bottom, top + 1) };
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     if (!view) { Log("CreateTab: WKViewCreate failed"); return nullptr; }
+    WKViewSetUseDarkAppearance(view, g_dark);
 
     WKPageRef page = WKViewGetPage(view);
     ExtensionsSetupPage(page);
@@ -322,6 +324,7 @@ bool UnloadTab(Tab& t, const std::string& state) {
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     WKRelease(conf);
     if (!view) return false;
+    WKViewSetUseDarkAppearance(view, g_dark);
     WKPageRef page = WKViewGetPage(view);
     ExtensionsSetupPage(page);
     HWND hwnd = WKViewGetWindow(view);
@@ -373,6 +376,13 @@ void ScheduleSpareTab(UINT delayMs) {
     if (g_hWnd && g_prefs.spareTab && !g_closing) SetTimer(g_hWnd, TIMER_SPARE_TAB, delayMs, nullptr);
 }
 
+// Pages see the browser theme as prefers-color-scheme (sites' own dark styles, the PDF viewer,
+// dark form controls and scrollbars). Called by ApplyTheme.
+void TabsApplyAppearance() {
+    for (auto& t : g_tabs) if (t->view) WKViewSetUseDarkAppearance(t->view, g_dark);
+    if (s_spare && s_spare->view) WKViewSetUseDarkAppearance(s_spare->view, g_dark);
+}
+
 void PrepareSpareTab() {
     if (!g_prefs.spareTab || s_spare || g_closing || g_tabOp || !g_hWnd || !g_context) return;
     TabOpGuard guard;
@@ -385,6 +395,7 @@ void PrepareSpareTab() {
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     WKRelease(conf);
     if (!view) return;
+    WKViewSetUseDarkAppearance(view, g_dark);
     WKPageRef page = WKViewGetPage(view);
     ExtensionsSetupPage(page);
     HWND viewWnd = WKViewGetWindow(view);

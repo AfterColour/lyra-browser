@@ -61,5 +61,6 @@ void ExpireReadyTabs();
 // A start page loaded in the background for the next new tab (Settings > Tabs), so Ctrl+T
 // shows it at once. PrepareSpareTab() is run by TIMER_SPARE_TAB; DiscardSpareTab() drops it.
 void PrepareSpareTab();
+void TabsApplyAppearance();          // page light/dark appearance = the browser theme
 void DiscardSpareTab();
 void ScheduleSpareTab(UINT delayMs = 1500);

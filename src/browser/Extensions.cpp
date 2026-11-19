@@ -3059,6 +3059,7 @@ HWND OpenExtensionWindow(Host& h, const std::wstring& url, const std::wstring& t
     GetClientRect(wnd, &r);
     WKViewRef view = WKViewCreate(r, h.conf, wnd);
     if (!view) { DestroyWindow(wnd); return nullptr; }
+    WKViewSetUseDarkAppearance(view, g_dark);
     SetWindowLongPtrW(wnd, GWLP_USERDATA, (LONG_PTR)view);
     WKViewSetIsInWindow(view, true);
     h.windows.push_back(wnd);
@@ -3254,6 +3255,7 @@ void OpenPopup(const Extension& e, const std::wstring& url, const RectF& anchor)
     GetClientRect(wnd, &r);
     WKViewRef view = WKViewCreate(r, h.conf, wnd);
     if (!view) { DestroyWindow(wnd); return; }
+    WKViewSetUseDarkAppearance(view, g_dark);
     SetWindowLongPtrW(wnd, GWLP_USERDATA, (LONG_PTR)view);
     WKViewSetIsInWindow(view, true);
     h.windows.push_back(wnd);
