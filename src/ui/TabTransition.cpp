@@ -269,7 +269,7 @@ void WaitFor(Tab* to, bool samePage) {
     s_fadeMs = samePage ? 160 : 220;
     // The first update may come while the page is still waking up: wait for a second one too.
     s_settleMs = kSettleMs;
-    s_timeoutMs = 2000;
+    s_timeoutMs = 4000;                          // a page waking up may take a while: no empty area meanwhile
     s_repaints = 2;
     s_waitTab = to->id;
     s_waitLoad = false;
@@ -313,7 +313,7 @@ bool TransitionCoverFrom(Tab* from, bool startPage) {
     s_fadeAt = s_paintedAt = 0;
     s_fadeMs = samePage ? 160 : 220;
     s_settleMs = kSettleMs;
-    s_timeoutMs = 2000;
+    s_timeoutMs = 4000;                          // a page waking up may take a while: no empty area meanwhile
     s_waitLoad = true;
     s_repaints = 0;
     s_waitTab = (unsigned long long)-1;          // named by TransitionWaitLoad
@@ -357,6 +357,8 @@ void TransitionTick() {
     // and a picture of another page dissolving into this one looked like an animation of its own.
     const bool ready = s_paintedAt && now - s_paintedAt >= s_settleMs;
     if (!ready && now - s_shownAt < s_timeoutMs) return;
+    if (!ready)                                     // (an empty page area may show now: logged)
+        Log("transition: tab#%llu has not drawn after %lu ms, cover taken away", s_waitTab, (unsigned long)(now - s_shownAt));
     HideCover();
     // What is on screen now is the tab itself, drawn: its picture for the next time (and the
     // start page's for new tabs).
