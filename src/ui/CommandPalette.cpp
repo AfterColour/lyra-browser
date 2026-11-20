@@ -74,6 +74,7 @@ const std::vector<CommandDef>& Commands() {
         { L"Copy page address", L"Копировать адрес страницы", L"url link ссылка", L"", [] { RunCommand(CMD_COPYURL); }, L"\uE8C8" },
         { L"History", L"История", L"visited посещённые", L"Ctrl+H", [] { RunCommand(CMD_HISTORY); }, L"\uE81C" },
         { L"Bookmarks", L"Закладки", L"favorites избранное", L"Ctrl+Shift+O", [] { RunCommand(CMD_BOOKMARKS); }, L"\uE728" },
+        { L"Show or hide bookmarks bar", L"Показать или скрыть панель закладок", L"bookmarks bar toolbar панель закладок", L"Ctrl+Shift+B", [] { RunCommand(CMD_BOOKMARKSBAR); }, L"\uE728" },
         { L"Downloads", L"Загрузки", L"files файлы", L"Ctrl+J", [] { RunCommand(CMD_DOWNLOADS); }, L"\uE896" },
         { L"Settings", L"Настройки", L"preferences options параметры", L"Ctrl+,", [] { RunCommand(CMD_SETTINGS); }, L"\uE713" },
         { L"Saved passwords", L"Сохранённые пароли", L"logins пароли логины", L"", [] { RunCommand(CMD_PASSWORDS); }, L"\uE8D7" },

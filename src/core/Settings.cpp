@@ -84,6 +84,11 @@ void LoadSettings() {
     g_prefs.warmTabs = std::max(0, std::min(4, geti(L"ReadyTabs", 2)));
     g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
     g_prefs.frameRate = std::max(0, std::min(2, geti(L"FrameRate", 2)));
+    g_prefs.bookmarksBar = geti(L"BookmarksBar", 0) != 0;
+    g_prefs.clearExitHistory = geti(L"ClearOnExitHistory", 0) != 0;
+    g_prefs.clearExitCookies = geti(L"ClearOnExitCookies", 0) != 0;
+    g_prefs.clearExitCache = geti(L"ClearOnExitCache", 0) != 0;
+    g_prefs.clearExitDownloads = geti(L"ClearOnExitDownloads", 0) != 0;
     g_prefs.adBlock  = geti(L"AdBlock", 1) != 0;
     g_prefs.savePasswords = geti(L"SavePasswords", 1) != 0;
     g_prefs.translateService = geti(L"TranslateService", 0) ? 1 : 0;
@@ -141,7 +146,9 @@ void SaveSettings() {
     puti(L"WebAudio", g_prefs.webAudio);
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
-    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"FrameRate", g_prefs.frameRate); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords);
+    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"FrameRate", g_prefs.frameRate); puti(L"BookmarksBar", g_prefs.bookmarksBar);
+    puti(L"ClearOnExitHistory", g_prefs.clearExitHistory); puti(L"ClearOnExitCookies", g_prefs.clearExitCookies);
+    puti(L"ClearOnExitCache", g_prefs.clearExitCache); puti(L"ClearOnExitDownloads", g_prefs.clearExitDownloads); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords);
     puti(L"TranslateService", g_prefs.translateService); puti(L"TranslateTarget", g_prefs.translateTarget);
     puti(L"ReaderSize", g_prefs.readerSize); puti(L"ReaderFont", g_prefs.readerFont);
     puti(L"ReaderTheme", g_prefs.readerTheme); puti(L"ReaderWidth", g_prefs.readerWidth); puti(L"RestoreSession", g_prefs.restoreSession);

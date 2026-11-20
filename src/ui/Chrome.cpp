@@ -8,6 +8,7 @@
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
 #include "ui/TabHoverCard.h"
+#include "ui/BookmarksBar.h"
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "browser/Translate.h"
@@ -271,6 +272,7 @@ static void ComputeTarget(Layout& L, int clientW) {
     L.tabs.resize(n);
     const GroupPass gp = PrepareGroups(L, gap);
     const int nv = gp.visible;
+    const float bmH = BookmarksBarShown() ? BookmarksBarHeight() : 0.f;   // the bookmarks bar, under the toolbar
 
     if (L.mode == kLayoutCompact) {
         L.chromeH = bar;
@@ -323,6 +325,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         PlaceReloadInPill(L);
         const float nx = std::min(x, right + gap);
         L.newTab = RectF(std::floor(nx), by, btn, btn);
+        if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
     } else if (L.mode == kLayoutSeparate) {
         const float strip = std::floor(S(d.strip));
         L.chromeH = strip + bar;
@@ -364,8 +367,10 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float pl = L.reload.GetRight() + S(8), pr = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap) - S(8);
         L.pill = RectF(std::floor(pl), strip + std::floor((bar - tabH) / 2), std::floor(std::max(S(80), pr - pl)), tabH);
         PlaceStar(L);
+        if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
     } else {   // vertical
-        L.chromeH = bar;
+        L.chromeH = bar + bmH;
+        if (bmH > 0) L.bmBar = RectF(0, bar, w, bmH);
         L.sideW = std::floor(S(d.sideW));
         PlaceCaptionButtons(L, w, bar, d);
         const float by = std::floor((bar - btn) / 2);
@@ -381,7 +386,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         PlaceReloadInPill(L);
 
         const float rowH = tabH + S(2);
-        float y = bar + S(4);
+        float y = L.chromeH + S(4);
         // Pinned tabs: a grid of icons at the top of the list.
         const float cell = std::floor(S(kPinnedW)), cgap = S(4);
         const int cols = std::max(1, (int)((L.sideW - S(12) + cgap) / (cell + cgap)));
@@ -795,6 +800,10 @@ Hit HitTest(int px, int py) {
     const bool inSide = L.sideW > 0 && y >= L.chromeH && x >= 0 && x < L.sideW;
     if (!inTop && !inSide) return MakeHit(Hit::None);
     if (inTop) {
+        if (L.bmBar.Width > 0 && L.bmBar.Contains(x, y)) {
+            const int i = BookmarksBarHitTest(L.bmBar, x, y);
+            return i == -1 ? MakeHit(Hit::BookmarkItem, -1) : MakeHit(Hit::BookmarkItem, i);
+        }
         if (L.capClose.Contains(x, y)) return MakeHit(Hit::CapClose);
         if (L.capMax.Contains(x, y))   return MakeHit(Hit::CapMax);
         if (L.capMin.Contains(x, y))   return MakeHit(Hit::CapMin);
@@ -939,6 +948,12 @@ static void DrawChrome(Graphics& g, int w, int h) {
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
+        if (L.bmBar.Width > 0) {
+            int hoverIndex = g_hover.kind == Hit::BookmarkItem ? g_hover.index : -1000;
+            const int pressIndex = (g_down.kind == Hit::BookmarkItem && g_hover == g_down) ? g_down.index : -1000;
+            if (hoverIndex == -1) hoverIndex = -1000;      // (the empty part of the bar)
+            BookmarksBarPaint(g, L.bmBar, hoverIndex, pressIndex, hoverIndex != -1000 ? HoverAmount(g_hover) : 0.f);
+        }
         SplitPaint(g);                                   // split view: gutter, outline, divider
         if (cur && cur->pipHwnd && !g_fullScreenView) {      // its view is in the picture-in-picture window
             StringFormat cf(StringFormat::GenericTypographic());

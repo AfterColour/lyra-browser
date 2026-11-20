@@ -1,6 +1,7 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
 #include "ui/TabHoverCard.h"
+#include "ui/BookmarksBar.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/AdBlock.h"
@@ -18,6 +19,7 @@
 #include "browser/StartPage.h"
 #include "app/Log.h"
 #include "browser/WebContext.h"
+#include "browser/ClearData.h"
 #include "browser/Tab.h"
 #include "browser/TabGroups.h"
 #include "browser/SiteZoom.h"
@@ -516,7 +518,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         // A command sent as a message (no control): the same as choosing it from the menu.
-        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_SCREENSHOT) {
+        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_BOOKMARKSBAR) {
             RunCommand(LOWORD(wParam));
             return 0;
         }
@@ -628,6 +630,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Reader:   ReaderToggle(); break;
             case Hit::Translate: TranslateToggle(); break;
             case Hit::Zoom:     SiteZoomReset(); break;
+            case Hit::BookmarkItem: BookmarksBarClick(up.index, (GetKeyState(VK_CONTROL) & 0x8000) != 0); break;
             case Hit::GroupLabel:
                 if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupToggle(g_L.groupIds[up.index]);
                 break;
@@ -648,6 +651,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         TabHoverCardHide();
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::ExtAction) { ExtensionButtonMenu(h.index); return 0; }
+        if (h.kind == Hit::BookmarkItem) {
+            POINT bp = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ClientToScreen(hWnd, &bp);
+            BookmarksBarContextMenu(h.index, bp);
+            return 0;
+        }
         if (h.kind == Hit::GroupLabel) {
             if (h.index >= 0 && h.index < (int)g_L.groupIds.size()) {
                 POINT gp = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -800,6 +809,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         TabHoverCardHide();
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);
+        else if (h.kind == Hit::BookmarkItem && h.index >= 0) BookmarksBarMiddleClick(h.index);
         return 0;
     }
     case WM_APP_ANIM_FRAME:
@@ -822,6 +832,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (wParam == TIMER_SPLIT_REPAINT) {
             SplitRepaintTimer();
+            return 0;
+        }
+        if (wParam == TIMER_EXIT_CLEAR) {
+            KillTimer(hWnd, TIMER_EXIT_CLEAR);
+            Log("exit: clearing is taking too long, closing");
+            DestroyWindow(hWnd);
             return 0;
         }
         if (wParam == TIMER_SPARE_TAB) {
@@ -1013,6 +1029,25 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         CloseAllTabs();
         HistorySave();
         DownloadsSave();
+        if (g_prefs.clearExitHistory || g_prefs.clearExitCookies || g_prefs.clearExitCache || g_prefs.clearExitDownloads) {
+            // Settings > Privacy > "When Lyra closes, clear": all time. The window goes at once; it is
+            // destroyed when the engine has removed its part (at most a few seconds).
+            ShowWindow(hWnd, SW_HIDE);
+            ClearDataChoice c;
+            c.range = (int)ClearDataRanges().size() - 1;   // all time
+            c.history = g_prefs.clearExitHistory;
+            c.cookies = g_prefs.clearExitCookies;
+            c.cache = g_prefs.clearExitCache;
+            c.downloads = g_prefs.clearExitDownloads;
+            c.permissions = c.passwords = false;
+            Log("exit: clearing%s%s%s%s", c.history ? " history" : "", c.cookies ? " cookies" : "", c.cache ? " cache" : "", c.downloads ? " downloads" : "");
+            SetTimer(hWnd, TIMER_EXIT_CLEAR, 6000, nullptr);
+            ClearBrowsingData(c, [hWnd]() {
+                Log("exit: cleared");
+                if (IsWindow(hWnd)) DestroyWindow(hWnd);
+            });
+            return 0;
+        }
         DestroyWindow(hWnd);
         return 0;
 

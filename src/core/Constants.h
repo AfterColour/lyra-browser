@@ -14,6 +14,7 @@ constexpr UINT_PTR TIMER_TAB_UNFREEZE = 2;   // tabs may widen again after a clo
 constexpr UINT_PTR TIMER_SPARE_TAB = 3;      // prepare the next new tab in the background (see PrepareSpareTab)
 constexpr UINT_PTR TIMER_SPLIT_COVER = 6;    // split view: the divider picture waits for the halves, then fades
 constexpr UINT_PTR TIMER_SPLIT_REPAINT = 5;  // split view: both halves draw again after a resize (see SplitView)
+constexpr UINT_PTR TIMER_EXIT_CLEAR = 8;      // closing: data clearing took too long, close anyway
 constexpr UINT_PTR TIMER_UPDATE = 7;          // look for an update (app/Updater.cpp)
 constexpr UINT_PTR TIMER_TRANSITION = 4;     // the tab switch cover fades (see TabTransition)
 
@@ -62,5 +63,5 @@ constexpr UINT WM_APP_LYRA_URL     = WM_APP + 4;   // a start page asked for lyr
 enum Cmd {
     CMD_NEWTAB = 301, CMD_CLOSETAB, CMD_COPYURL,
     CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMRESET, CMD_SETHOME, CMD_SETTINGS,
-    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS, CMD_ADBLOCK_SITE, CMD_FIND, CMD_PRINT, CMD_PASSWORDS, CMD_NEWPRIVATE, CMD_PIP, CMD_READER, CMD_TRANSLATE, CMD_PALETTE, CMD_SPLIT, CMD_UPDATE, CMD_TABSEARCH, CMD_SCREENSHOT
+    CMD_REOPENTAB, CMD_DEVTOOLS, CMD_HISTORY, CMD_BOOKMARKS, CMD_BOOKMARK_PAGE, CMD_DOWNLOADS, CMD_ADBLOCK_SITE, CMD_FIND, CMD_PRINT, CMD_PASSWORDS, CMD_NEWPRIVATE, CMD_PIP, CMD_READER, CMD_TRANSLATE, CMD_PALETTE, CMD_SPLIT, CMD_UPDATE, CMD_TABSEARCH, CMD_SCREENSHOT, CMD_BOOKMARKSBAR
 };

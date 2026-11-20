@@ -37,6 +37,7 @@ struct Prefs {
     int  loadIndicator = 0;      // page loading in the address field: 0 glowing line, 1 fill (Safari)
     int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
     bool spareTab = true;        // a start page is prepared in the background for the next new tab
+    bool bookmarksBar = false;   // the bookmarks bar under the toolbar (ui/BookmarksBar)
     int  frameRate = 2;          // pages' frame rate: 0 the display's, 1 about 60 fps, 2 about 60 on battery
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)
     // Reader view: text size (px), 0 sans / 1 serif, 0 auto / 1 light / 2 sepia / 3 dark, 0 narrow / 1 normal / 2 wide
@@ -44,6 +45,8 @@ struct Prefs {
     int  translateService = 0;   // 0 Google (no key), 1 DeepL (own API key)
     int  translateTarget = 0;    // index into TranslateLanguages(); 0 = Lyra's language
     bool savePasswords = true;   // offer to save passwords and fill them in (browser/Passwords.cpp)
+    // Cleared when Lyra closes (Settings > Privacy): visited pages, cookies and site data, cache, the downloads list.
+    bool clearExitHistory = false, clearExitCookies = false, clearExitCache = false, clearExitDownloads = false;
     bool adBlock = true;         // block ads and trackers (Settings > Privacy, browser/AdBlock.cpp)
     bool js = true, images = true, localStorage = true, databases = true;
     bool devExtras = true, fullscreen = true, webAudio = true;

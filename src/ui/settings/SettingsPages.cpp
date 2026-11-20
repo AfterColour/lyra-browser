@@ -290,6 +290,9 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Close button on every tab", L"Кнопка закрытия на всех вкладках"),
             Tr(L"Otherwise it appears on the tab under the pointer.", L"Иначе она появляется на вкладке под курсором."),
             &g_prefs.closeAlways, repaint));
+        p.rows.push_back(RToggle(Tr(L"Show bookmarks bar", L"Показывать панель закладок"),
+            Tr(L"The Favorites folder under the address field. Ctrl+Shift+B", L"Папка «Избранное» под адресной строкой. Ctrl+Shift+B"),
+            &g_prefs.bookmarksBar, []() { SaveSettings(); RefreshLayout(); }));
         g_pages.push_back(std::move(p));
     }
     {   // Start Page
@@ -493,6 +496,20 @@ void BuildPages() {
             Tr(L"History, cookies and site data, cache\x2026 for a chosen period. Ctrl+Shift+Del",
                L"История, cookie и данные сайтов, кэш\x2026 за выбранный период. Ctrl+Shift+Del"),
             Tr(L"Choose\x2026", L"Выбрать\x2026"), []() { SettingsOpenPage(s_clearDataPageIndex); }));
+        p.rows.push_back(RHeader(Tr(L"When Lyra closes, clear", L"При закрытии Lyra удалять")));
+        p.rows.push_back(RToggle(Tr(L"Browsing history", L"Историю"),
+            Tr(L"Visited pages, address bar suggestions, recently closed tabs. The open tabs still come back.",
+               L"Посещённые страницы, подсказки адресной строки, недавно закрытые вкладки. Открытые вкладки всё равно вернутся."),
+            &g_prefs.clearExitHistory, save));
+        p.rows.push_back(RToggle(Tr(L"Cookies and site data", L"Cookie и данные сайтов"),
+            Tr(L"Signs you out of most sites.", L"Выходит из аккаунтов на большинстве сайтов."),
+            &g_prefs.clearExitCookies, save));
+        p.rows.push_back(RToggle(Tr(L"Cached images and files", L"Кэш картинок и файлов"),
+            Tr(L"Pages load a little slower the first time after that.", L"Страницы в первый раз после этого грузятся чуть дольше."),
+            &g_prefs.clearExitCache, save));
+        p.rows.push_back(RToggle(Tr(L"Downloads list", L"Список загрузок"),
+            Tr(L"The downloaded files stay.", L"Сами скачанные файлы остаются."),
+            &g_prefs.clearExitDownloads, save));
         p.rows.push_back(RHeader(Tr(L"Note", L"Примечание")));
         p.rows.push_back(RInfo(Tr(L"Changes apply to", L"Изменения действуют для"),
                                Tr(L"pages loaded afterwards", L"страниц, открытых после них")));
