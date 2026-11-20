@@ -507,6 +507,14 @@ void BuildPages() {
             { Tr(L"Off", L"Выкл."), L"1", L"2", L"4" },
             []() { return g_prefs.warmTabs >= 4 ? 3 : g_prefs.warmTabs; },
             [save](int i) { g_prefs.warmTabs = i == 3 ? 4 : i; RefreshLayout(); save(); }));
+        p.rows.push_back(RSegmented(Tr(L"Frame rate", L"Частота кадров"),
+            Tr(L"How often pages draw animations and scrolling. 60 fps spares the graphics card and the battery; "
+               L"Auto uses it while the laptop runs on battery.",
+               L"Как часто страницы рисуют анимации и прокрутку. 60 кадров бережёт видеокарту и батарею; "
+               L"«Авто» включает их, когда ноутбук работает от батареи."),
+            { Tr(L"Display", L"Как монитор"), L"60", Tr(L"Auto", L"Авто") },
+            []() { return g_prefs.frameRate; },
+            [save](int i) { g_prefs.frameRate = i; ApplyFrameRate(); save(); }));
         p.rows.push_back(RToggle(Tr(L"Put unused tabs to sleep", L"Усыплять неиспользуемые вкладки"),
             Tr(L"Tabs not opened for a while are unloaded from memory and load again when you open them.",
                L"Вкладки, которые давно не открывали, выгружаются из памяти и загружаются снова, когда вы на них переходите."),

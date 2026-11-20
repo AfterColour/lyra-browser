@@ -20,6 +20,7 @@
 #include "ui/BookmarkPopup.h"
 #include "ui/Chrome.h"
 #include "ui/CommandPalette.h"
+#include "ui/Screenshot.h"
 #include "browser/SplitView.h"
 #include "ui/MainWindow.h"
 #include "ui/Menu.h"
@@ -83,6 +84,8 @@ void RunCommand(int cmd) {
     case CMD_READER:    ReaderToggle(); break;
     case CMD_TRANSLATE: TranslateToggle(); break;
     case CMD_PALETTE:   CommandPaletteShow(); break;
+    case CMD_TABSEARCH: CommandPaletteShowTabs(); break;
+    case CMD_SCREENSHOT: ScreenshotMenu(); break;
     case CMD_SPLIT:     SplitToggle(); break;
     case CMD_UPDATE:    UpdaterRestartAndInstall(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
@@ -176,7 +179,9 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING | (PipActive() ? MF_CHECKED : 0), CMD_PIP, Tr(L"Picture in Picture", L"Картинка в картинке"));
     AppendMenuW(m, MF_STRING | (SplitShown() ? MF_CHECKED : 0), CMD_SPLIT, Tr(L"Split View", L"Разделённый экран"));
     AppendMenuW(m, MF_STRING, CMD_PALETTE,   Tr(L"Command Palette\x2026\tCtrl+K", L"Палитра команд\x2026\tCtrl+K"));
+    AppendMenuW(m, MF_STRING, CMD_TABSEARCH, Tr(L"Search Tabs\x2026\tCtrl+Shift+A", L"Поиск по вкладкам\x2026\tCtrl+Shift+A"));
     AppendMenuW(m, MF_STRING, CMD_FIND,      Tr(L"Find on Page\x2026\tCtrl+F", L"Найти на странице\x2026\tCtrl+F"));
+    AppendMenuW(m, MF_STRING, CMD_SCREENSHOT, Tr(L"Screenshot\x2026\tCtrl+Shift+S", L"Снимок страницы\x2026\tCtrl+Shift+S"));
     AppendMenuW(m, MF_STRING | (PrintInProgress() ? MF_GRAYED : 0), CMD_PRINT,
                 Tr(L"Print\x2026\tCtrl+P", L"Печать\x2026\tCtrl+P"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -191,7 +196,7 @@ void ShowMoreMenu() {
         { CMD_REOPENTAB, L"\uE7A7" }, { CMD_HISTORY, L"\uE81C" }, { CMD_BOOKMARKS, L"\uE728" }, { CMD_PASSWORDS, L"\uE8D7" },
         { CMD_DOWNLOADS, L"\uE896" }, { CMD_BOOKMARK_PAGE, L"\uE734" }, { CMD_ADBLOCK_SITE, L"\uE72E" }, { CMD_COPYURL, L"\uE71B" },
         { CMD_SETHOME, L"\uE80F" }, { CMD_READER, L"\uE736" }, { CMD_TRANSLATE, L"\uE8C1" }, { CMD_PIP, L"\uE8B9" },
-        { CMD_SPLIT, L"\uE8A0" }, { CMD_PALETTE, L"\uE765" }, { CMD_FIND, L"\uE721" }, { CMD_PRINT, L"\uE749" },
+        { CMD_SPLIT, L"\uE8A0" }, { CMD_PALETTE, L"\uE765" }, { CMD_TABSEARCH, L"\uE7C4" }, { CMD_SCREENSHOT, L"\uE722" }, { CMD_FIND, L"\uE721" }, { CMD_PRINT, L"\uE749" },
         { CMD_ZOOMIN, L"\uE8A3" }, { CMD_ZOOMOUT, L"\uE71F" }, { CMD_ZOOMRESET, L"\uE71E" }, { CMD_DEVTOOLS, L"\uE943" },
         { CMD_SETTINGS, L"\uE713" },
     };
@@ -228,6 +233,8 @@ bool HandleShortcut(const MSG& m) {
         if (k == 'I') { ShowWebInspector(); return true; }
         if (k == 'O') { RunCommand(CMD_BOOKMARKS); return true; }
         if (k == 'N') { RunCommand(CMD_NEWPRIVATE); return true; }
+        if (k == 'A') { RunCommand(CMD_TABSEARCH); return true; }
+        if (k == 'S') { RunCommand(CMD_SCREENSHOT); return true; }
         if (k == VK_DELETE) { OpenClearDataSettings(); return true; }
     }
     if (ctrl && !alt) {

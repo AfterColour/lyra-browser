@@ -17,6 +17,7 @@
 #include "ui/Suggestions.h"
 #include "browser/StartPage.h"
 #include "app/Log.h"
+#include "browser/WebContext.h"
 #include "browser/Tab.h"
 #include "browser/TabGroups.h"
 #include "browser/SiteZoom.h"
@@ -477,6 +478,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         RefreshLayout();
         return 0;
     }
+    case WM_POWERBROADCAST:
+        if (wParam == PBT_APMPOWERSTATUSCHANGE) ApplyFrameRate();   // plugged in / on battery
+        break;
     case WM_SETTINGCHANGE:
         if (lParam && wcscmp((LPCWSTR)lParam, L"ImmersiveColorSet") == 0) {
             ApplyTheme(ResolveDark());
@@ -512,7 +516,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         // A command sent as a message (no control): the same as choosing it from the menu.
-        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_UPDATE) {
+        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_SCREENSHOT) {
             RunCommand(LOWORD(wParam));
             return 0;
         }

@@ -7,4 +7,7 @@
 // match what is typed (in either language), and a search / "go to" row. Up / Down, Enter, Esc
 // and the mouse; it closes when Lyra loses the focus.
 void CommandPaletteShow();
+// The same box listing only tabs (Ctrl+Shift+A): every open tab and the recently closed ones, found
+// by title or address; Enter goes to the tab (brings a closed one back), Delete closes an open one.
+void CommandPaletteShowTabs();
 bool CommandPaletteVisible();

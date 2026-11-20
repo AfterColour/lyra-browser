@@ -37,6 +37,7 @@ struct Prefs {
     int  loadIndicator = 0;      // page loading in the address field: 0 glowing line, 1 fill (Safari)
     int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
     bool spareTab = true;        // a start page is prepared in the background for the next new tab
+    int  frameRate = 2;          // pages' frame rate: 0 the display's, 1 about 60 fps, 2 about 60 on battery
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)
     // Reader view: text size (px), 0 sans / 1 serif, 0 auto / 1 light / 2 sepia / 3 dark, 0 narrow / 1 normal / 2 wide
     int  readerSize = 19, readerFont = 1, readerTheme = 0, readerWidth = 1;

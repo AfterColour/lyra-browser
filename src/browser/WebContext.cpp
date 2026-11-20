@@ -81,8 +81,24 @@ void ApplyWebPrefs() {
     WKStringRef scrollAnimatorKey = WKStringCreateWithUTF8CString("ScrollAnimatorEnabled");
     WKPreferencesSetBoolValueForKeyForTesting(g_preferences, true, scrollAnimatorKey);
     WKRelease(scrollAnimatorKey);
-    // Render at the display's refresh rate (120/144/240 Hz), not the nearest 60 fps divisor.
+    ApplyFrameRate();
+}
+
+bool OnBatteryPower() {
+    SYSTEM_POWER_STATUS ps = {};
+    return GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0;
+}
+
+// Pages render at the display's refresh rate (120/144/240 Hz), or at the nearest 60 fps divisor to
+// spare the GPU and the battery (the engine reads the preference in DrawingAreaWC).
+void ApplyFrameRate() {
+    if (!g_preferences) return;
+    const bool near60 = g_prefs.frameRate == 1 || (g_prefs.frameRate == 2 && OnBatteryPower());
+    static int applied = -1;
+    if (applied == (int)near60) return;
+    applied = near60;
     WKStringRef near60Key = WKStringCreateWithUTF8CString("PreferPageRenderingUpdatesNear60FPSEnabled");
-    WKPreferencesSetBoolValueForKeyForTesting(g_preferences, false, near60Key);
+    WKPreferencesSetBoolValueForKeyForTesting(g_preferences, near60, near60Key);
     WKRelease(near60Key);
+    Log("frame rate: %s", near60 ? "about 60 fps" : "the display's");
 }

@@ -25,9 +25,10 @@
 namespace {
 
 struct Row {
-    enum Kind { TabRow, Command, BookmarkRow, HistoryRow, Search, Go } kind = Command;
+    enum Kind { TabRow, Command, BookmarkRow, HistoryRow, Search, Go, ClosedRow } kind = Command;
     std::wstring title, detail, url;
     unsigned long long tabId = 0;
+    int closedIndex = -1;                                // ClosedRow: the index in g_closedTabs
     std::function<void()> run;
 };
 
@@ -46,8 +47,12 @@ int s_editH = 20;
 std::vector<Row> s_rows;
 int s_sel = 0, s_hover = -1;
 bool s_tracking = false;
+bool s_tabsMode = false;                                 // Ctrl+Shift+A: only tabs
+int s_top = 0;                                           // the first row shown (the list scrolls)
 constexpr int kEditId = 4001;
 constexpr int kMaxRows = 9;
+constexpr int kVisibleTabRows = 10;
+int VisibleRows() { return std::min((int)s_rows.size(), s_tabsMode ? kVisibleTabRows : kMaxRows); }
 
 float FieldH() { return std::floor(S(52)); }
 float RowH() { return std::floor(S(40)); }
@@ -59,10 +64,12 @@ const std::vector<CommandDef>& Commands() {
         { L"New tab", L"Новая вкладка", L"open create", L"Ctrl+T", [] { RunCommand(CMD_NEWTAB); }, L"\uE710" },
         { L"New private tab", L"Новая приватная вкладка", L"incognito private инкогнито", L"Ctrl+Shift+N", [] { RunCommand(CMD_NEWPRIVATE); }, L"\uE72E" },
         { L"Reopen closed tab", L"Вернуть закрытую вкладку", L"restore undo восстановить", L"Ctrl+Shift+T", [] { RunCommand(CMD_REOPENTAB); }, L"\uE7A7" },
+        { L"Search tabs", L"Поиск по вкладкам", L"tabs list find вкладки список найти", L"Ctrl+Shift+A", [] { PostMessageW(g_hWnd, WM_COMMAND, CMD_TABSEARCH, 0); }, L"\uE7C4" },
         { L"Close tab", L"Закрыть вкладку", L"", L"Ctrl+W", [] { RunCommand(CMD_CLOSETAB); }, L"\uE711" },
         { L"Reload page", L"Обновить страницу", L"refresh обновить перезагрузить", L"Ctrl+R", [] { ReloadActive(false); }, L"\uE72C" },
         { L"Find on page", L"Найти на странице", L"search поиск", L"Ctrl+F", [] { RunCommand(CMD_FIND); }, L"\uE721" },
         { L"Print", L"Печать", L"pdf печать распечатать", L"Ctrl+P", [] { RunCommand(CMD_PRINT); }, L"\uE749" },
+        { L"Screenshot", L"Снимок страницы", L"screenshot capture picture скриншот снимок картинка", L"Ctrl+Shift+S", [] { PostMessageW(g_hWnd, WM_COMMAND, CMD_SCREENSHOT, 0); }, L"\uE722" },
         { L"Bookmark this page", L"Добавить в закладки", L"star favorite избранное", L"Ctrl+D", [] { RunCommand(CMD_BOOKMARK_PAGE); }, L"\uE734" },
         { L"Copy page address", L"Копировать адрес страницы", L"url link ссылка", L"", [] { RunCommand(CMD_COPYURL); }, L"\uE8C8" },
         { L"History", L"История", L"visited посещённые", L"Ctrl+H", [] { RunCommand(CMD_HISTORY); }, L"\uE81C" },
@@ -123,6 +130,57 @@ std::wstring EngineName() {
     return HostOf(g_searchEngine);
 }
 
+// Tab search: the open tabs in their order, then the recently closed ones (newest first).
+void RebuildTabs(const std::vector<std::wstring>& words) {
+    const Tab* active = ActiveTab();
+    std::vector<std::pair<int, Row>> open, closed;
+    for (auto& tp : g_tabs) {
+        const Tab& t = *tp;
+        if (t.state != TabState::Live) continue;
+        const std::wstring url = t.lazyPending ? t.lazyUrl : t.url;
+        const std::wstring title = t.title.empty() ? HostOf(url) : t.title;
+        const int sc = MatchScore(words, Lower(title + L" " + url), Lower(title));
+        if (!sc) continue;
+        Row r;
+        r.kind = Row::TabRow;
+        r.title = title;
+        r.url = url;
+        r.tabId = t.id;
+        std::wstring detail = IsInternalPageUrl(url) ? std::wstring(L"Lyra") : HostOf(url);
+        if (&t == active) detail = Tr(L"Open now", L"Открыта сейчас");
+        else if (t.audible && !t.muted) detail = Tr(L"Playing · ", L"Звук · ") + detail;
+        else if (t.sleeping || t.lazyPending) detail = Tr(L"Not loaded · ", L"Не загружена · ") + detail;
+        r.detail = detail;
+        open.push_back({ sc, r });
+    }
+    for (int k = (int)g_closedTabs.size() - 1, n = 0; k >= 0 && n < 15; --k, ++n) {
+        const ClosedTab& c = g_closedTabs[k];
+        const std::wstring title = c.title.empty() ? HostOf(c.url) : c.title;
+        const int sc = MatchScore(words, Lower(title + L" " + c.url), Lower(title));
+        if (!sc) continue;
+        Row r;
+        r.kind = Row::ClosedRow;
+        r.title = title;
+        r.url = c.url;
+        r.closedIndex = k;
+        r.detail = Tr(L"Closed · ", L"Закрыта · ") + HostOf(c.url);
+        closed.push_back({ sc, r });
+    }
+    if (!words.empty()) {
+        auto byScore = [](const std::pair<int, Row>& a, const std::pair<int, Row>& b) { return a.first > b.first; };
+        std::stable_sort(open.begin(), open.end(), byScore);
+        std::stable_sort(closed.begin(), closed.end(), byScore);
+    }
+    for (auto& o : open) s_rows.push_back(o.second);
+    for (auto& c : closed) s_rows.push_back(c.second);
+    s_sel = s_rows.empty() ? -1 : 0;
+    if (words.empty())                                   // nothing typed: start at the open tab
+        for (int i = 0; i < (int)s_rows.size(); ++i)
+            if (s_rows[i].kind == Row::TabRow && active && s_rows[i].tabId == active->id) { s_sel = i; break; }
+    s_hover = -1;
+    s_top = std::max(0, std::min(s_sel - kVisibleTabRows / 2, (int)s_rows.size() - kVisibleTabRows));
+}
+
 void Rebuild() {
     wchar_t buf[512] = {};
     if (s_edit) GetWindowTextW(s_edit, buf, ARRAYSIZE(buf));
@@ -136,6 +194,8 @@ void Rebuild() {
         i = j;
     }
     s_rows.clear();
+    s_top = 0;
+    if (s_tabsMode) { RebuildTabs(words); return; }
     const Tab* active = ActiveTab();
 
     // Open tabs (not the one already open).
@@ -223,7 +283,7 @@ void Place() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
     const float w = std::min(S(640), (float)cr.right - S(40));
-    const float h = FieldH() + (s_rows.empty() ? 0.f : Pad() * 2 + RowH() * (float)s_rows.size());
+    const float h = FieldH() + (s_rows.empty() ? 0.f : Pad() * 2 + RowH() * (float)VisibleRows());
     POINT tl = { (LONG)((cr.right - w) / 2), (LONG)(g_L.chromeH + S(12)) };
     ClientToScreen(g_hWnd, &tl);
     SetWindowPos(s_wnd, HWND_TOP, tl.x, tl.y, (int)w, (int)h, SWP_NOACTIVATE);
@@ -251,12 +311,41 @@ void Run(int i) {
     case Row::Command: if (r.run) r.run(); break;
     case Row::BookmarkRow: case Row::HistoryRow: NavigateActive(r.url); FocusWebView(); break;
     case Row::Search: case Row::Go: NavigateActive(r.url); FocusWebView(); break;
+    case Row::ClosedRow: if (r.closedIndex >= 0 && r.closedIndex < (int)g_closedTabs.size()) ReopenClosedTab(r.closedIndex); break;
     }
 }
 
 int RowAt(int y) {
     const int i = (int)std::floor(((float)y - FieldH() - Pad()) / RowH());
-    return (y >= FieldH() + Pad() && i >= 0 && i < (int)s_rows.size()) ? i : -1;
+    return (y >= FieldH() + Pad() && i >= 0 && i < VisibleRows() && s_top + i < (int)s_rows.size()) ? s_top + i : -1;
+}
+
+void KeepSelectionShown() {
+    const int vis = VisibleRows();
+    if (s_sel < s_top) s_top = s_sel;
+    else if (s_sel >= s_top + vis) s_top = s_sel - vis + 1;
+    s_top = std::max(0, std::min(s_top, (int)s_rows.size() - vis));
+}
+
+void Scroll(int rows) {
+    const int vis = VisibleRows();
+    s_top = std::max(0, std::min(s_top + rows, (int)s_rows.size() - vis));
+    if (s_wnd) InvalidateRect(s_wnd, nullptr, FALSE);
+}
+
+// Tab search: Delete closes the selected open tab; the list stays.
+void CloseSelectedTab() {
+    if (!s_tabsMode || s_sel < 0 || s_sel >= (int)s_rows.size() || s_rows[s_sel].kind != Row::TabRow) return;
+    int index = -1;
+    if (!FindTab(s_rows[s_sel].tabId, &index)) return;
+    const int keep = s_sel;
+    CloseTab(index);
+    if (!s_wnd) return;
+    SetForegroundWindow(s_wnd);
+    Rebuild();
+    s_sel = s_rows.empty() ? -1 : std::min(keep, (int)s_rows.size() - 1);
+    KeepSelectionShown();
+    Place();
 }
 
 void Paint(HDC hdc) {
@@ -275,21 +364,22 @@ void Paint(HDC hdc) {
         sf.SetFormatFlags(sf.GetFormatFlags() | StringFormatFlagsNoWrap);
         sf.SetTrimming(StringTrimmingEllipsisCharacter);
         sf.SetLineAlignment(StringAlignmentCenter);
-        for (int i = 0; i < (int)s_rows.size(); ++i) {
+        const int vis = VisibleRows();
+        for (int i = s_top; i < s_top + vis && i < (int)s_rows.size(); ++i) {
             const Row& r = s_rows[i];
-            RectF row(Pad(), FieldH() + Pad() + RowH() * (float)i, w - Pad() * 2, RowH());
+            RectF row(Pad(), FieldH() + Pad() + RowH() * (float)(i - s_top), w - Pad() * 2, RowH());
             if (i == s_sel) FillRound(g, Color(g_dark ? 70 : 40, T.accent.GetR(), T.accent.GetG(), T.accent.GetB()), row, S(6));
             else if (i == s_hover) FillRound(g, T.hover, row, S(6));
             const float is = S(16);
             RectF icon(row.X + S(12), row.Y + (row.Height - is) / 2, is, is);
-            Bitmap* fav = (r.kind == Row::TabRow || r.kind == Row::BookmarkRow || r.kind == Row::HistoryRow) ? FaviconFor(r.url) : nullptr;
+            Bitmap* fav = (r.kind == Row::TabRow || r.kind == Row::BookmarkRow || r.kind == Row::HistoryRow || r.kind == Row::ClosedRow) ? FaviconFor(r.url) : nullptr;
             if (fav) {
                 g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
                 g.DrawImage(fav, icon);
             } else {
                 const wchar_t* glyph = r.kind == Row::Command ? r.url.c_str() : r.kind == Row::Search ? L"\uE721"
                                      : r.kind == Row::Go ? L"\uE774" : r.kind == Row::BookmarkRow ? L"\uE734"
-                                     : r.kind == Row::HistoryRow ? L"\uE81C" : L"\uE737";
+                                     : r.kind == Row::HistoryRow ? L"\uE81C" : r.kind == Row::ClosedRow ? L"\uE7A7" : L"\uE737";
                 DrawGlyph(g, glyph, icon, T.text2, g_fIconSm.get());
             }
             const float tx = icon.GetRight() + S(12), right = row.GetRight() - S(12);
@@ -303,6 +393,12 @@ void Paint(HDC hdc) {
             rf.SetAlignment(StringAlignmentFar);
             g.DrawString(r.detail.c_str(), -1, g_fText.get(), RectF(right - detailW, row.Y, detailW, row.Height), &rf, &t2);
         }
+        if ((int)s_rows.size() > vis) {                  // where the shown rows are in the list
+            const float trackTop = FieldH() + Pad(), trackH = RowH() * (float)vis;
+            const float thumbH = std::max(S(24), trackH * vis / (float)s_rows.size());
+            const float thumbY = trackTop + (trackH - thumbH) * s_top / (float)std::max(1, (int)s_rows.size() - vis);
+            FillRound(g, Color(g_dark ? 90 : 60, T.text2.GetR(), T.text2.GetG(), T.text2.GetB()), RectF(w - S(5), thumbY, S(3), thumbH), S(1.5f));
+        }
     });
 }
 
@@ -310,6 +406,7 @@ void Move(int d) {
     if (s_rows.empty()) return;
     const int n = (int)s_rows.size();
     s_sel = ((s_sel < 0 ? 0 : s_sel) + d + n) % n;
+    KeepSelectionShown();
     InvalidateRect(s_wnd, nullptr, FALSE);
 }
 
@@ -319,12 +416,21 @@ LRESULT CALLBACK EditProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case VK_DOWN: Move(1); return 0;
         case VK_UP: Move(-1); return 0;
         case VK_TAB: Move((GetKeyState(VK_SHIFT) & 0x8000) ? -1 : 1); return 0;
+        case VK_PRIOR: Move(-std::max(1, VisibleRows() - 1)); return 0;
+        case VK_NEXT: Move(std::max(1, VisibleRows() - 1)); return 0;
+        case VK_DELETE:
+            if (s_tabsMode && GetWindowTextLengthW(h) == 0) { CloseSelectedTab(); return 0; }
+            break;
         case VK_RETURN: Run(s_sel); return 0;
         case VK_ESCAPE: Close(); SetForegroundWindow(g_hWnd); FocusWebView(); return 0;
         }
         if (w == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) { SendMessageW(h, EM_SETSEL, 0, -1); return 0; }
         if (w == 'K' && (GetKeyState(VK_CONTROL) & 0x8000)) { Close(); return 0; }
+        if (w == 'W' && (GetKeyState(VK_CONTROL) & 0x8000) && s_tabsMode) { CloseSelectedTab(); return 0; }
+        if (w == 'A' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000)) { Close(); return 0; }
     }
+    if (m == WM_MOUSEWHEEL) { Scroll(GET_WHEEL_DELTA_WPARAM(w) > 0 ? -3 : 3); return 0; }
+    if (m == WM_CHAR && w == 23) return 0;                // (Ctrl+W)
     if (m == WM_CHAR && (w == VK_RETURN || w == VK_ESCAPE || w == VK_TAB || w == 1 || w == 11)) return 0;
     return CallWindowProcW(s_oldEdit, h, m, w, l);
 }
@@ -359,6 +465,9 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s_tracking) { TRACKMOUSEEVENT t = { sizeof(t), TME_LEAVE, h, 0 }; TrackMouseEvent(&t); s_tracking = true; }
         return 0;
     }
+    case WM_MOUSEWHEEL:
+        Scroll(GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? -3 : 3);
+        return 0;
     case WM_MOUSELEAVE:
         s_tracking = false;
         if (s_hover >= 0) { s_hover = -1; InvalidateRect(h, nullptr, FALSE); }
@@ -380,7 +489,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 bool CommandPaletteVisible() { return s_wnd != nullptr; }
 
-void CommandPaletteShow() {
+static void ShowPalette(bool tabs);
+
+void CommandPaletteShow() { ShowPalette(false); }
+void CommandPaletteShowTabs() { ShowPalette(true); }
+
+static void ShowPalette(bool tabs) {
+    if (s_wnd && s_tabsMode != tabs) Close();            // the other kind is open: this one instead
+    s_tabsMode = tabs;
     if (s_wnd) { SetForegroundWindow(s_wnd); SetFocus(s_edit); SendMessageW(s_edit, EM_SETSEL, 0, -1); return; }
     static bool registered = false;
     HINSTANCE hi = GetModuleHandleW(nullptr);
@@ -412,7 +528,8 @@ void CommandPaletteShow() {
     SendMessageW(s_edit, EM_SETLIMITTEXT, 300, 0);
     // Placeholder (shown while the field is empty, also with the focus).
     SendMessageW(s_edit, 0x1501 /* EM_SETCUEBANNER */, TRUE,
-                 (LPARAM)Tr(L"Search tabs, commands, bookmarks and history", L"Вкладки, команды, закладки и история"));
+                 (LPARAM)(tabs ? Tr(L"Search open and recently closed tabs", L"Поиск по открытым и недавно закрытым вкладкам")
+                               : Tr(L"Search tabs, commands, bookmarks and history", L"Вкладки, команды, закладки и история")));
     s_oldEdit = (WNDPROC)SetWindowLongPtrW(s_edit, GWLP_WNDPROC, (LONG_PTR)EditProc);
     {
         HDC dc = GetDC(s_edit);
@@ -428,5 +545,5 @@ void CommandPaletteShow() {
     PopupShow(s_wnd, true);
     SetForegroundWindow(s_wnd);
     SetFocus(s_edit);
-    Log("palette: open");
+    Log(tabs ? "palette: tab search open" : "palette: open");
 }
