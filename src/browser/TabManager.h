@@ -45,6 +45,11 @@ void CreatePrivateTab();             // Ctrl+Shift+N: a private (incognito) tab
 // open tab stays) or in front, and private or not.
 Tab* OpenInNewTab(const std::wstring& input, bool background, bool privateTab);
 void ReopenClosedTab(int which = -1);   // an index into g_closedTabs; -1: the last closed
+// The tab menu: a copy of the tab (with its back/forward list) right after it, opened; closing
+// the others (pinned tabs stay) or the ones after it.
+void DuplicateTab(int index);
+void CloseOtherTabs(int index);
+void CloseTabsToRight(int index);
 // Moves the tab at `from` so that it ends up at index `to` (the others keep their order).
 void MoveTab(int from, int to);
 // Pinned tabs stay at the start of the list, narrow (only the site icon), and come back after a

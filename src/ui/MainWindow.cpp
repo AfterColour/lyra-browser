@@ -1,5 +1,6 @@
 // Lyra — главное окно: оконная процедура, размещение страниц.
 #include "ui/MainWindow.h"
+#include "ui/TabHoverCard.h"
 #include "browser/Translate.h"
 #include "browser/Reader.h"
 #include "browser/AdBlock.h"
@@ -564,6 +565,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_LBUTTONDOWN: {
+        TabHoverCardHide();
         if (TabGroupEditingId()) TabGroupEditFinish(true);   // a click in the chrome ends a group's renaming
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // divider / gutter
         // The active tab is in picture-in-picture: a click on its empty page brings it back.
@@ -639,6 +641,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_RBUTTONUP: {                                 // the tab menu
+        TabHoverCardHide();
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::ExtAction) { ExtensionButtonMenu(h.index); return 0; }
         if (h.kind == Hit::GroupLabel) {
@@ -652,8 +655,13 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
-        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin, kGroups = 1000 };
+        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin, kReload, kDuplicate, kCloseOthers, kCloseRight, kGroups = 1000 };
         HMENU m = CreatePopupMenu();
+        AppendMenuW(m, MF_STRING, kReload, h.index == g_active ? Tr(L"Reload\tCtrl+R", L"Обновить\tCtrl+R") : Tr(L"Reload", L"Обновить"));
+        AppendMenuW(m, MF_STRING, kDuplicate, Tr(L"Duplicate", L"Дублировать"));
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        MenuSetIcon(m, kReload, L"\uE72C");
+        MenuSetIcon(m, kDuplicate, L"\uE8C8");
         {
             const Tab& target = *g_tabs[h.index];
             const bool split = SplitHas(target) && SplitPartnerOf(target);
@@ -688,6 +696,16 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             AppendMenuW(m, MF_STRING, kClose, Tr(L"Close both pages", L"Закрыть обе страницы"));
         else
             AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
+        {
+            bool others = false, right = false;
+            for (int i = 0; i < (int)g_tabs.size(); ++i) {
+                if (i == h.index || g_tabs[i]->pinned) continue;
+                others = true;
+                if (i > h.index) right = true;
+            }
+            AppendMenuW(m, MF_STRING | (others ? 0 : MF_GRAYED), kCloseOthers, Tr(L"Close other tabs", L"Закрыть другие вкладки"));
+            AppendMenuW(m, MF_STRING | (right ? 0 : MF_GRAYED), kCloseRight, Tr(L"Close tabs to the right", L"Закрыть вкладки справа"));
+        }
         MenuSetIcon(m, kPin, g_tabs[h.index]->pinned ? L"\uE77A" : L"\uE718");
         MenuSetIcon(m, kSplitSwap, L"\uE8AB");
         MenuSetIcon(m, kSplitClose, L"\uE8A0");
@@ -702,7 +720,14 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         int index = -1;
         Tab* t = FindTab(id, &index);
         if (!t) return 0;
-        if (cmd >= kGroups) TabGroupsTabMenuCommand((UINT)cmd, index, kGroups);
+        if (cmd == kReload) {                            // (a restored or sleeping one loads in place)
+            if (t->lazyPending) { SessionLoadLazyTab(*t); InvalidateChrome(); }
+            else if (t->page) WKPageReload(t->page);
+        }
+        else if (cmd == kDuplicate) DuplicateTab(index);
+        else if (cmd == kCloseOthers) CloseOtherTabs(index);
+        else if (cmd == kCloseRight) CloseTabsToRight(index);
+        else if (cmd >= kGroups) TabGroupsTabMenuCommand((UINT)cmd, index, kGroups);
         else if (cmd == kPin) SetTabPinned(index, !t->pinned);
         else if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
         else if (cmd == kSplitSwap) SplitSwap();
@@ -768,6 +793,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         break;
     case WM_MBUTTONUP: {
+        TabHoverCardHide();
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);
         return 0;
@@ -857,7 +883,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE) SuggestHide();
+        if (LOWORD(wParam) == WA_INACTIVE) { SuggestHide(); TabHoverCardHide(); }
         else if (!IsEditing()) FocusWebView();
         break;
 

@@ -7,6 +7,7 @@
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
+#include "ui/TabHoverCard.h"
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "browser/Translate.h"
@@ -511,6 +512,8 @@ float TabStripBottom() {
 void SetHover(const Hit& h) {
     if (h == g_hover) return;
     g_hover = h;
+    const bool onTab = h.kind == Hit::TabBody || h.kind == Hit::TabClose || h.kind == Hit::TabAudio;
+    TabHoverCardHover(onTab ? h.index : -1);
     if (h.kind != Hit::None && AnimHoverEnabled()) {
         bool found = false;
         for (auto& f : s_fades) if (f.hit == h) { found = true; break; }

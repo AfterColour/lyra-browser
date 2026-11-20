@@ -44,6 +44,11 @@ std::vector<Bookmark> BookmarksMatch(const std::wstring& text, size_t max);
 
 // Other browsers on this computer whose bookmarks can be imported: {key, display name}.
 std::vector<std::pair<std::wstring, std::wstring>> BookmarkImporters();
+// The usual bookmarks HTML file (Netscape format, as every browser reads and writes it).
+// Export: the number of bookmarks written, -1 on failure. Import: into a new folder under Bookmarks,
+// leaving out addresses already bookmarked; the number added, -1 when the file is not one.
+int BookmarkExportHtml(const std::wstring& path);
+int BookmarkImportHtml(const std::wstring& path);
 // Imports from the browser `key` (see BookmarkImporters) into a folder under Bookmarks;
 // addresses already bookmarked are skipped. Returns how many were added, -1 if unreadable.
 int BookmarkImport(const std::wstring& key);

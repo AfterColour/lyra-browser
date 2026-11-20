@@ -55,6 +55,7 @@
                  color: var(--text); font: inherit; padding: 0 10px; cursor: pointer; }
   .menu button:hover { background: var(--hover); }
   .menu .note { color: var(--text2); padding: 6px 10px; max-width: 260px; }
+  .menu .sep { height: 1px; background: var(--border); margin: 4px 6px; }
 
   .cols { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
   @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
@@ -169,7 +170,10 @@ let importers = [];
 try { importers = JSON.parse(q.get("importers") || "[]"); } catch (e) {}
 
 const S = ru ? {
-  title: "Закладки", search: "Поиск в закладках", newFolder: "Новая папка", import: "Импорт…",
+  title: "Закладки", search: "Поиск в закладках", newFolder: "Новая папка", import: "Импорт и экспорт…",
+  importHtml: "Из HTML-файла…", exportHtml: "Экспорт в HTML-файл…",
+  exported: (n) => n < 0 ? "Не удалось сохранить файл" : `Экспортировано закладок: ${n}`,
+  htmlFail: "Это не файл закладок",
   favorites: "Избранное", bookmarks: "Закладки", favSub: "Показываются на стартовой странице",
   empty: "Здесь пока пусто. Добавляйте страницы звёздочкой в адресной строке или перетаскивайте их сюда.",
   nothing: "Ничего не найдено", found: "Найдено", edit: "Изменить", remove: "Удалить", name: "Название", address: "Адрес",
@@ -181,7 +185,10 @@ const S = ru ? {
   importFail: "Не удалось прочитать закладки этого браузера",
   items: (n) => n + " " + (n % 10 === 1 && n % 100 !== 11 ? "закладка" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "закладки" : "закладок"),
 } : {
-  title: "Bookmarks", search: "Search bookmarks", newFolder: "New Folder", import: "Import…",
+  title: "Bookmarks", search: "Search bookmarks", newFolder: "New Folder", import: "Import and export…",
+  importHtml: "From an HTML file…", exportHtml: "Export to an HTML file…",
+  exported: (n) => n < 0 ? "Could not save the file" : `Exported ${n} bookmark${n === 1 ? "" : "s"}`,
+  htmlFail: "This is not a bookmarks file",
   favorites: "Favorites", bookmarks: "Bookmarks", favSub: "Shown on the start page",
   empty: "Nothing here yet. Add pages with the star in the address bar or drag them here.",
   nothing: "Nothing found", found: "Found", edit: "Edit", remove: "Delete", name: "Name", address: "Address",
@@ -499,12 +506,24 @@ $("newFolder").addEventListener("click", () => {
     b.addEventListener("click", () => send("import", { from: im.k }));
     menu.appendChild(b);
   }
+  const more = [[S.importHtml, () => send("import", { from: "html" })], [S.exportHtml, () => send("export", {})]];
+  const sep = document.createElement("div");
+  sep.className = "sep";
+  menu.appendChild(sep);
+  for (const [label, act] of more) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = label;
+    b.addEventListener("click", act);
+    menu.appendChild(b);
+  }
 })();
 $("importBtn").addEventListener("click", (e) => { e.stopPropagation(); $("importMenu").classList.toggle("hidden"); });
 document.addEventListener("click", () => $("importMenu").classList.add("hidden"));
 {
   const n = q.get("imported");
   if (n !== null) toast(+n < 0 ? S.importFail : S.imported(+n));
+  const x = q.get("exported");
+  if (x !== null) toast(S.exported(+x));
 }
 
 $("q").addEventListener("input", render);

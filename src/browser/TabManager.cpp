@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "ui/TabHoverCard.h"
 #include "browser/SystemProxy.h"
 #include "browser/Extensions.h"
 #include "browser/PictureInPicture.h"
@@ -58,7 +59,16 @@ static bool s_adopting = false;                // SelectTab for the spare start 
 // A parked tab still runs at full speed (WebKit sees it as visible): after a while it is hidden
 // like the others, so a busy page (video, animations) does not keep taking CPU and GPU time.
 static std::map<unsigned long long, DWORD> s_parkedAt;
-constexpr DWORD kReadyForMs = 20000;
+// A tab just left stays parked (rendered, ready to come back at once) only for a few seconds: a
+// parked view counts as visible, so its page keeps animating, and every picture it presents waits
+// for the display's refresh on the GPU process's only thread - taking frames from the tab in view.
+constexpr DWORD kReadyForMs = 3000;
+// The spare new tab is kept on screen (parked) only while it draws its first pictures: a parked
+// view counts as visible, so its page keeps animating and the GPU process keeps compositing and
+// presenting it (the start page's night sky, its frosted widgets) - that slowed down the whole
+// browser. Hidden afterwards; a new tab covers the page area until it has drawn again.
+constexpr DWORD kSpareShownMs = 2500;
+static DWORD s_spareAt = 0;
 
 Tab* ActiveTab() {
     return (g_active >= 0 && g_active < (int)g_tabs.size()) ? g_tabs[g_active].get() : nullptr;
@@ -146,11 +156,18 @@ void ParkBackgroundViews(int w, int h) {
             ShowWindow(t.hwnd, SW_HIDE);
         }
     }
-    if (s_spare && s_spare->hwnd) ParkView(s_spare->hwnd, w, h);
+    if (s_spare && s_spare->hwnd) {
+        if (GetTickCount() - s_spareAt < kSpareShownMs) ParkView(s_spare->hwnd, w, h);
+        else if (IsWindowVisible(s_spare->hwnd)) ShowWindow(s_spare->hwnd, SW_HIDE);
+    }
 }
 
 void ExpireReadyTabs() {
     const DWORD now = GetTickCount();
+    if (s_spare && s_spare->hwnd && now - s_spareAt >= kSpareShownMs && IsWindowVisible(s_spare->hwnd)) {
+        ShowWindow(s_spare->hwnd, SW_HIDE);
+        Log("spare tab#%llu hidden", s_spare->id);
+    }
     for (auto& [id, at] : s_parkedAt) {
         if (now - at <= kReadyForMs) continue;
         Tab* t = FindTab(id);
@@ -238,7 +255,11 @@ static void Navigate(WKPageRef page, const std::string& utf8Url) {
 }
 
 void NavigateActive(const std::wstring& input) {
-    if (Tab* t = ActiveTab()) Navigate(t->page, ResolveNavigation(input));
+    Tab* t = ActiveTab();
+    if (!t) return;
+    const std::string target = ResolveNavigation(input);
+    if (_strnicmp(target.c_str(), "lyra:", 5) == 0) { HandleLyraUrl(t->id, ToWide(target)); return; }   // lyra://settings ...
+    Navigate(t->page, target);
 }
 
 static WKPageConfigurationRef CreatePageConfiguration() {
@@ -361,6 +382,7 @@ bool UnloadTab(Tab& t, const std::string& state) {
 
     s_parkedAt.erase(t.id);
     TransitionForget(t.id);                // its last picture (memory) goes too
+    TabHoverCardForget(t.id);
     t.lazyPending = true;
     t.lazyUrl = t.url;
     t.lazyState = state;
@@ -429,6 +451,7 @@ void PrepareSpareTab() {
     g_ctxs.push_back(std::move(ctx));
     s_spare = std::move(tab);
     ParkView(viewWnd, w, h);
+    s_spareAt = GetTickCount();
     s_spareUrl = StartPageUrl();
     Navigate(page, ToUtf8(s_spareUrl));
     Log("spare tab#%llu prepared", s_spare->id);
@@ -636,6 +659,71 @@ void ReopenClosedTab(int which) {
     if (FindTab(id, &at)) SelectTab(at);
     RefreshLayout(true);
     InvalidateChrome();
+}
+
+void DuplicateTab(int index) {
+    if (index < 0 || index >= (int)g_tabs.size()) return;
+    const Tab& src = *g_tabs[index];
+    const unsigned long long srcId = src.id;
+    const std::wstring url = src.lazyPending ? src.lazyUrl : src.url;
+    if (url.empty()) return;
+    if (src.privateTab) {                                // (a private tab: its page again, no history)
+        if (Tab* t = OpenInNewTab(url, false, true)) {
+            int at = -1, from = -1;
+            if (FindTab(srcId, &at) && FindTab(t->id, &from))
+                MoveTab(from, std::clamp(std::max(at + 1, PinnedTabCount()), 0, (int)g_tabs.size() - 1));
+        }
+        return;
+    }
+    // Like a restored tab: it loads the source's back/forward list when it is shown (right away).
+    const std::string state = src.lazyPending ? src.lazyState
+                            : (src.page && !IsInternalPageUrl(src.url) ? SessionPageState(src.page) : std::string());
+    const std::wstring title = src.title;
+    const unsigned group = src.group;
+    WKPageConfigurationRef conf = CreatePageConfigurationForTab();
+    Tab* t = CreateTabWithConfiguration(conf, false, false);
+    WKRelease(conf);
+    if (!t) return;
+    const unsigned long long id = t->id;
+    t->lazyPending = true;
+    t->lazyUrl = url;
+    t->lazyState = state;
+    t->url = url;
+    t->title = title;
+    t->title = title.empty() ? HostOf(url) : title;
+    int at = -1, from = -1;
+    if (FindTab(srcId, &at) && FindTab(id, &from)) {      // right after it (after the pinned ones)
+        const int to = std::clamp(std::max(at + 1, PinnedTabCount()), 0, (int)g_tabs.size() - 1);
+        MoveTab(from, to);
+        if (group && FindTabGroup(group) && FindTab(id, &at)) { g_tabs[at]->group = group; TabGroupsNormalize(); }
+    }
+    Log("tab#%llu duplicated as tab#%llu", srcId, id);
+    if (FindTab(id, &at)) SelectTab(at);
+    RefreshLayout(true);
+    InvalidateChrome();
+}
+
+static void CloseTabIds(const std::vector<unsigned long long>& ids) {
+    for (unsigned long long id : ids) {
+        int i = -1;
+        if (FindTab(id, &i)) CloseTab(i);
+    }
+}
+
+void CloseOtherTabs(int index) {
+    if (index < 0 || index >= (int)g_tabs.size()) return;
+    const unsigned long long keep = g_tabs[index]->id;
+    std::vector<unsigned long long> ids;
+    for (auto& t : g_tabs) if (t->id != keep && !t->pinned) ids.push_back(t->id);
+    { int i = -1; if (FindTab(keep, &i) && i != g_active) SelectTab(i); }
+    CloseTabIds(ids);
+}
+
+void CloseTabsToRight(int index) {
+    if (index < 0 || index >= (int)g_tabs.size()) return;
+    std::vector<unsigned long long> ids;
+    for (int i = index + 1; i < (int)g_tabs.size(); ++i) if (!g_tabs[i]->pinned) ids.push_back(g_tabs[i]->id);
+    CloseTabIds(ids);
 }
 
 void MoveTab(int from, int to) {

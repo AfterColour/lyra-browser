@@ -5,6 +5,7 @@
 #include "browser/AdBlock.h"
 #include "browser/ClearData.h"
 #include "browser/Passwords.h"
+#include "ui/Dialogs.h"
 #include "browser/Permissions.h"
 #include "browser/Downloads.h"
 #include "browser/History.h"
@@ -128,6 +129,33 @@ static void PasswordActions(const std::string& origin, const std::wstring& usern
             SettingsLanguageChanged();                   // rebuilds the list
         }
     }
+}
+
+// Saved passwords > Import: a CSV from another browser or password manager.
+static void ImportPasswordsCsv() {
+    const std::wstring path = PickOpenFile(g_setHwnd, Tr(L"Import passwords", L"Импорт паролей"),
+                                           Tr(L"Passwords file (CSV)", L"Файл паролей (CSV)"), L"*.csv");
+    if (path.empty()) return;
+    const PasswordsImportResult r = PasswordsImportCsv(path);
+    std::wstring msg;
+    UINT icon = MB_ICONINFORMATION;
+    if (r.added < 0) {
+        msg = Tr(L"This file has no passwords Lyra can read. Export them from the other browser as a CSV file "
+                 L"(Chrome: Password Manager > Settings > Export passwords; Firefox: Passwords > \x2026 > Export passwords).",
+                 L"В этом файле нет паролей, которые Lyra может прочитать. Экспортируйте их из другого браузера в CSV "
+                 L"(Chrome: Менеджер паролей > Настройки > Экспорт паролей; Firefox: Пароли > \x2026 > Экспорт паролей).");
+        icon = MB_ICONWARNING;
+    } else {
+        msg = Tr(L"Imported: ", L"Импортировано: ") + std::to_wstring(r.added);
+        if (r.same) msg += Tr(L"\nAlready saved: ", L"\nУже были сохранены: ") + std::to_wstring(r.same);
+        if (r.kept) msg += Tr(L"\nSaved in Lyra with another password (Lyra's kept): ",
+                              L"\nУже сохранены в Lyra с другим паролем (оставлен пароль Lyra): ") + std::to_wstring(r.kept);
+        if (r.skipped) msg += Tr(L"\nSkipped (no address or password): ", L"\nПропущено (нет адреса или пароля): ") + std::to_wstring(r.skipped);
+        msg += Tr(L"\n\nThe CSV file keeps the passwords unencrypted: delete it when you no longer need it.",
+                  L"\n\nВ CSV-файле пароли не зашифрованы: удалите его, когда он больше не нужен.");
+    }
+    MessageBoxW(g_setHwnd, msg.c_str(), Tr(L"Import passwords", L"Импорт паролей"), MB_OK | icon);
+    SettingsLanguageChanged();
 }
 
 void OpenPasswordsSettings() {
@@ -754,6 +782,10 @@ void BuildPages() {
         SPage p; p.name = Tr(L"Saved passwords", L"Сохранённые пароли"); p.icon = L"\uE8D7"; p.tint = kTintGreen;
         p.parent = privacyPage;
         const std::vector<SavedPassword> list = PasswordsList();
+        p.rows.push_back(RButton(Tr(L"Import passwords", L"Импорт паролей"),
+                                 Tr(L"From a CSV file: Chrome, Edge, Opera, Firefox, Bitwarden",
+                                    L"Из CSV-файла: Chrome, Edge, Opera, Firefox, Bitwarden"),
+                                 Tr(L"Choose a file\x2026", L"Выбрать файл\x2026"), []() { ImportPasswordsCsv(); }));
         p.rows.push_back(RHeader(Tr(L"Sites", L"Сайты")));
         if (list.empty())
             p.rows.push_back(RInfo(Tr(L"No saved passwords yet", L"Сохранённых паролей пока нет"), L""));

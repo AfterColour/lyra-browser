@@ -449,3 +449,102 @@ void PasswordsShutdown() {
     for (auto& p : s_saved) SecureZeroMemory(&p.password[0], p.password.size() * sizeof(wchar_t));
     s_saved.clear();
 }
+
+// ----------------------------------------------------------------------------
+//  Import from CSV
+// ----------------------------------------------------------------------------
+namespace {
+
+// RFC 4180: fields separated by commas, quoted ones may hold commas, quotes ("") and line breaks.
+std::vector<std::vector<std::string>> ParseCsv(const std::string& s) {
+    std::vector<std::vector<std::string>> rows;
+    std::vector<std::string> row;
+    std::string field;
+    bool quoted = false, any = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (quoted) {
+            if (c == '"') {
+                if (i + 1 < s.size() && s[i + 1] == '"') { field += '"'; ++i; }
+                else quoted = false;
+            } else field += c;
+            continue;
+        }
+        if (c == '"') { quoted = true; any = true; }
+        else if (c == ',') { row.push_back(std::move(field)); field.clear(); any = true; }
+        else if (c == '\r') {}
+        else if (c == '\n') {
+            if (any || !field.empty()) { row.push_back(std::move(field)); rows.push_back(std::move(row)); }
+            row.clear(); field.clear(); any = false;
+        } else { field += c; any = true; }
+    }
+    if (any || !field.empty()) { row.push_back(std::move(field)); rows.push_back(std::move(row)); }
+    return rows;
+}
+
+std::string LowerA(std::string s) {
+    for (auto& c : s) c = (char)tolower((unsigned char)c);
+    while (!s.empty() && (s.back() == ' ')) s.pop_back();
+    while (!s.empty() && s[0] == ' ') s.erase(0, 1);
+    return s;
+}
+
+}  // namespace
+
+PasswordsImportResult PasswordsImportCsv(const std::wstring& path) {
+    PasswordsImportResult r;
+    std::string data;
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f) { r.added = -1; return r; }
+        data.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    if (data.size() >= 3 && (unsigned char)data[0] == 0xEF && (unsigned char)data[1] == 0xBB) data.erase(0, 3);
+    auto rows = ParseCsv(data);
+    SecureZeroMemory(data.data(), data.size());
+    if (rows.size() < 1) { r.added = -1; return r; }
+    int cUrl = -1, cUser = -1, cPass = -1;
+    for (int i = 0; i < (int)rows[0].size(); ++i) {
+        const std::string h = LowerA(rows[0][i]);
+        if (cUrl < 0 && (h == "url" || h == "login_uri" || h == "website" || h == "origin" || h == "origin_url")) cUrl = i;
+        else if (cUser < 0 && (h == "username" || h == "login_username" || h == "login" || h == "username_value")) cUser = i;
+        else if (cPass < 0 && (h == "password" || h == "login_password" || h == "password_value")) cPass = i;
+    }
+    if (cUrl < 0 || cPass < 0) {
+        Log("passwords: %ls has no url/password columns", path.c_str());
+        for (auto& row : rows) for (auto& f : row) SecureZeroMemory(f.data(), f.size());
+        r.added = -1;
+        return r;
+    }
+    bool changed = false;
+    for (size_t i = 1; i < rows.size(); ++i) {
+        auto& row = rows[i];
+        auto cell = [&](int c) -> std::string { return c >= 0 && c < (int)row.size() ? row[c] : std::string(); };
+        std::string url = cell(cUrl);
+        // Bitwarden may list several addresses ("a,b"): the first. A bare host gets https://.
+        if (const size_t comma = url.find(','); comma != std::string::npos) url.resize(comma);
+        if (!url.empty() && url.find("://") == std::string::npos) url = "https://" + url;
+        const std::string origin = OriginOfUrl(ToWide(url));
+        const std::wstring user = ToWide(cell(cUser)), pass = ToWide(cell(cPass));
+        if (origin.empty() || pass.empty() || (origin.rfind("https://", 0) != 0 && origin.rfind("http://", 0) != 0)) {
+            ++r.skipped;
+            continue;
+        }
+        if (SavedPassword* have = Find(origin, user)) {
+            if (have->password == pass) ++r.same; else ++r.kept;
+            continue;
+        }
+        SavedPassword p;
+        p.origin = origin;
+        p.username = user;
+        p.password = pass;
+        p.lastUsed = 0;
+        s_saved.push_back(std::move(p));
+        ++r.added;
+        changed = true;
+    }
+    for (auto& row : rows) for (auto& f : row) SecureZeroMemory(f.data(), f.size());
+    if (changed) Save();
+    Log("passwords: imported %d from a CSV (%d already saved, %d kept, %d skipped)", r.added, r.same, r.kept, r.skipped);
+    return r;
+}

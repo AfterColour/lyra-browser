@@ -26,6 +26,11 @@ std::vector<std::string> PasswordsNeverList();
 void PasswordsDelete(const std::string& origin, const std::wstring& username);
 void PasswordsRemoveNever(const std::string& origin);
 std::wstring PasswordsSiteName(const std::string& origin);
+// A passwords CSV exported from Chrome / Edge / Opera (name,url,username,password,...), Firefox
+// ("url","username","password",...) or Bitwarden (login_uri,login_username,login_password).
+// A sign-in already saved with another password keeps Lyra's. added = -1: not such a file.
+struct PasswordsImportResult { int added = 0, same = 0, kept = 0, skipped = 0; };
+PasswordsImportResult PasswordsImportCsv(const std::wstring& path);
 
 size_t PasswordsCountForUrl(const std::wstring& url);   // sign-ins saved for the page's site (the key in the address field)
 void PasswordsSiteMenu();            // the key: copy a saved sign-in, open the list

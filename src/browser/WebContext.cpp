@@ -67,12 +67,14 @@ void ApplyWebPrefs() {
     wchar_t mock[4] = {};
     if (GetEnvironmentVariableW(L"LYRA_MOCK_CAPTURE", mock, 4) && mock[0] == L'1') WKPreferencesSetMockCaptureDevicesEnabled(g_preferences, true);
 
-    // Canvas 2D follows the page tiles: both on the GPU (Skia on ANGLE in the GPU process), or both
-    // on the CPU with LYRA_DISABLE_GPU_RASTER=1. A GPU canvas under CPU-painted tiles would be
-    // read back from the GPU for every tile it covers, every frame.
-    wchar_t noGpuRaster[4] = {};
-    bool cpuRaster = GetEnvironmentVariableW(L"MYBROWSER_DISABLE_GPU_RASTER", noGpuRaster, 4) && noGpuRaster[0] == L'1';
-    WKPreferencesSetCanvasUsesAcceleratedDrawing(g_preferences, !cpuRaster);
+    // Canvas 2D is drawn by the CPU. A GPU canvas (Skia on ANGLE in the GPU process) never reached
+    // the GPU-painted page tiles: canvases stayed empty on screen - PDF pages (PDF.js draws them on
+    // canvases), charts, games - while a snapshot of the page showed them. MYBROWSER_GPU_CANVAS=1
+    // turns the GPU canvas back on (for working on that); it also needs the GPU-painted tiles.
+    wchar_t noGpuRaster[4] = {}, gpuCanvas[4] = {};
+    const bool cpuRaster = GetEnvironmentVariableW(L"MYBROWSER_DISABLE_GPU_RASTER", noGpuRaster, 4) && noGpuRaster[0] == L'1';
+    const bool wantGpuCanvas = GetEnvironmentVariableW(L"MYBROWSER_GPU_CANVAS", gpuCanvas, 4) && gpuCanvas[0] == L'1';
+    WKPreferencesSetCanvasUsesAcceleratedDrawing(g_preferences, wantGpuCanvas && !cpuRaster);
 
     // Animated mouse-wheel scrolling, as in other browsers (WebKit's Windows port has it off and
     // there is no C API for it; the preference key is the generated one).

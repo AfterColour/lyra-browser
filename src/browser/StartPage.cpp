@@ -18,6 +18,7 @@
 #include "ui/DownloadsPopup.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/Dialogs.h"
 #include "ui/settings/SettingsPages.h"     // kEngines
 #include "ui/settings/SettingsWindow.h"
 
@@ -383,6 +384,25 @@ static void HandleBookmarksCommand(unsigned long long tabId, const std::wstring&
         BookmarkRename(id, UrlDecode(QueryString(query, L"t")));
     } else if (verb == L"move") {
         BookmarkMove(QueryId(query, L"id"), QueryId(query, L"folder"), (int)QueryId(query, L"index"));
+    } else if (verb == L"export") {
+        // Save As, then the page says how many were written.
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wchar_t name[64];
+        swprintf_s(name, L"bookmarks_%04u_%02u_%02u.html", st.wYear, st.wMonth, st.wDay);
+        const std::wstring path = PickSaveFile(g_hWnd, Tr(L"Export bookmarks", L"Экспорт закладок"), name,
+                                               Tr(L"Bookmarks file (HTML)", L"Файл закладок (HTML)"), L"*.html;*.htm", L"html");
+        if (path.empty()) return;
+        const int n = BookmarkExportHtml(path);
+        int index = -1;
+        if (Tab* t = FindTab(tabId, &index)) LoadInTab(*t, BookmarksPageUrl() + L"&exported=" + std::to_wstring(n));
+    } else if (verb == L"import" && QueryString(query, L"from") == L"html") {
+        const std::wstring path = PickOpenFile(g_hWnd, Tr(L"Import bookmarks", L"Импорт закладок"),
+                                               Tr(L"Bookmarks file (HTML)", L"Файл закладок (HTML)"), L"*.html;*.htm");
+        if (path.empty()) return;
+        const int n = BookmarkImportHtml(path);
+        int index = -1;
+        if (Tab* t = FindTab(tabId, &index)) LoadInTab(*t, BookmarksPageUrl() + L"&imported=" + std::to_wstring(n));
     } else if (verb == L"import") {
         const int n = BookmarkImport(UrlDecode(QueryString(query, L"from")));
         // The page that asked shows how many came in.

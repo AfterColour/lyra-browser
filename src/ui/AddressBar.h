@@ -13,3 +13,4 @@ bool IsEditing();
 void PositionEdit();
 void ShowUrlEdit();
 LRESULT CALLBACK UrlEditProc(HWND h, UINT msg, WPARAM w, LPARAM l);
+void PasteAndGo();   // the clipboard's text into the field, and go (a search when it is not an address)

@@ -699,3 +699,244 @@ int BookmarkImport(const std::wstring& key) {
     Changed();
     return count;
 }
+
+// ----------------------------------------------------------------------------
+//  HTML file (Netscape bookmark format)
+// ----------------------------------------------------------------------------
+namespace {
+
+std::string HtmlEsc(const std::wstring& w) {
+    std::string s = ToUtf8(w), out;
+    for (char c : s) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        default: out += c;
+        }
+    }
+    return out;
+}
+
+std::wstring HtmlUnesc(const std::wstring& s) {
+    std::wstring out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != L'&') { out += s[i]; continue; }
+        const size_t semi = s.find(L';', i);
+        if (semi == std::wstring::npos || semi - i > 10) { out += s[i]; continue; }
+        const std::wstring e = s.substr(i + 1, semi - i - 1);
+        wchar_t c = 0;
+        if (e == L"amp") c = L'&';
+        else if (e == L"lt") c = L'<';
+        else if (e == L"gt") c = L'>';
+        else if (e == L"quot") c = L'"';
+        else if (e == L"apos") c = L'\'';
+        else if (e == L"nbsp") c = L' ';
+        else if (e.size() > 1 && e[0] == L'#') {
+            const unsigned long v = (e[1] == L'x' || e[1] == L'X') ? wcstoul(e.c_str() + 2, nullptr, 16) : wcstoul(e.c_str() + 1, nullptr, 10);
+            if (v > 0 && v < 0x10000) c = (wchar_t)v;
+            else if (v >= 0x10000 && v <= 0x10FFFF) {
+                out += (wchar_t)(0xD800 + ((v - 0x10000) >> 10));
+                out += (wchar_t)(0xDC00 + ((v - 0x10000) & 0x3FF));
+                i = semi;
+                continue;
+            }
+        }
+        if (!c) { out += s[i]; continue; }
+        out += c;
+        i = semi;
+    }
+    return out;
+}
+
+// The value of attribute `name` in the tag text `tag` (case-insensitive, quoted or not).
+std::wstring Attr(const std::wstring& tag, const wchar_t* name) {
+    const std::wstring low = Lower(tag), key = Lower(name);
+    size_t p = 0;
+    while ((p = low.find(key, p)) != std::wstring::npos) {
+        const bool start = p > 0 && (iswspace(low[p - 1]));
+        size_t q = p + key.size();
+        while (q < low.size() && iswspace(low[q])) ++q;
+        if (!start || q >= low.size() || low[q] != L'=') { p += key.size(); continue; }
+        ++q;
+        while (q < low.size() && iswspace(low[q])) ++q;
+        if (q >= tag.size()) return std::wstring();
+        if (tag[q] == L'"' || tag[q] == L'\'') {
+            const size_t e = tag.find(tag[q], q + 1);
+            return HtmlUnesc(tag.substr(q + 1, e == std::wstring::npos ? std::wstring::npos : e - q - 1));
+        }
+        size_t e = q;
+        while (e < tag.size() && !iswspace(tag[e]) && tag[e] != L'>') ++e;
+        return HtmlUnesc(tag.substr(q, e - q));
+    }
+    return std::wstring();
+}
+
+std::wstring Collapse(const std::wstring& s) {          // whitespace runs -> one space, trimmed
+    std::wstring out;
+    for (wchar_t c : s) {
+        if (iswspace(c)) { if (!out.empty() && out.back() != L' ') out += L' '; }
+        else out += c;
+    }
+    while (!out.empty() && out.back() == L' ') out.pop_back();
+    return out;
+}
+
+}  // namespace
+
+int BookmarkExportHtml(const std::wstring& path) {
+    BookmarksLoad();
+    int count = 0;
+    std::string out =
+        "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
+        "<!-- This is an automatically generated file.\n"
+        "     It will be read and overwritten.\n"
+        "     DO NOT EDIT! -->\n"
+        "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">\n"
+        "<TITLE>Bookmarks</TITLE>\n"
+        "<H1>Bookmarks</H1>\n"
+        "<DL><p>\n";
+    std::function<void(long long, int)> dump = [&](long long folder, int depth) {
+        const std::string pad((size_t)depth * 4, ' ');
+        for (const Bookmark& b : BookmarkChildren(folder)) {
+            const std::string date = std::to_string(b.added / 1000);
+            if (b.folder) {
+                out += pad + "<DT><H3 ADD_DATE=\"" + date + "\">" + HtmlEsc(b.title) + "</H3>\n";
+                out += pad + "<DL><p>\n";
+                dump(b.id, depth + 1);
+                out += pad + "</DL><p>\n";
+            } else {
+                out += pad + "<DT><A HREF=\"" + HtmlEsc(b.url) + "\" ADD_DATE=\"" + date + "\">" + HtmlEsc(b.title) + "</A>\n";
+                ++count;
+            }
+        }
+    };
+    // Favorites (the start page) as the toolbar folder, the way browsers show it; Bookmarks' contents at the top.
+    if (const Bookmark* fav = BookmarkGet(kFavoritesFolder)) {
+        out += "    <DT><H3 ADD_DATE=\"" + std::to_string(fav->added / 1000) + "\" PERSONAL_TOOLBAR_FOLDER=\"true\">" +
+               HtmlEsc(BookmarkFolderName(kFavoritesFolder)) + "</H3>\n    <DL><p>\n";
+        dump(kFavoritesFolder, 2);
+        out += "    </DL><p>\n";
+    }
+    dump(kBookmarksFolder, 1);
+    out += "</DL><p>\n";
+
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { Log("bookmarks: cannot write %ls", path.c_str()); return -1; }
+    DWORD wrote = 0;
+    const BOOL ok = WriteFile(f, out.data(), (DWORD)out.size(), &wrote, nullptr);
+    CloseHandle(f);
+    if (!ok || wrote != out.size()) return -1;
+    Log("bookmarks: exported %d to %ls", count, path.c_str());
+    return count;
+}
+
+int BookmarkImportHtml(const std::wstring& path) {
+    BookmarksLoad();
+    std::string data;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return -1;
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(f, &size);
+    data.resize((size_t)std::min<long long>(size.QuadPart, 64LL << 20));
+    DWORD read = 0;
+    if (!data.empty()) ReadFile(f, &data[0], (DWORD)data.size(), &read, nullptr);
+    CloseHandle(f);
+    data.resize(read);
+    if (data.size() >= 3 && (unsigned char)data[0] == 0xEF) data.erase(0, 3);
+    const std::wstring s = ToWide(data);
+    {
+        const std::wstring head = Lower(s.substr(0, 4096));
+        if (head.find(L"netscape-bookmark-file") == std::wstring::npos && head.find(L"<dl") == std::wstring::npos) return -1;
+    }
+
+    std::vector<std::wstring> known;
+    for (const Bookmark& b : s_items) if (!b.folder) known.push_back(Bare(b.url));
+    std::vector<Bookmark> added;
+    long long nextId = s_nextId;
+    Bookmark top;
+    top.id = nextId++;
+    top.parent = kBookmarksFolder;
+    top.folder = true;
+    {
+        std::wstring name = path.substr(path.find_last_of(L"\\/") + 1);
+        top.title = std::wstring(Tr(L"Imported from ", L"Импорт из ")) + name;
+    }
+    top.added = NowUnixMs();
+
+    // A folder heading (<H3>) opens the folder for the <DL> right after it; </DL> closes it.
+    std::vector<long long> stack;                  // the folders open now (the first <DL> is the top)
+    long long pendingFolder = 0;
+    std::vector<int> folderCount;                  // bookmarks inside each folder in `added` (by index), to drop empty ones
+    int count = 0;
+    size_t p = 0;
+    auto lowerAt = [&](size_t at, const wchar_t* word) {
+        const size_t n = wcslen(word);
+        return at + n <= s.size() && _wcsnicmp(s.c_str() + at, word, n) == 0;
+    };
+    while ((p = s.find(L'<', p)) != std::wstring::npos) {
+        const size_t e = s.find(L'>', p);
+        if (e == std::wstring::npos) break;
+        const std::wstring tag = s.substr(p, e - p + 1);
+        if (lowerAt(p, L"<dl")) {
+            if (stack.empty()) stack.push_back(top.id);
+            else stack.push_back(pendingFolder ? pendingFolder : stack.back());
+            pendingFolder = 0;
+        } else if (lowerAt(p, L"</dl")) {
+            if (!stack.empty()) stack.pop_back();
+        } else if (lowerAt(p, L"<h3")) {
+            const size_t close = Lower(s.substr(e + 1, 4096)).find(L"</h3");
+            std::wstring name = close == std::wstring::npos ? std::wstring() : Collapse(HtmlUnesc(s.substr(e + 1, close)));
+            if (!Attr(tag, L"PERSONAL_TOOLBAR_FOLDER").empty()) name = Tr(L"Bookmarks bar", L"Панель закладок");
+            Bookmark folder;
+            folder.id = nextId++;
+            folder.parent = stack.empty() ? top.id : stack.back();
+            folder.folder = true;
+            folder.title = name.empty() ? Tr(L"Folder", L"Папка") : name;
+            folder.added = NowUnixMs();
+            added.push_back(folder);
+            pendingFolder = folder.id;
+        } else if (lowerAt(p, L"<a ") || lowerAt(p, L"<a\t") || lowerAt(p, L"<a\n")) {
+            const std::wstring url = Attr(tag, L"HREF");
+            const size_t close = Lower(s.substr(e + 1, 8192)).find(L"</a");
+            std::wstring title = close == std::wstring::npos ? std::wstring() : Collapse(HtmlUnesc(s.substr(e + 1, close)));
+            if (url.empty() || url.size() > 4096 || _wcsnicmp(url.c_str(), L"javascript:", 11) == 0 ||
+                _wcsnicmp(url.c_str(), L"place:", 6) == 0) { p = e + 1; continue; }
+            const std::wstring bare = Bare(url);
+            if (std::find(known.begin(), known.end(), bare) != known.end()) { p = e + 1; continue; }
+            known.push_back(bare);
+            Bookmark b;
+            b.id = nextId++;
+            b.parent = stack.empty() ? top.id : stack.back();
+            b.url = Clean(url);
+            b.title = Clean(title);
+            if (b.title.empty()) b.title = HostOf(b.url);
+            const long long secs = _wtoi64(Attr(tag, L"ADD_DATE").c_str());
+            b.added = secs > 0 && secs < 32503680000LL ? secs * 1000 : NowUnixMs();
+            added.push_back(b);
+            ++count;
+        }
+        p = e + 1;
+    }
+    if (count == 0) return 0;
+    // Empty folders are left out (from the deepest up: a folder with only empty folders is empty too).
+    for (bool removed = true; removed;) {
+        removed = false;
+        for (size_t i = 0; i < added.size(); ++i) {
+            if (!added[i].folder) continue;
+            const long long id = added[i].id;
+            if (std::none_of(added.begin(), added.end(), [&](const Bookmark& b) { return b.parent == id; })) {
+                added.erase(added.begin() + i);
+                removed = true;
+                break;
+            }
+        }
+    }
+    s_nextId = nextId;
+    s_items.push_back(top);
+    s_items.insert(s_items.end(), added.begin(), added.end());
+    Log("bookmarks: imported %d from %ls", count, path.c_str());
+    Changed();
+    return count;
+}

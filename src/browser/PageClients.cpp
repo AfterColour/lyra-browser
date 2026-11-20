@@ -185,7 +185,9 @@ static void OnWebProcessDidTerminate(WKPageRef, WKProcessTerminationReason reaso
 }
 
 // lyra://... addresses are commands from Lyra's own pages (start page, welcome screen): they are
-// never loaded, the main window carries them out (browser/StartPage.cpp).
+// never loaded, the main window carries them out (browser/StartPage.cpp). Only a tab showing one of
+// those pages may give them: a web site could otherwise change settings or delete bookmarks.
+// (Typed into the address field they are carried out by NavigateActive.)
 static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKFramePolicyListenerRef listener,
                                     WKTypeRef, const void* ci) {
     std::wstring url;
@@ -199,7 +201,12 @@ static void OnDecidePolicyForAction(WKPageRef, WKNavigationActionRef action, WKF
     if (_wcsnicmp(url.c_str(), L"lyra:", 5) == 0) {
         WKFramePolicyListenerIgnore(listener);
         TabCtx* c = (TabCtx*)ci;
-        if (c && g_hWnd && !g_closing)
+        const Tab* t = c ? c->tab : nullptr;
+        if (!t || !(IsInternalPageUrl(t->url) || ReaderIsReaderUrl(t->url))) {
+            Log("lyra url from a web page ignored (tab#%llu)", c ? c->id : 0ULL);
+            return;
+        }
+        if (g_hWnd && !g_closing)
             PostMessageW(g_hWnd, WM_APP_LYRA_URL, (WPARAM)c->id, (LPARAM)new std::wstring(url));
         return;
     }
