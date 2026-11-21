@@ -53,6 +53,7 @@
 #include "app/Updater.h"
 #include "browser/Touchpad.h"
 #include "ui/SwipeNav.h"
+#include "browser/WebAuthn.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -919,6 +920,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_APP_SWIPE_PAINTED:
         SwipeNavPainted((unsigned long long)wParam);
+        return 0;
+    case WM_APP_WEBAUTHN:
+        WebAuthnDone(lParam);
         return 0;
     case WM_APP_PRINT:
         if (Tab* t = ActiveTab()) if (t->id == (unsigned long long)wParam && !g_closing) PrintActivePage();

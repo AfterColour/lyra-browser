@@ -49,6 +49,7 @@ constexpr UINT WM_APP_ADBLOCK      = WM_APP + 7;   // a filter list was converte
 constexpr UINT WM_APP_TAB_PAINTED  = WM_APP + 6;   // a switched-to tab has drawn; wParam tab id (TabTransition)
 constexpr UINT WM_APP_WALLPAPER    = WM_APP + 18;  // the picture of the day arrived: start pages show it
 constexpr UINT WM_APP_UPDATE       = WM_APP + 17;  // the update state changed (app/Updater.cpp)
+constexpr UINT WM_APP_WEBAUTHN     = WM_APP + 26;  // a passkey request finished; lParam see browser/WebAuthn.cpp
 constexpr UINT WM_APP_SWIPE_PAINTED = WM_APP + 25; // swiping: the new page has drawn under the picture; wParam tab id (ui/SwipeNav)
 constexpr UINT WM_APP_PROXY        = WM_APP + 24;  // the Windows proxy setting changed; lParam see browser/SystemProxy.cpp
 constexpr UINT WM_APP_PREVIEWS     = WM_APP + 23;  // small copies of pictures are ready (ui/Previews.cpp)

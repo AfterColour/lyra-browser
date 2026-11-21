@@ -20,6 +20,7 @@
 #include "browser/AdBlock.h"
 #include "browser/MediaControls.h"
 #include "browser/Passwords.h"
+#include "browser/WebAuthn.h"
 #include "browser/PictureInPicture.h"
 #include "browser/Reader.h"
 #include "browser/Translate.h"
@@ -175,7 +176,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     AdBlockInit();                                     // compiled filter lists; updates them in the background
     ExtensionsInit();                                  // installed extensions: their content scripts
     MediaControlsInit();                               // media keys, Windows' media flyout
-    PasswordsInit();                                   // saved passwords: offer to save, fill in
+    PasswordsInit();
+    WebAuthnInit();                                   // passkeys and security keys (Windows WebAuthn)                                   // saved passwords: offer to save, fill in
     PipInit();                                         // picture-in-picture
     TabSleepInit();                                    // sleeping tabs (typed-text check)
     WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck);   // spelling (Windows dictionaries)
@@ -213,6 +215,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     ExtensionsShutdown();                // background pages before the WebKit context goes
     Log("message loop ended; releasing WebKit preferences/context");
     MediaControlsShutdown();
+    WebAuthnShutdown();
     PasswordsShutdown();
     AdBlockShutdown();
     PermissionsShutdown();
