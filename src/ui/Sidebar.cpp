@@ -501,13 +501,15 @@ WKPageRef OnWebCreatePage(WKPageRef, WKPageConfigurationRef conf, WKNavigationAc
     return t ? (WKPageRef)WKRetain(t->page) : nullptr;
 }
 
+void InvalHost();
+
 void OnWebFinish(WKPageRef page, WKNavigationRef, WKTypeRef, const void*) {
     for (auto& w : s_web) {
         if (w->page != page || w->named) continue;
         if (WKStringRef ts = WKPageCopyTitle(page)) {
             std::wstring title = WKStr(ts);
             WKRelease(ts);
-            if (!title.empty() && title != w->title && title.size() < 80) { w->title = title; Save(); InvalidateChrome(); }
+            if (!title.empty() && title != w->title && title.size() < 80) { w->title = title; Save(); InvalidateChrome(); InvalHost(); }
         }
     }
 }
@@ -675,7 +677,12 @@ float AutoEase() {
     return 1.f - (1.f - t) * (1.f - t) * (1.f - t);
 }
 
-void InvalHost() { if (s_host) InvalidateRect(s_host, nullptr, FALSE); }
+// The host's picture is kept between paints: while the auto-hide strip slides it does not change,
+// and drawing it again (icons, text: 1-2 ms) on every frame of the slide took a third of a
+// refresh at 240 Hz. Redrawn when something it shows changed (InvalHost, or the slide's own
+// state: the panel's offset, the header fading, the highlight gliding).
+static bool s_hostPicDirty = true;
+void InvalHost() { s_hostPicDirty = true; if (s_host) InvalidateRect(s_host, nullptr, FALSE); }
 void InvalStrip() { if (Mode() == kAutoHide) InvalHost(); else InvalRect(s_strip); }
 
 // What is at (x, y), client coordinates of the main window; the strip, the panel's page-side edge
@@ -797,9 +804,63 @@ POINT HostToMain(HWND h, LPARAM lp) {
 LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_PAINT: {
+        // The pieces that need painting (the bounding box of a slide's new column and the header
+        // band is most of the panel).
+        HRGN rgn = CreateRectRgn(0, 0, 0, 0);
+        const int rgnKind = GetUpdateRgn(h, rgn, FALSE);
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
-        PaintBuffered(dc, ps.rcPaint, true, [](Graphics& g) { PaintHost(g); });
+        std::vector<RECT> pieces;
+        if (rgnKind == COMPLEXREGION) {
+            const DWORD size = GetRegionData(rgn, 0, nullptr);
+            std::vector<BYTE> buf(size);
+            auto* rd = (RGNDATA*)buf.data();
+            if (size && GetRegionData(rgn, size, rd) && rd->rdh.nCount <= 16)
+                pieces.assign((const RECT*)rd->Buffer, (const RECT*)rd->Buffer + rd->rdh.nCount);
+        }
+        DeleteObject(rgn);
+        if (pieces.empty()) pieces.push_back(ps.rcPaint);
+        static HDC s_picDC = nullptr;
+        static HBITMAP s_picBmp = nullptr;
+        static HGDIOBJ s_picOld = nullptr;
+        static int s_picW = 0, s_picH = 0;
+        static float s_picKey[12] = {};
+        static bool s_picWhole = false;
+        RECT cr;
+        GetClientRect(h, &cr);
+        // What the picture shows. (The strip's highlight is in the host only with auto-hide; the
+        // panel's slide only while a panel is there.)
+        const bool autoHide = Mode() == kAutoHide, panel = s_panel.Width > 0 && s_open >= 0;
+        const float key[12] = { s_hostRect.X, s_hostRect.Y, panel ? (float)PanelOff() : 0.f, panel ? RevealEase() : 0.f,
+                                autoHide ? s_markY : 0.f, autoHide ? s_markA : 0.f,
+                                (float)s_hKind, (float)s_hIdx, (float)s_dKind, (float)s_dIdx, (float)s_open, (float)s_closing };
+        if (!s_picDC || s_picW != cr.right || s_picH != cr.bottom) {
+            if (s_picDC) { SelectObject(s_picDC, s_picOld); DeleteObject(s_picBmp); DeleteDC(s_picDC); }
+            s_picDC = CreateCompatibleDC(dc);
+            s_picBmp = CreateCompatibleBitmap(dc, std::max(1L, cr.right), std::max(1L, cr.bottom));
+            s_picOld = SelectObject(s_picDC, s_picBmp);
+            s_picW = cr.right;
+            s_picH = cr.bottom;
+            s_hostPicDirty = true;
+        }
+        // The kept picture is used while it shows the current state. While only the panel's slide
+        // changes it (again next frame), the pieces are drawn by themselves: drawing the whole
+        // panel on every frame took 3-4 ms.
+        const bool current = !s_hostPicDirty && s_picWhole && memcmp(key, s_picKey, sizeof key) == 0;
+        const bool panelSlide = !current && !s_hostPicDirty && s_picWhole &&
+                                memcmp(key, s_picKey, 2 * sizeof(float)) == 0 && memcmp(key + 4, s_picKey + 4, 8 * sizeof(float)) == 0;
+        if (panelSlide) {
+            for (const RECT& r : pieces) PaintBuffered(dc, r, true, [](Graphics& g) { PaintHost(g); });
+        } else {
+            if (!current) {
+                PaintBuffered(s_picDC, cr, true, [](Graphics& g) { PaintHost(g); });
+                memcpy(s_picKey, key, sizeof key);
+                s_hostPicDirty = false;
+                s_picWhole = true;
+            }
+            for (const RECT& r : pieces)
+                BitBlt(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, s_picDC, r.left, r.top, SRCCOPY);
+        }
         EndPaint(h, &ps);
         return 0;
     }
@@ -1217,6 +1278,8 @@ SideHit SidebarHitTest(float x, float y, int& index) {      // the main window: 
 
 void SidebarPaint(Graphics& g, bool transparent) {
     if (s_strip.Width <= 0) return;
+    RectF vis;                                             // (a piece of the window elsewhere: nothing here)
+    if (g.GetVisibleClipBounds(&vis) == Ok && !vis.IntersectsWith(s_strip) && !(s_panel.Width > 0 && vis.IntersectsWith(s_panel))) return;
     if (Mode() == kDocked && s_panel.Width > 0) {          // under the panel's window (shows while it slides)
         SolidBrush page(PageColor());
         g.FillRectangle(&page, s_panel);
@@ -1286,7 +1349,21 @@ void SidebarPositionViews() {
     const int autoOff = mode == kAutoHide ? (int)std::lround((1.f - AutoEase()) * (hw + S(2))) : 0;
     const int hx = (int)hr.X + (s_left ? -autoOff : autoOff);
     // (It is painted right away on every frame of a slide, below: copied bits are its last frame.)
-    SetWindowPos(s_host, HWND_TOP, hx, (int)hr.Y, hw, hh, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    // (Already shown and on top: only moved. Raising it again on every frame made Windows work out
+    // the page's visible part anew each time; SidebarRaise keeps it above a newly shown tab.)
+    {
+        RECT wr = {};
+        const bool shownAlready = IsWindowVisible(s_host) && GetWindow(s_host, GW_HWNDPREV) == nullptr;
+        UINT flags = SWP_NOACTIVATE;
+        if (shownAlready) {
+            GetWindowRect(s_host, &wr);
+            flags |= SWP_NOZORDER;
+            if (wr.right - wr.left == hw && wr.bottom - wr.top == hh) flags |= SWP_NOSIZE;
+        } else {
+            flags |= SWP_SHOWWINDOW;
+        }
+        SetWindowPos(s_host, HWND_TOP, hx, (int)hr.Y, hw, hh, flags);
+    }
     // While the panel or the auto-hide strip slides, its view stays hidden and the host shows the
     // panel's color: a moved or clipped view lost its picture (black until the page drew again),
     // and keeping it filled on every frame took most of a frame. It appears when the slide ends.
@@ -1323,11 +1400,35 @@ void SidebarPositionViews() {
     int rl = 0, rr = hw;
     if (off > 0) { if (s_left) rr = std::min(rr, px + pw - off); else rl = std::max(rl, px + off); }
     if (mode == kAutoHide && s_left) rl = std::max(rl, (int)s_strip.X - hx);
+    // The host's visible part changes without redrawing all of it (with a redraw each frame of
+    // the panel's slide repainted the whole panel): what it newly shows is painted by the host,
+    // what it stopped covering by the main window under it (the page: `uncovered`, below).
+    static int s_rgnL = 0, s_rgnR = 0, s_rgnW = -1, s_rgnH = -1;
     HRGN cur = CreateRectRgn(0, 0, 0, 0);
     const bool clipped = GetWindowRgn(s_host, cur) != ERROR;
     DeleteObject(cur);
-    if (rl > 0 || rr < hw) SetWindowRgn(s_host, CreateRectRgn(rl, 0, std::max(rl, rr), hh), TRUE);
-    else if (clipped) SetWindowRgn(s_host, nullptr, TRUE);
+    const bool clip = rl > 0 || rr < hw;
+    if (clip || clipped) {
+        const int nl = clip ? rl : 0, nr = clip ? std::max(rl, rr) : hw;
+        const int ol = clipped ? s_rgnL : 0, orr = clipped ? s_rgnR : hw;
+        const bool known = hw == s_rgnW && hh == s_rgnH;
+        if (!known || nl != ol || nr != orr || clip != clipped) {
+            SetWindowRgn(s_host, clip ? CreateRectRgn(nl, 0, nr, hh) : nullptr, !known);
+            if (known) {
+                auto changed = [&](int a, int b) {
+                    if (a == b) return;
+                    RECT r = { std::min(a, b), 0, std::max(a, b), hh };
+                    InvalidateRect(s_host, &r, FALSE);
+                    OffsetRect(&r, hx, (int)hr.Y);
+                    InvalidateRect(g_hWnd, &r, FALSE);
+                };
+                changed(ol, nl);
+                changed(orr, nr);
+            }
+        }
+        s_rgnL = nl; s_rgnR = nr;
+    }
+    s_rgnW = hw; s_rgnH = hh;
     uncovered(RECT { hx + rl, (LONG)hr.Y, hx + std::max(rl, rr), (LONG)hr.Y + hh });
     static bool s_wasSliding = false;
     if (sliding || s_wasSliding) {

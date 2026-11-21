@@ -36,6 +36,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "app/Updater.h"
+#include <intrin.h>
 
 Layout g_L;
 Hit g_hover, g_down;
@@ -72,8 +73,21 @@ ChromeDims CurrentDims() {
     return kDims[std::max(0, std::min(2, g_prefs.density))];
 }
 
+// The sidebar's strip and header only while the pointer is (or just was) on them: chrome
+// animations repaint every frame, and repainting a column of the window each time kept the main
+// thread busy (layout changes and site icons repaint it through SidebarInvalidate).
+static void InvalidateSideIfPointed() {
+    auto onSide = [](const Hit& h) { return h.kind == Hit::SideItem || h.kind == Hit::SideButton || h.kind == Hit::SideResize; };
+    static bool s_sideWas = false;
+    const bool sideNow = onSide(g_hover) || onSide(g_down);
+    if (sideNow || s_sideWas) SidebarInvalidate();
+    s_sideWas = sideNow;
+}
+
 void InvalidateChrome() {
     if (!g_hWnd) return;
+    static const bool rectLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_PAINT_RECTS", v, 4) && v[0] == L'1'; }();
+    if (rectLog) Log("invalidate chrome from +%llx", (unsigned long long)((char*)_ReturnAddress() - (char*)GetModuleHandleW(nullptr)));
     RECT top = { 0, 0, g_clientW, (LONG)std::ceil(g_L.chromeH) };
     InvalidateRect(g_hWnd, &top, FALSE);
     if (g_L.sideW > 0) {
@@ -82,14 +96,57 @@ void InvalidateChrome() {
         RECT side = { 0, top.bottom, (LONG)std::ceil(g_L.sideW), cr.bottom };
         InvalidateRect(g_hWnd, &side, FALSE);
     }
-    // The sidebar's strip and header only while the pointer is (or just was) on them: chrome
-    // animations call this every frame, and repainting a column of the window each time kept
-    // the main thread busy (layout changes and site icons repaint it through SidebarInvalidate).
-    auto onSide = [](const Hit& h) { return h.kind == Hit::SideItem || h.kind == Hit::SideButton || h.kind == Hit::SideResize; };
-    static bool s_sideWas = false;
-    const bool sideNow = onSide(g_hover) || onSide(g_down);
-    if (sideNow || s_sideWas) SidebarInvalidate();
-    s_sideWas = sideNow;
+    InvalidateSideIfPointed();
+}
+
+// ----------------------------------------------------------------------------
+//  Repainting only what changed. Painting the whole toolbar took 2-6 ms at 2560 px (GDI+ text,
+//  icons): most of a refresh at 240 Hz, and every animation frame did it - also the sidebar
+//  sliding, where nothing in the toolbar moves. Animation steps and hover changes collect the
+//  rectangles they change here; WM_PAINT paints each one (MainWindow: up to 16 pieces).
+// ----------------------------------------------------------------------------
+static bool s_dirtyAll = false;
+static std::vector<RectF> s_dirty;
+
+static void DirtyRect(RectF r, float grow = 0.f) {
+    if (r.Width <= 0.f || r.Height <= 0.f) return;
+    if (grow > 0.f) r.Inflate(grow, grow);
+    s_dirty.push_back(r);
+}
+
+static void DirtyAll() { s_dirtyAll = true; }
+static void FlushDirty();
+
+void InvalidateChromeExtButtons() {
+    if (!g_hWnd) return;
+    if (g_L.ext.empty()) { InvalidateChrome(); return; }
+    for (const RectF& r : g_L.ext) DirtyRect(r, S(2));
+    FlushDirty();
+}
+
+// Pieces painted with fast blending while something moved (Mica, see PaintChrome).
+static HRGN s_fastRgn = nullptr;
+
+void ChromeRepaintFastPieces() {
+    if (!g_hWnd || !s_fastRgn) return;
+    RECT box;
+    if (GetRgnBox(s_fastRgn, &box) != NULLREGION) InvalidateRgn(g_hWnd, s_fastRgn, FALSE);
+    SetRectRgn(s_fastRgn, 0, 0, 0, 0);
+}
+
+static void FlushDirty() {
+    if (!g_hWnd) { s_dirty.clear(); s_dirtyAll = false; return; }
+    if (s_dirtyAll) {
+        InvalidateChrome();
+    } else {
+        for (const RectF& r : s_dirty) {
+            RECT rc = { (LONG)std::floor(r.X), (LONG)std::floor(r.Y), (LONG)std::ceil(r.GetRight()), (LONG)std::ceil(r.GetBottom()) };
+            InvalidateRect(g_hWnd, &rc, FALSE);
+        }
+        InvalidateSideIfPointed();
+    }
+    s_dirty.clear();
+    s_dirtyAll = false;
 }
 
 // ----------------------------------------------------------------------------
@@ -532,8 +589,12 @@ float TabStripBottom() {
 // ----------------------------------------------------------------------------
 //  Hover fades
 // ----------------------------------------------------------------------------
+static void DirtyHit(const Hit& h);
+
 void SetHover(const Hit& h) {
     if (h == g_hover) return;
+    DirtyHit(g_hover);                                   // the old and the new hover look
+    DirtyHit(h);
     g_hover = h;
     const bool onTab = h.kind == Hit::TabBody || h.kind == Hit::TabClose || h.kind == Hit::TabAudio;
     TabHoverCardHover(onTab ? h.index : -1);
@@ -543,7 +604,7 @@ void SetHover(const Hit& h) {
         if (!found) { HoverFade f; f.hit = h; s_fades.push_back(f); }
     }
     if (AnimHoverEnabled()) AnimRequest();
-    InvalidateChrome();
+    FlushDirty();
 }
 
 // 0..1: how strongly the hover highlight of `h` is shown.
@@ -625,11 +686,37 @@ static bool PageLoadingShown() {
     return t && (t->loading || t->fade > 0.01f);
 }
 
+// The part of the address field the loading line (or the Safari-like fill) draws in.
+static RectF LoadingBand() {
+    const RectF& pill = g_L.pill;
+    if (g_prefs.loadIndicator == 1) return RectF(pill.X - 1, pill.Y - 1, pill.Width + 2, pill.Height + 2);
+    const float glowH = std::floor(S(7));
+    return RectF(pill.X - 1, pill.GetBottom() - glowH - 1, pill.Width + 2, glowH + 2);
+}
+
+// The downloads button with room for the ring and the bouncing arrow of the start animation.
+static RectF DownloadsAnimRect() {
+    RectF r = g_L.downloads;
+    if (r.Width <= 0) return r;
+    const float grow = r.Width * 0.5f + S(4);
+    r.Inflate(grow, grow);
+    return r;
+}
+
+static bool SameRect(const RectF& a, const RectF& b) {
+    return a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height;
+}
+
 bool ChromeAnimStep(float dt) {
     bool moving = false;
+    // Parts that move by themselves are repainted while they move and once more after (the
+    // frame that takes the ring / light away).
+    static std::vector<RectF> s_selfPrev;
+    std::vector<RectF> self;
     // The active tab's loading line follows its progress and fades out on the frame clock (each
     // refresh of the display; the other tabs' on the 30 ms UI timer).
     if (g_prefs.animations && !g_tabOp) if (Tab* t = ActiveTab()) {
+        const float p0 = t->progress, f0 = t->fade;
         if (t->loading && t->page) {
             const float target = std::min(0.92f, std::max(0.08f, (float)WKPageGetEstimatedProgress(t->page)));
             if (t->progress < target - 0.001f) { t->progress += (target - t->progress) * (1.f - std::pow(0.75f, dt / 0.03f)); moving = true; }
@@ -638,54 +725,74 @@ bool ChromeAnimStep(float dt) {
             t->fade = std::max(0.f, t->fade - dt * (0.07f / 0.03f));
             moving = true;
         }
+        if (t->progress != p0 || t->fade != f0) DirtyRect(LoadingBand());
     }
     // Things that move by themselves: the download start animation, the "size unknown" bar on
     // the downloads button and the running light of the loading line.
-    if (DownloadAnimT() >= 0) moving = true;
-    if (g_prefs.animations && DownloadsRunning() > 0 && DownloadsProgress() < 0) moving = true;
-    if (g_prefs.animations && g_prefs.loadIndicator == 0 && PageLoadingShown()) moving = true;
+    if (DownloadAnimT() >= 0) { moving = true; self.push_back(DownloadsAnimRect()); }
+    if (g_prefs.animations && DownloadsRunning() > 0 && DownloadsProgress() < 0) { moving = true; self.push_back(g_L.downloads); }
+    if (g_prefs.animations && g_prefs.loadIndicator == 0 && PageLoadingShown()) { moving = true; self.push_back(LoadingBand()); }
+    for (const RectF& r : self) DirtyRect(r, 1.f);
+    for (const RectF& r : s_selfPrev) DirtyRect(r, 1.f);
+    s_selfPrev.swap(self);
 
     // Tabs
     if (g_tabOp) {
         moving = true;                                   // a tab is being created/closed: next frame
+        DirtyAll();
     } else if (s_haveCur) {
         const float k = AnimTabsEnabled() ? AnimFactor(dt, kTabTauMs) : 1.f;
         const float k2 = k;
+        bool moved = false;
+        // A moving tab: where it was and where it is now (with the group line under it and the
+        // drop ring around it).
+        auto step = [&](RectF& cur, const RectF& to, float kk) {
+            const RectF was = cur;
+            cur = Near(cur, to) ? to : Lerp(cur, to, kk);
+            if (!Near(cur, to)) moving = true;
+            if (!SameRect(was, cur)) {
+                moved = true;
+                DirtyRect(was, S(6));
+                DirtyRect(cur, S(6));
+            }
+        };
         for (size_t i = 0; i < g_tabs.size() && i < s_target.tabs.size(); ++i) {
             auto it = s_tabCur.find(g_tabs[i]->id);
             if (it == s_tabCur.end()) continue;
-            const RectF& to = s_target.tabs[i];
-            it->second = Near(it->second, to) ? to : Lerp(it->second, to, k);
-            if (!Near(it->second, to)) moving = true;
+            step(it->second, s_target.tabs[i], k);
         }
         for (size_t k = 0; k < s_target.groups.size(); ++k) {
             auto it = s_groupCur.find(s_target.groupIds[k]);
             if (it == s_groupCur.end()) continue;
-            const RectF& to = s_target.groups[k];
-            it->second = Near(it->second, to) ? to : Lerp(it->second, to, k2);
-            if (!Near(it->second, to)) moving = true;
+            step(it->second, s_target.groups[k], k2);
         }
-        if (s_target.mode != kLayoutVertical) {
-            s_newTabCur = Near(s_newTabCur, s_target.newTab) ? s_target.newTab : Lerp(s_newTabCur, s_target.newTab, k);
-            if (!Near(s_newTabCur, s_target.newTab)) moving = true;
-        }
+        if (s_target.mode != kLayoutVertical) step(s_newTabCur, s_target.newTab, k);
+        const RectF pillWas = g_L.pill;
         ApplyCurrent();
-        if (IsEditing()) PositionEdit();
+        if (moved) {
+            // Group lines run from the label to the group's last tab; the address field follows
+            // the active tab in the compact layout.
+            for (const RectF& gr : g_L.groups) DirtyRect(gr, S(6));
+            if (!SameRect(pillWas, g_L.pill)) { DirtyRect(pillWas, S(2)); DirtyRect(g_L.pill, S(2)); }
+            if (IsEditing()) PositionEdit();
+        }
     }
 
     // Hover fades
     const float kh = AnimHoverEnabled() ? AnimFactor(dt, kHoverTauMs) : 1.f;
     for (auto& f : s_fades) {
+        const float a0 = f.a;
         const float target = (g_hover == f.hit) ? 1.f : 0.f;
         f.a += (target - f.a) * kh;
         if (std::fabs(target - f.a) < 0.01f) f.a = target;
         else moving = true;
+        if (f.a != a0) DirtyHit(f.hit);
     }
     s_fades.erase(std::remove_if(s_fades.begin(), s_fades.end(),
                                  [](const HoverFade& f) { return f.a <= 0.f && !(g_hover == f.hit); }),
                   s_fades.end());
 
-    InvalidateChrome();
+    FlushDirty();
     return moving;
 }
 
@@ -875,6 +982,48 @@ Hit HitTest(int px, int py) {
     return MakeHit(Hit::None);
 }
 
+// Where the hover / pressed look of `h` is drawn. False: not known here (the whole chrome
+// repaints). An empty rectangle: nothing in the chrome (the sidebar repaints its own parts).
+static bool HitDirtyRect(const Hit& h, RectF* out) {
+    const Layout& L = g_L;
+    *out = RectF();
+    const int n = (int)std::min(L.tabs.size(), g_tabs.size());
+    switch (h.kind) {
+    case Hit::None: case Hit::SideItem: case Hit::SideButton: case Hit::SideResize: return true;
+    case Hit::Back:      *out = L.back; return true;
+    case Hit::Forward:   *out = L.fwd; return true;
+    case Hit::More:      *out = L.more; return true;
+    case Hit::Downloads: *out = L.downloads; return true;
+    case Hit::NewTab:    *out = L.newTab; return true;
+    case Hit::CapMin:    *out = L.capMin; return true;
+    case Hit::CapMax:    *out = L.capMax; return true;
+    case Hit::CapClose:  *out = L.capClose; return true;
+    case Hit::Reload:    *out = L.reloadInPill ? L.pill : L.reload; return true;
+    // The address field brightens as a whole while any of its parts is hovered, and the compact
+    // layout's active tab shows its close button in it.
+    case Hit::Pill: case Hit::Star: case Hit::Key: case Hit::Reader: case Hit::Translate: case Hit::Zoom:
+        *out = L.pill; return true;
+    case Hit::TabBody: case Hit::TabClose: case Hit::TabAudio:
+        if (h.index < 0 || h.index >= n) return false;
+        *out = IsCompactActive(h.index) ? L.pill : L.tabs[h.index];
+        return out->Width >= 1.f && out->Height >= 1.f;   // (a split view's right half: drawn with the left)
+    case Hit::ExtAction:
+        if (h.index < 0 || h.index >= (int)L.ext.size()) return false;
+        *out = L.ext[h.index]; return true;
+    case Hit::GroupLabel:
+        if (h.index < 0 || h.index >= (int)L.groups.size()) return false;
+        *out = L.groups[h.index]; return true;
+    case Hit::BookmarkItem: *out = L.bmBar; return true;
+    }
+    return false;
+}
+
+static void DirtyHit(const Hit& h) {
+    RectF r;
+    if (!HitDirtyRect(h, &r)) DirtyAll();
+    else DirtyRect(r, S(2));
+}
+
 // ----------------------------------------------------------------------------
 //  GDI+ resources
 // ----------------------------------------------------------------------------
@@ -955,6 +1104,14 @@ static void DrawPrivateBadge(Graphics& g, const RectF& r) {
     DrawGlyph(g, L"\uED1A", r, Color(255, 255, 255, 255), g_fCaption.get());
 }
 
+// The piece of the window being painted (PaintChrome): parts outside it are skipped. GDI+ would
+// clip them anyway, but laying out their text and icons cost most of the time of a small piece.
+static RectF s_paintClip(-1e6f, -1e6f, 2e6f, 2e6f);
+static bool InPaint(const RectF& r, float grow = 0.f) {
+    return r.X - grow < s_paintClip.GetRight() && r.GetRight() + grow > s_paintClip.X &&
+           r.Y - grow < s_paintClip.GetBottom() && r.GetBottom() + grow > s_paintClip.Y;
+}
+
 static void DrawChrome(Graphics& g, int w, int h) {
     const Theme& T = g_th;
     const Layout& L = g_L;
@@ -971,6 +1128,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         if (a > 0.f) FillRound(g, Faded(T.hover, a), r, rad);
     };
     auto toolButton = [&](const RectF& r, const wchar_t* glyph, bool enabled, Hit::Kind k, Font* f) {
+        if (!InPaint(r, 2.f)) return;
         if (enabled) hoverFill(r, MakeHit(k, -1), dwn(k, -1), S(6));
         DrawGlyph(g, glyph, r, enabled ? T.icon : T.iconDis, f);
     };
@@ -986,7 +1144,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
-        if (L.bmBar.Width > 0) {
+        if (L.bmBar.Width > 0 && InPaint(L.bmBar)) {
             int hoverIndex = g_hover.kind == Hit::BookmarkItem ? g_hover.index : -1000;
             const int pressIndex = (g_down.kind == Hit::BookmarkItem && g_hover == g_down) ? g_down.index : -1000;
             if (hoverIndex == -1) hoverIndex = -1000;      // (the empty part of the bar)
@@ -1018,6 +1176,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             { &L.capClose, Hit::CapClose, L"\uE8BB", true },
         };
         for (auto& c : caps) {
+            if (!InPaint(*c.r)) continue;
             const bool p = g_down == MakeHit(c.k, -1) && hov(c.k, -1);
             const float a = p ? 1.f : HoverAmount(MakeHit(c.k, -1));
             if (nativeCaps) {
@@ -1048,7 +1207,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         SolidBrush dot(g_th.accent);
         g.FillEllipse(&dot, L.more.GetRight() - S(7) - d / 2, L.more.Y + S(7) - d / 2, d, d);
     }
-    if (L.downloads.Width > 0) {
+    if (L.downloads.Width > 0 && InPaint(DownloadsAnimRect())) {
         // Downloads: the arrow, with a progress bar under it while something downloads; it
         // lights up in the accent colour for a moment when a download finishes.
         const RectF& r = L.downloads;
@@ -1088,6 +1247,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const std::vector<ExtensionButton> buttons = ExtensionButtons();
         for (size_t i = 0; i < L.ext.size() && i < buttons.size(); ++i) {
             const RectF& r = L.ext[i];
+            if (!InPaint(r, 4.f)) continue;
             const ExtensionButton& b = buttons[i];
             const Hit hit = MakeHit(Hit::ExtAction, (int)i);
             hoverFill(r, hit, dwn(Hit::ExtAction, (int)i) || b.open, S(6));
@@ -1152,6 +1312,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             endX = std::max(endX, tr.GetRight());
             endY = std::max(endY, tr.GetBottom());
         }
+        if (!InPaint(RectF(r.X, r.Y, std::max(r.Width, endX - r.X), std::max(r.Height, endY - r.Y)), S(6))) continue;
         const bool renaming = TabGroupEditingId() == grp->id;
         const std::wstring text = renaming ? std::wstring() : GroupLabelText(*grp);
         if (renaming) {                                  // the name field (ui: TabGroupStartRename)
@@ -1205,6 +1366,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         if (TabHiddenByGroup(i)) continue;               // (in a collapsed group)
         const RectF& r = L.tabs[i];
         if (r.Width < 1.f || r.Height < 1.f) continue;   // (the right half of a split view: drawn with the left)
+        if (!InPaint(r, S(8))) continue;                 // (not in the piece being painted)
         const Tab& tab = *g_tabs[i];
         if (TabDragGhostId() == tab.id && !(splitPair && (i == splitL || i == splitR))) {
             // Lifted by a drag (ui/TabDrag): an empty slot where it was.
@@ -1365,7 +1527,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
     // A tab that has just landed after a drag (ui/TabDrag): a soft ring spreads out of it and fades.
     for (int i = 0; i < n; ++i) {
         const RectF& r = L.tabs[i];
-        if (r.Width < 1.f || r.Height < 1.f) continue;
+        if (r.Width < 1.f || r.Height < 1.f || !InPaint(r, S(8))) continue;
         float t = TabLandPulse(g_tabs[i]->id);
         if (t < 0.f && splitPair && i == splitL) t = TabLandPulse(g_tabs[splitR]->id);
         if (t < 0.f) continue;
@@ -1393,7 +1555,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
     }
 
     // Address field
-    {
+    if (InPaint(L.pill, S(3))) {
         const RectF& pill = L.pill;
         const float rad = S(7);
         float pillHover = HoverAmount(MakeHit(Hit::Pill, -1));
@@ -1508,6 +1670,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
             const float maxText = std::max(0.f, textR - textL);
             const float lockW = secure ? S(13) : 0.f, lockGap = secure ? S(4) : 0.f;
 
+            // (The address text's line: not in a piece along the field's bottom, the loading line.)
+            if (InPaint(RectF(textL, pill.Y + S(7), std::max(1.f, textR - textL), std::max(1.f, pill.Height - S(14))))) {
             StringFormat fmt(StringFormat::GenericTypographic());
             fmt.SetFormatFlags(fmt.GetFormatFlags() | StringFormatFlagsNoWrap);
             fmt.SetTrimming(StringTrimmingEllipsisCharacter);
@@ -1525,36 +1689,37 @@ static void DrawChrome(Graphics& g, int w, int h) {
             SolidBrush tb(placeholder ? T.text2 : T.text);
             g.DrawString(label.c_str(), -1, g_fText.get(),
                          RectF(x0 + lockW + lockGap, pill.Y, tw + 1.f, pill.Height), &fmt, &tb);
+            }
 
             if (L.reloadInPill)
                 toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, g_fIconSm.get());
-            if (star) {
+            if (star && InPaint(L.star)) {
                 const bool marked = IsBookmarkedCached(cur->url);
                 hoverFill(L.star, MakeHit(Hit::Star, -1), dwn(Hit::Star, -1) || BookmarkPopupVisible(), S(6));
                 DrawGlyph(g, marked ? L"\uE735" : L"\uE734", L.star, marked ? T.accent : T.icon, g_fIconSm.get());
             }
-            if (audioHere) {
+            if (audioHere && InPaint(AudioRect(g_active))) {
                 RectF a = AudioRect(g_active);
                 hoverFill(a, MakeHit(Hit::TabAudio, g_active), dwn(Hit::TabAudio, g_active), S(6));
                 DrawGlyph(g, g_tabs[g_active]->muted ? L"\uE74F" : L"\uE767", a, T.icon, g_fIconSm.get());
             }
-            if (keyHere) {
+            if (keyHere && InPaint(KeyRect())) {
                 const RectF k = KeyRect();
                 hoverFill(k, MakeHit(Hit::Key, -1), dwn(Hit::Key, -1), S(6));
                 DrawGlyph(g, L"\uE8D7", k, T.icon, g_fIconSm.get());
             }
-            if (readerHere) {
+            if (readerHere && InPaint(ReaderRect())) {
                 const RectF rr = ReaderRect();
                 const bool on = ReaderIsReaderUrl(cur->url);
                 hoverFill(rr, MakeHit(Hit::Reader, -1), dwn(Hit::Reader, -1), S(6));
                 DrawGlyph(g, L"\uE736", rr, on ? T.accent : T.icon, g_fIconSm.get());
             }
-            if (translateHere) {
+            if (translateHere && InPaint(TranslateRect())) {
                 const RectF tr = TranslateRect();
                 hoverFill(tr, MakeHit(Hit::Translate, -1), dwn(Hit::Translate, -1), S(6));
                 DrawGlyph(g, L"\uE8C1", tr, cur->translated ? T.accent : T.icon, g_fIconSm.get());
             }
-            if (zoomHere) {                              // "125%": a click goes back to the default
+            if (zoomHere && InPaint(ZoomRect())) {       // "125%": a click goes back to the default
                 const RectF zr = ZoomRect();
                 hoverFill(zr, MakeHit(Hit::Zoom, -1), dwn(Hit::Zoom, -1), S(6));
                 StringFormat zf(StringFormat::GenericTypographic());
@@ -1606,10 +1771,28 @@ void PaintChrome(HDC hdc, const RECT& rc) {
     QueryPerformanceCounter(&t0);
     // (Mica: blending without gamma correction while something moves - with it a frame took about
     // 3 ms, most of a refresh at 240 Hz; the still picture after the animation is painted with it.)
+    s_paintClip = RectF((REAL)rc.left, (REAL)rc.top, (REAL)(rc.right - rc.left), (REAL)(rc.bottom - rc.top));
+    const bool fast = AnimRunning();
+    static double s_drawMs = 0;
     PaintBuffered(hdc, rc, !s_paintTransparent, [&](Graphics& g) {
+        LARGE_INTEGER d0, d1, df;
+        QueryPerformanceCounter(&d0);
         g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         DrawChrome(g, cr.right, cr.bottom);
-    }, AnimRunning());
+        QueryPerformanceCounter(&d1);
+        QueryPerformanceFrequency(&df);
+        s_drawMs += (double)(d1.QuadPart - d0.QuadPart) * 1000.0 / (double)df.QuadPart;
+    }, fast);
+    if (fast && s_paintTransparent) {                    // painted again once nothing moves
+        if (!s_fastRgn) s_fastRgn = CreateRectRgn(0, 0, 0, 0);
+        HRGN piece = CreateRectRgnIndirect(&rc);
+        CombineRgn(s_fastRgn, s_fastRgn, piece, RGN_OR);
+        DeleteObject(piece);
+    }
+    s_paintClip = RectF(-1e6f, -1e6f, 2e6f, 2e6f);
+    // LYRA_PAINT_RECTS=1: each painted piece (tabs.log; for finding what repaints too much).
+    static const bool rectLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_PAINT_RECTS", v, 4) && v[0] == L'1'; }();
+    if (rectLog) Log("paint rect %ld,%ld %ldx%ld", rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
     // LYRA_ANIM_FPS=1: how long painting the chrome takes (tabs.log, about every second).
     static const bool timeLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_ANIM_FPS", v, 4) && v[0] == L'1'; }();
     if (timeLog) {
@@ -1624,8 +1807,8 @@ void PaintChrome(HDC hdc, const RECT& rc) {
         ++s_n; s_sum += ms; s_max = std::max(s_max, ms); s_px += (double)(rc.right - rc.left) * (rc.bottom - rc.top);
         const double span = (double)(t1.QuadPart - s_start.QuadPart) / (double)f.QuadPart;
         if (span >= 1.0) {
-            if (span < 1.5) Log("paint: %d/s, avg %.2f ms, max %.2f ms, avg %.0f kpx%s", (int)(s_n / span), s_sum / s_n, s_max, s_px / s_n / 1000.0, s_paintTransparent ? " (Mica)" : "");
-            s_start = t1; s_n = 0; s_sum = 0; s_max = 0; s_px = 0;
+            if (span < 1.5) Log("paint: %d/s, avg %.2f ms (drawing %.2f), max %.2f ms, avg %.0f kpx%s", (int)(s_n / span), s_sum / s_n, s_drawMs / s_n, s_max, s_px / s_n / 1000.0, s_paintTransparent ? " (Mica)" : "");
+            s_start = t1; s_n = 0; s_sum = 0; s_max = 0; s_px = 0; s_drawMs = 0;
         }
     }
 }

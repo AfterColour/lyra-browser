@@ -38,6 +38,10 @@
 #include "browser/Extensions.h"
 #include "app/Environment.h"
 #include "app/Log.h"
+#include <algorithm>
+#include <map>
+#include <string>
+#include <vector>
 #include "browser/TabManager.h"
 #include "browser/WebContext.h"
 #include "core/Constants.h"
@@ -206,11 +210,41 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     UpdaterInit();                       // installed copies look for updates (app/Updater.cpp)
     StallWatchStart();                   // notes in tabs.log where the window got stuck (app/StallWatch.cpp)
 
+    // LYRA_MSG_PROF=1 (developer): where the main thread's time goes, by window class and
+    // message, every 2 s in tabs.log.
+    static const bool msgProf = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_MSG_PROF", v, 4) && v[0] == L'1'; }();
+    struct MsgCost { double ms = 0, max = 0; int n = 0; };
+    std::map<std::pair<std::wstring, UINT>, MsgCost> costs;
+    LARGE_INTEGER qf, profStart = {};
+    QueryPerformanceFrequency(&qf);
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         if (HandleShortcut(msg)) continue;
         TranslateMessage(&msg);
+        if (!msgProf) { DispatchMessageW(&msg); continue; }
+        LARGE_INTEGER a, b;
+        QueryPerformanceCounter(&a);
         DispatchMessageW(&msg);
+        QueryPerformanceCounter(&b);
+        wchar_t cls[64] = L"(thread)";
+        if (msg.hwnd) GetClassNameW(msg.hwnd, cls, 64);
+        MsgCost& c = costs[{ cls, msg.message == WM_TIMER ? 0x10000u + (UINT)(msg.wParam & 0xFFFF) : msg.message }];
+        const double ms = (double)(b.QuadPart - a.QuadPart) * 1000.0 / (double)qf.QuadPart;
+        c.ms += ms; c.max = std::max(c.max, ms); ++c.n;
+        if (!profStart.QuadPart) profStart = b;
+        if (b.QuadPart - profStart.QuadPart > 2 * qf.QuadPart) {
+            std::vector<std::pair<double, std::string>> top;
+            for (auto& [k, v] : costs) {
+                char line[200];
+                snprintf(line, sizeof line, "%ls msg %s%04X: %d x, %.1f ms total, max %.1f", k.first.c_str(),
+                         k.second >= 0x10000 ? "timer " : "", k.second & 0xFFFF, v.n, v.ms, v.max);
+                top.push_back({ v.ms, line });
+            }
+            std::sort(top.rbegin(), top.rend());
+            for (size_t i = 0; i < top.size() && i < 8; ++i) Log("msgprof %s", top[i].second.c_str());
+            costs.clear();
+            profStart = b;
+        }
     }
 
     StallWatchStop();

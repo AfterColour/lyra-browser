@@ -53,6 +53,10 @@ struct Hit {
 extern Hit g_hover, g_down;
 
 void InvalidateChrome();
+// Only the extensions' buttons (a badge or an icon changed).
+void InvalidateChromeExtButtons();
+// After an animation: the pieces painted with fast blending (Mica) again, at full quality.
+void ChromeRepaintFastPieces();
 // Recomputes where everything goes. With `animate` (and tab animations on) tabs glide from
 // where they are to the new places; otherwise they jump there.
 void ComputeLayout(int clientW, bool animate = false);

@@ -2738,9 +2738,16 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
             const JsonValue* tab = d->get("tabId");
             const std::string key = what + (tab && tab->type == JsonValue::Number ? ":" + std::to_string((unsigned long long)tab->n) : std::string());
             const JsonValue* v = d->get("value");
-            if (!v || v->type == JsonValue::Null) a.values.erase(key);
-            else a.values[key] = v->raw;
-            InvalidateChrome();
+            bool changed;
+            if (!v || v->type == JsonValue::Null) changed = a.values.erase(key) > 0;
+            else {
+                auto it = a.values.find(key);
+                changed = it == a.values.end() || it->second != v->raw;
+                if (changed) a.values[key] = v->raw;
+            }
+            // (Blockers set their badge's count on every request they block: only a change repaints,
+            // and only the extensions' buttons.)
+            if (changed) InvalidateChromeExtButtons();
         }
         answer = "{\"value\":null}";
         return;

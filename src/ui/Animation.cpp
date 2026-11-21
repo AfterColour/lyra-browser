@@ -90,8 +90,28 @@ static void ClockThread() {
         bool waited = slow < 3 && vblank.Wait();
         if (waited && GetTickCount64() - t0 > 250) ++slow;   // vblanks not coming (display asleep): DwmFlush from now on
         if (!waited && FAILED(DwmFlush())) Sleep(7);          // no composition: ~144 Hz fallback
-        if (!s_posted.exchange(true) && g_hWnd)
-            PostMessageW(g_hWnd, WM_APP_ANIM_FRAME, 0, 0);
+        const bool posted = !s_posted.exchange(true) && g_hWnd;
+        if (posted) PostMessageW(g_hWnd, WM_APP_ANIM_FRAME, 0, 0);
+        // LYRA_ANIM_FPS=1: the clock itself - how often the waits return, how long the longest
+        // took, and how many ticks found the previous frame still waiting in the queue.
+        static const bool clockLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_ANIM_FPS", v, 4) && v[0] == L'1'; }();
+        if (clockLog) {
+            static LARGE_INTEGER s_t0 = {}, s_prev = {};
+            static int s_ticks = 0, s_skipped = 0;
+            static double s_maxGap = 0;
+            LARGE_INTEGER now, f;
+            QueryPerformanceCounter(&now);
+            QueryPerformanceFrequency(&f);
+            if (s_prev.QuadPart) s_maxGap = std::max(s_maxGap, (double)(now.QuadPart - s_prev.QuadPart) * 1000.0 / f.QuadPart);
+            s_prev = now;
+            if (!s_t0.QuadPart) s_t0 = now;
+            ++s_ticks;
+            if (!posted) ++s_skipped;
+            if (now.QuadPart - s_t0.QuadPart >= f.QuadPart) {
+                Log("anim clock: %d ticks/s (%s), longest %.1f ms, %d with the last frame still queued", s_ticks, waited ? "vblank" : "DwmFlush", s_maxGap, s_skipped);
+                s_t0 = now; s_ticks = 0; s_skipped = 0; s_maxGap = 0;
+            }
+        }
     }
 }
 
@@ -104,12 +124,32 @@ void AnimRequest() {
     s_wake.notify_one();
 }
 
+// One refresh of the display the window is on, in seconds (looked up again every few seconds:
+// the window may move to another display).
+static float DisplayFrameSeconds() {
+    static float s_dt = 1.f / 60.f;
+    static ULONGLONG s_at = 0;
+    if (!s_at || GetTickCount64() - s_at > 3000) {
+        s_at = GetTickCount64();
+        MONITORINFOEXW mi = {};
+        mi.cbSize = sizeof(mi);
+        DEVMODEW dm = {};
+        dm.dmSize = sizeof(dm);
+        if (g_hWnd && GetMonitorInfoW(MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST), &mi) &&
+            EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1)
+            s_dt = 1.f / (float)dm.dmDisplayFrequency;
+    }
+    return s_dt;
+}
+
 void AnimOnFrame() {
     s_posted = false;
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
-    float dt = 1.f / 120.f;
+    // The first frame after a pause: one refresh (1/120 s before - on a 240 Hz display the first
+    // step of every hover fade or slide was twice as long as the ones after it).
+    float dt = DisplayFrameSeconds();
     if (s_last.QuadPart) dt = (float)(now.QuadPart - s_last.QuadPart) / (float)freq.QuadPart;
     dt = std::max(0.f, std::min(dt, 0.05f));
     s_last = now;
@@ -156,8 +196,12 @@ void AnimOnFrame() {
             std::lock_guard<std::mutex> lock(s_lock);
             s_running = false;
         }
-        InvalidateChrome();                           // the still picture, at full quality
+        ChromeRepaintFastPieces();                    // the still picture, at full quality (Mica)
     }
+    // The pieces this frame changed, painted now: WM_PAINT comes only once the queue is empty,
+    // so with the pointer moving (or a page sending messages) frames went by unpainted - the
+    // chrome painted 90 times a second while the clock ran at 170-240.
+    if (g_hWnd) UpdateWindow(g_hWnd);
 }
 
 bool AnimRunning() {

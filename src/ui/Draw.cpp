@@ -85,36 +85,82 @@ std::unique_ptr<Font> MakeIconFont(float px) {
     return std::make_unique<Font>(family, px, FontStyleRegular, UnitPixel);
 }
 
+// The buffer the pieces are drawn in, kept between paints (main thread only): making a bitmap and
+// a DC for each piece of an animation frame was about a third of its time. Pieces bigger than
+// kKeepPx get a buffer of their own.
+namespace {
+constexpr int kKeepPx = 1 << 20;
+struct PaintBuffer {
+    HDC dc = nullptr;
+    HBITMAP bmp = nullptr;
+    HGDIOBJ old = nullptr;
+    void* bits = nullptr;
+    int w = 0, h = 0;
+    bool Make(HDC ref, int bw, int bh) {
+        Free();
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth = bw;
+        bi.bmiHeader.biHeight = -bh;               // top-down
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        bmp = CreateDIBSection(ref, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bmp || !bits) { if (bmp) DeleteObject(bmp); bmp = nullptr; bits = nullptr; return false; }
+        dc = CreateCompatibleDC(ref);
+        old = SelectObject(dc, bmp);
+        w = bw;
+        h = bh;
+        return true;
+    }
+    void Free() {
+        if (dc) { SelectObject(dc, old); DeleteDC(dc); }
+        if (bmp) DeleteObject(bmp);
+        dc = nullptr; bmp = nullptr; bits = nullptr; w = h = 0;
+    }
+};
+PaintBuffer s_kept;
+}
+
 void PaintBuffered(HDC hdc, const RECT& rc, bool opaque, const std::function<void(Graphics&)>& draw, bool fastBlend) {
     const int w = rc.right - rc.left, h = rc.bottom - rc.top;
     if (w <= 0 || h <= 0) return;
-    BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;                    // top-down
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP bmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bmp || !bits) { if (bmp) DeleteObject(bmp); return; }
-    HDC mem = CreateCompatibleDC(hdc);
-    HGDIOBJ old = SelectObject(mem, bmp);
+    PaintBuffer own;
+    PaintBuffer* buf = &own;
+    static int s_depth = 0;                            // (a paint inside a paint: its own buffer)
+    struct Depth { Depth() { ++s_depth; } ~Depth() { --s_depth; } } depth;
+    if ((long long)w * h <= kKeepPx && s_depth == 1) {
+        buf = &s_kept;
+        if (buf->w < w || buf->h < h) {                // grows to the largest piece seen (up to kKeepPx)
+            int bw = std::max(w, buf->w), bh = std::max(h, buf->h);
+            if ((long long)bw * bh > kKeepPx) { bw = w; bh = h; }
+            if (!buf->Make(hdc, bw, bh)) return;
+        }
+    } else if (!own.Make(hdc, w, h)) {
+        return;
+    }
+    const int stride = buf->w;                         // (pixels per row of the buffer)
+    DWORD* px = (DWORD*)buf->bits;
+    for (int y = 0; y < h; ++y) memset(px + (size_t)y * stride, 0, (size_t)w * 4);   // (as a new bitmap)
     if (opaque) {
-        Graphics g(mem);
-        g.TranslateTransform(-(REAL)rc.left, -(REAL)rc.top);
-        g.SetSmoothingMode(SmoothingModeHighQuality);
-        g.SetPixelOffsetMode(PixelOffsetModeHalf);
-        g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
-        draw(g);
+        {
+            Graphics g(buf->dc);
+            g.SetClip(Rect(0, 0, w, h));
+            g.TranslateTransform(-(REAL)rc.left, -(REAL)rc.top);
+            g.SetSmoothingMode(SmoothingModeHighQuality);
+            g.SetPixelOffsetMode(PixelOffsetModeHalf);
+            g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+            draw(g);
+        }
         GdiFlush();
         // GDI+ leaves alpha 0 where it fills through GDI; DWM would show those pixels as
         // see-through in the area that used to be the title bar.
-        DWORD* px = (DWORD*)bits;
-        for (size_t i = 0, n = (size_t)w * (size_t)h; i < n; ++i) px[i] |= 0xFF000000u;
+        for (int y = 0; y < h; ++y) {
+            DWORD* row = px + (size_t)y * stride;
+            for (int x = 0; x < w; ++x) row[x] |= 0xFF000000u;
+        }
     } else {
-        memset(bits, 0, (size_t)w * (size_t)h * 4);
-        Bitmap canvas(w, h, w * 4, PixelFormat32bppPARGB, (BYTE*)bits);
+        Bitmap canvas(w, h, stride * 4, PixelFormat32bppPARGB, (BYTE*)px);
         Graphics g(&canvas);
         g.TranslateTransform(-(REAL)rc.left, -(REAL)rc.top);
         g.SetSmoothingMode(SmoothingModeHighQuality);
@@ -124,8 +170,7 @@ void PaintBuffered(HDC hdc, const RECT& rc, bool opaque, const std::function<voi
         draw(g);
         g.Flush(FlushIntentionSync);
     }
-    BitBlt(hdc, rc.left, rc.top, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    BitBlt(hdc, rc.left, rc.top, w, h, buf->dc, 0, 0, SRCCOPY);
+    own.Free();
 }
+

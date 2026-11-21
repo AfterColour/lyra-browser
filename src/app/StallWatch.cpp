@@ -2,8 +2,12 @@
 #include "app/StallWatch.h"
 #include "app/Log.h"
 #include <psapi.h>
+#include <timeapi.h>
+#include <algorithm>
 #include <atomic>
+#include <map>
 #include <thread>
+#pragma comment(lib, "winmm.lib")
 
 namespace {
 
@@ -65,15 +69,17 @@ struct Sample {
 };
 
 // Stops the main thread just long enough to read where it is and copy the top of its stack.
+// Nothing may allocate while it is stopped: if it was stopped holding the heap's lock, this
+// thread would wait for it forever, and the window with it (the buffer is made before).
 Sample TakeSample() {
     Sample s;
-    if (SuspendThread(s_mainThread) == (DWORD)-1) return s;
+    s.stack.resize(kStackCopy);
+    if (SuspendThread(s_mainThread) == (DWORD)-1) { s.stack.clear(); return s; }
     CONTEXT c = {};
     c.ContextFlags = CONTEXT_CONTROL;
     if (GetThreadContext(s_mainThread, &c)) {
         s.rip = (uintptr_t)c.Rip;
         s.rsp = (uintptr_t)c.Rsp;
-        s.stack.resize(kStackCopy);
         // Page by page up to the end of the committed stack (ReadProcessMemory fails instead of
         // faulting there, and fails as a whole for a range that crosses it).
         size_t got = 0;
@@ -84,8 +90,10 @@ Sample TakeSample() {
             if (!ReadProcessMemory(GetCurrentProcess(), (const void*)at, s.stack.data() + got, chunk, &n) || n != chunk) break;
             got += chunk;
         }
-        s.stack.resize(got);
         s.ok = true;
+        ResumeThread(s_mainThread);
+        s.stack.resize(got);
+        return s;
     }
     ResumeThread(s_mainThread);
     return s;
@@ -148,6 +156,46 @@ void Watch() {
     }
 }
 
+// LYRA_PROFILE_MAIN=<seconds> (developer): samples the main thread every millisecond from start
+// for that long, then logs the places seen most often - where it was (self) and what it was
+// inside of (approximate: return addresses found on the stack).
+void ProfileMain(int seconds) {
+    timeBeginPeriod(1);
+    std::map<uintptr_t, int> self, inside;
+    int samples = 0;
+    const ULONGLONG end = GetTickCount64() + (ULONGLONG)seconds * 1000;
+    RefreshModules();
+    while (!s_quit && GetTickCount64() < end) {
+        Sample s = TakeSample();
+        if (s.ok) {
+            ++samples;
+            ++self[s.rip];
+            std::vector<uintptr_t> seen;
+            for (size_t i = 0; i + sizeof(uintptr_t) <= s.stack.size() && seen.size() < 40; i += sizeof(uintptr_t)) {
+                uintptr_t v;
+                memcpy(&v, s.stack.data() + i, sizeof(v));
+                if (!ModuleOf(v) || !FollowsCall(v)) continue;
+                if (std::find(seen.begin(), seen.end(), v) != seen.end()) continue;
+                seen.push_back(v);
+                ++inside[v];
+            }
+        }
+        Sleep(1);
+    }
+    timeEndPeriod(1);
+    RefreshModules();
+    auto top = [&](const std::map<uintptr_t, int>& m, const char* what, size_t count) {
+        std::vector<std::pair<int, uintptr_t>> v;
+        for (auto& [a, n] : m) v.push_back({ n, a });
+        std::sort(v.rbegin(), v.rend());
+        for (size_t i = 0; i < v.size() && i < count; ++i)
+            Log("profile %s %5.1f%% %s", what, 100.0 * v[i].first / std::max(1, samples), Describe(v[i].second).c_str());
+    };
+    Log("profile: %d samples of the main thread", samples);
+    top(self, "self", 25);
+    top(inside, "inside", 60);
+}
+
 LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_STALL_PING) { s_pong = (ULONGLONG)l; return 0; }
     return DefWindowProcW(h, msg, w, l);
@@ -169,6 +217,11 @@ void StallWatchStart() {
     RefreshModules();
     s_quit = false;
     s_thread = std::thread(Watch);
+    wchar_t prof[8] = {};
+    if (GetEnvironmentVariableW(L"LYRA_PROFILE_MAIN", prof, 8) && _wtoi(prof) > 0) {
+        const int seconds = _wtoi(prof);
+        std::thread([seconds] { ProfileMain(seconds); }).detach();
+    }
 }
 
 void StallWatchStop() {
