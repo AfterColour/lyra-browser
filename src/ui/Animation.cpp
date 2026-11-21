@@ -1,5 +1,6 @@
 // Lyra — часы анимаций: кадры в такт обновлению экрана, плавное приближение к цели.
 #include "ui/Animation.h"
+#include "app/Log.h"
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "core/Constants.h"
@@ -10,6 +11,7 @@
 #include "ui/Sidebar.h"
 #include "browser/Touchpad.h"
 
+#include <dxgi.h>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -23,16 +25,58 @@ static bool                    s_quit = false;
 static std::atomic<bool>       s_posted { false };    // a frame message is waiting in the queue
 static LARGE_INTEGER           s_last = {};
 
+// The vertical blank of the display the window is on. DwmFlush (used before) waits for the next
+// composition, which DWM runs only when something changed: on a 240 Hz display the clock ticked at
+// about 105 Hz even with nothing else to do. IDXGIOutput::WaitForVBlank follows the display.
+class VBlankClock {
+public:
+    ~VBlankClock() { Release(); }
+    // False when there is no output to wait on (then DwmFlush).
+    bool Wait() {
+        HMONITOR mon = g_hWnd ? MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTOPRIMARY) : MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+        if (mon != m_monitor) { Release(); Find(mon); }
+        return m_output && SUCCEEDED(m_output->WaitForVBlank());
+    }
+private:
+    void Release() { if (m_output) { m_output->Release(); m_output = nullptr; } m_monitor = nullptr; }
+    void Find(HMONITOR mon) {
+        m_monitor = mon;
+        using CreateFactory = HRESULT(WINAPI*)(REFIID, void**);
+        static HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+        static auto create = dxgi ? (CreateFactory)GetProcAddress(dxgi, "CreateDXGIFactory1") : nullptr;
+        IDXGIFactory1* factory = nullptr;
+        if (!create || FAILED(create(__uuidof(IDXGIFactory1), (void**)&factory))) return;
+        IDXGIAdapter1* adapter = nullptr;
+        for (UINT a = 0; !m_output && factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND; ++a) {
+            IDXGIOutput* out = nullptr;
+            for (UINT o = 0; adapter->EnumOutputs(o, &out) != DXGI_ERROR_NOT_FOUND; ++o) {
+                DXGI_OUTPUT_DESC d;
+                if (!m_output && SUCCEEDED(out->GetDesc(&d)) && d.Monitor == mon) { m_output = out; continue; }
+                out->Release();
+            }
+            adapter->Release();
+        }
+        factory->Release();
+    }
+    IDXGIOutput* m_output = nullptr;
+    HMONITOR m_monitor = nullptr;
+};
+
 // Waits for each display refresh while frames are wanted and posts one frame message at a time,
 // so a busy UI thread never gets a backlog of frames.
 static void ClockThread() {
+    VBlankClock vblank;
+    int slow = 0;
     for (;;) {
         {
             std::unique_lock<std::mutex> lock(s_lock);
             s_wake.wait(lock, [] { return s_running || s_quit; });
             if (s_quit) return;
         }
-        if (FAILED(DwmFlush())) Sleep(7);            // no composition: ~144 Hz fallback
+        const ULONGLONG t0 = GetTickCount64();
+        bool waited = slow < 3 && vblank.Wait();
+        if (waited && GetTickCount64() - t0 > 250) ++slow;   // vblanks not coming (display asleep): DwmFlush from now on
+        if (!waited && FAILED(DwmFlush())) Sleep(7);          // no composition: ~144 Hz fallback
         if (!s_posted.exchange(true) && g_hWnd)
             PostMessageW(g_hWnd, WM_APP_ANIM_FRAME, 0, 0);
     }
@@ -63,10 +107,40 @@ void AnimOnFrame() {
     const bool touchpad = TouchpadAnimStep(dt);
     const bool swipe = SwipeNavAnimStep(dt);
     const bool sidebar = SidebarAnimStep(dt);
-    if (!chrome && !settings && !split && !drag && !touchpad && !swipe && !sidebar) {
-        std::lock_guard<std::mutex> lock(s_lock);
-        s_running = false;
+    // LYRA_ANIM_FPS=1: the animation clock's frames per second and longest gap, about every second
+    // while something moves (tabs.log).
+    static const bool fpsLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_ANIM_FPS", v, 4) && v[0] == L'1'; }();
+    if (fpsLog) {
+        static LARGE_INTEGER s_winStart = {};
+        static int s_frames = 0;
+        static float s_maxDt = 0;
+        static double s_work = 0, s_dtSum = 0;
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        if (!s_winStart.QuadPart) s_winStart = now;
+        ++s_frames;
+        s_maxDt = std::max(s_maxDt, dt);
+        s_dtSum += dt;                                 // (frames/s while running: pauses do not count)
+        s_work += (double)(end.QuadPart - now.QuadPart) * 1000.0 / (double)freq.QuadPart;
+        const double span = (double)(now.QuadPart - s_winStart.QuadPart) / (double)freq.QuadPart;
+        if (span >= 1.0) {
+            Log("anim: %.0f frames/s while running (%d frames), longest gap %.1f ms, steps %.2f ms a frame",
+                s_dtSum > 0 ? s_frames / s_dtSum : 0.0, s_frames, s_maxDt * 1000.f, s_work / s_frames);
+            s_winStart = now; s_frames = 0; s_maxDt = 0; s_work = 0; s_dtSum = 0;
+        }
     }
+    if (!chrome && !settings && !split && !drag && !touchpad && !swipe && !sidebar) {
+        {
+            std::lock_guard<std::mutex> lock(s_lock);
+            s_running = false;
+        }
+        InvalidateChrome();                           // the still picture, at full quality
+    }
+}
+
+bool AnimRunning() {
+    std::lock_guard<std::mutex> lock(s_lock);
+    return s_running;
 }
 
 void AnimShutdown() {

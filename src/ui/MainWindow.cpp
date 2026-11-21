@@ -367,6 +367,7 @@ static void RunCaptionButton(HWND hWnd, Hit::Kind k) {
 LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (g_fullScreenMsg && msg == g_fullScreenMsg)
         return OnFullScreenMessage(wParam != 0, (HWND)lParam);
+    if (const UINT sbTest = SidebarTestMessage(); sbTest && msg == sbTest) { SidebarTestPointer(wParam, lParam); return 0; }   // (tests only)
     switch (msg) {
     case WM_CREATE: {
         g_hWnd = hWnd;

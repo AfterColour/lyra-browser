@@ -87,6 +87,7 @@ void LoadSettings() {
     g_prefs.bookmarksBar = geti(L"BookmarksBar", 0) != 0;
     g_prefs.sidebar = geti(L"Sidebar", 1) != 0;
     g_prefs.sidebarRight = geti(L"SidebarRight", 1) != 0;
+    g_prefs.sidebarMode = std::max(0, std::min(3, geti(L"SidebarMode", 0)));
     g_prefs.swipeNav = geti(L"SwipeNavigation", 1) != 0;
     g_prefs.pinchZoom = geti(L"PinchZoom", 1) != 0;
     g_prefs.clearExitHistory = geti(L"ClearOnExitHistory", 0) != 0;
@@ -151,7 +152,7 @@ void SaveSettings() {
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
     puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"FrameRate", g_prefs.frameRate); puti(L"BookmarksBar", g_prefs.bookmarksBar);
-    puti(L"Sidebar", g_prefs.sidebar); puti(L"SidebarRight", g_prefs.sidebarRight);
+    puti(L"Sidebar", g_prefs.sidebar); puti(L"SidebarRight", g_prefs.sidebarRight); puti(L"SidebarMode", g_prefs.sidebarMode);
     puti(L"SwipeNavigation", g_prefs.swipeNav); puti(L"PinchZoom", g_prefs.pinchZoom);
     puti(L"ClearOnExitHistory", g_prefs.clearExitHistory); puti(L"ClearOnExitCookies", g_prefs.clearExitCookies);
     puti(L"ClearOnExitCache", g_prefs.clearExitCache); puti(L"ClearOnExitDownloads", g_prefs.clearExitDownloads); puti(L"AdBlock", g_prefs.adBlock); puti(L"SavePasswords", g_prefs.savePasswords);

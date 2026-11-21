@@ -213,6 +213,7 @@ void SelectTab(int i) {
     if (HWND h = g_tabs[i]->hwnd) {
         SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         ShowWindow(h, SW_SHOW);
+        SidebarRaise();                  // (a panel over the page stays over it)
     }
     SessionLoadLazyTab(*g_tabs[i]);
     if (from != to) ExtensionsOnTabActivated(to);

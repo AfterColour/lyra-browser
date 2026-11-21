@@ -303,6 +303,15 @@ void BuildPages() {
             { Tr(L"Right", L"Справа"), Tr(L"Left", L"Слева") },
             []() { return g_prefs.sidebarRight ? 0 : 1; },
             [](int i) { g_prefs.sidebarRight = i == 0; SaveSettings(); SidebarSettingsChanged(); }));
+        p.rows.push_back(RChoice(Tr(L"Sidebar behaviour", L"Поведение боковой панели"),
+            Tr(L"Beside: the page gets narrower. Over: the panel opens over the page, a click elsewhere closes it. "
+               L"Auto-hide: point at the window's edge and the sidebar slides out. On hover: point at an icon to open its panel, click it to keep it open.",
+               L"Рядом: страница становится уже. Поверх: панель открывается поверх страницы, клик в другом месте закрывает её. "
+               L"Автоскрытие: наведите на край окна, и панель выедет. По наведению: наведите на иконку, чтобы открыть панель, клик оставляет её открытой."),
+            { Tr(L"Beside the page", L"Рядом со страницей"), Tr(L"Over the page", L"Поверх страницы"),
+              Tr(L"Auto-hide", L"Автоскрытие"), Tr(L"On hover", L"По наведению") },
+            []() { return g_prefs.sidebarMode; },
+            [](int i) { g_prefs.sidebarMode = i; SaveSettings(); SidebarSettingsChanged(); }));
         p.rows.push_back(RHeader(Tr(L"Touchpad", L"Тачпад")));
         p.rows.push_back(RToggle(Tr(L"Swipe between pages", L"Листать страницы свайпом"),
             Tr(L"Two fingers to the right go back, to the left go forward.",

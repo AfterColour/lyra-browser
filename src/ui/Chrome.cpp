@@ -10,6 +10,7 @@
 #include "ui/TabHoverCard.h"
 #include "ui/BookmarksBar.h"
 #include "ui/Sidebar.h"
+#include "app/Log.h"
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "browser/Translate.h"
@@ -1589,10 +1590,32 @@ void PaintChrome(HDC hdc, const RECT& rc) {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
     s_paintTransparent = MicaActive() && !g_fullScreenView;
+    LARGE_INTEGER t0;
+    QueryPerformanceCounter(&t0);
+    // (Mica: blending without gamma correction while something moves - with it a frame took about
+    // 3 ms, most of a refresh at 240 Hz; the still picture after the animation is painted with it.)
     PaintBuffered(hdc, rc, !s_paintTransparent, [&](Graphics& g) {
         g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         DrawChrome(g, cr.right, cr.bottom);
-    });
+    }, AnimRunning());
+    // LYRA_ANIM_FPS=1: how long painting the chrome takes (tabs.log, about every second).
+    static const bool timeLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_ANIM_FPS", v, 4) && v[0] == L'1'; }();
+    if (timeLog) {
+        LARGE_INTEGER t1, f;
+        QueryPerformanceCounter(&t1);
+        QueryPerformanceFrequency(&f);
+        static LARGE_INTEGER s_start = {};
+        static int s_n = 0;
+        static double s_sum = 0, s_max = 0, s_px = 0;
+        const double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
+        if (!s_start.QuadPart) s_start = t1;
+        ++s_n; s_sum += ms; s_max = std::max(s_max, ms); s_px += (double)(rc.right - rc.left) * (rc.bottom - rc.top);
+        const double span = (double)(t1.QuadPart - s_start.QuadPart) / (double)f.QuadPart;
+        if (span >= 1.0) {
+            if (span < 1.5) Log("paint: %d/s, avg %.2f ms, max %.2f ms, avg %.0f kpx%s", (int)(s_n / span), s_sum / s_n, s_max, s_px / s_n / 1000.0, s_paintTransparent ? " (Mica)" : "");
+            s_start = t1; s_n = 0; s_sum = 0; s_max = 0; s_px = 0;
+        }
+    }
 }
 
 int SplitTabAt(int index, int x, int y) {

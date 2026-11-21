@@ -9,6 +9,9 @@
 void AnimRequest();
 void AnimOnFrame();                 // main window: on WM_APP_ANIM_FRAME
 void AnimShutdown();                // main window: on WM_DESTROY
+// Something is moving (the frame clock runs): the chrome is painted with faster blending for these
+// frames; the still picture after the last one is painted again at full quality.
+bool AnimRunning();
 // The settings window's smooth scrolling runs on the same frame clock (ui/settings/SettingsWindow.cpp);
 // returns true while it still moves.
 bool SettingsAnimStep(float dt);

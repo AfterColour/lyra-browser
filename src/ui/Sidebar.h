@@ -45,3 +45,8 @@ void SidebarAddCurrentToReadingList();
 void SidebarThemeChanged();          // the built-in page follows the theme
 bool SidebarAnimStep(float dt);      // ui/Animation: the panel sliding in / out, the strip's highlight
 RectF SidebarPanelRect();            // the panel (empty when closed): kept out of Mica (UpdateMainBackdrop)
+void SidebarRaise();                 // after a tab's view was put on top: the panel goes back over it
+// Tests only (LYRA_TEST_SIDEBAR=1): the main window passes this registered message on; wParam 0
+// moves a pretend pointer to lParam (client x, y), 1 also clicks there. 0 when not testing.
+UINT SidebarTestMessage();
+void SidebarTestPointer(WPARAM kind, LPARAM lp);

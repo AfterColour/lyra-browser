@@ -41,6 +41,7 @@ struct Prefs {
     bool pinchZoom = true;         // pinching on a touchpad zooms the page (browser/Touchpad)
     bool sidebar = true;           // the sidebar's strip of icons beside the page (ui/Sidebar)
     bool sidebarRight = true;      // on the right (Edge) or the left (Vivaldi)
+    int  sidebarMode = 0;          // 0 beside the page, 1 over the page, 2 auto-hide, 3 on hover (ui/Sidebar)
     bool bookmarksBar = false;   // the bookmarks bar under the toolbar (ui/BookmarksBar)
     int  frameRate = 2;          // pages' frame rate: 0 the display's, 1 about 60 fps, 2 about 60 on battery
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)
