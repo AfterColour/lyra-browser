@@ -9,6 +9,7 @@
 #include "ui/Chrome.h"
 #include "ui/TabHoverCard.h"
 #include "ui/BookmarksBar.h"
+#include "ui/Sidebar.h"
 #include "browser/SplitView.h"
 #include "ui/TabDrag.h"
 #include "browser/Translate.h"
@@ -80,6 +81,14 @@ void InvalidateChrome() {
         RECT side = { 0, top.bottom, (LONG)std::ceil(g_L.sideW), cr.bottom };
         InvalidateRect(g_hWnd, &side, FALSE);
     }
+    // The sidebar's strip and header only while the pointer is (or just was) on them: chrome
+    // animations call this every frame, and repainting a column of the window each time kept
+    // the main thread busy (layout changes and site icons repaint it through SidebarInvalidate).
+    auto onSide = [](const Hit& h) { return h.kind == Hit::SideItem || h.kind == Hit::SideButton || h.kind == Hit::SideResize; };
+    static bool s_sideWas = false;
+    const bool sideNow = onSide(g_hover) || onSide(g_down);
+    if (sideNow || s_sideWas) SidebarInvalidate();
+    s_sideWas = sideNow;
 }
 
 // ----------------------------------------------------------------------------
@@ -412,6 +421,14 @@ static void ComputeTarget(Layout& L, int clientW) {
             y += rowH + S(1);
         }
         L.newTab = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
+    }
+    {   // the sidebar (ui/Sidebar): below the toolbar on one side, the page takes the rest
+        RECT cr = {};
+        if (g_hWnd) GetClientRect(g_hWnd, &cr);
+        const float barW = SidebarComputeLayout(L, L.sideW, L.chromeH, w, (float)cr.bottom);
+        const bool left = !g_prefs.sidebarRight;
+        L.pageL = L.sideW + (left ? barW : 0.f);
+        L.pageR = w - (left ? 0.f : barW);
     }
     MergeSplitTabs(L);
     OpenInsertGap(L);
@@ -798,6 +815,14 @@ Hit HitTest(int px, int py) {
     const Layout& L = g_L;
     const bool inTop = y >= 0 && y < L.chromeH;
     const bool inSide = L.sideW > 0 && y >= L.chromeH && x >= 0 && x < L.sideW;
+    if (!inTop) {
+        int si = -1;
+        const SideHit sh = SidebarHitTest(x, y, si);
+        if (sh == SideHit::Item) return MakeHit(Hit::SideItem, si);
+        if (sh == SideHit::Button) return MakeHit(Hit::SideButton, si);
+        if (sh == SideHit::Resize) return MakeHit(Hit::SideResize);
+        if (sh == SideHit::Empty) return MakeHit(Hit::None);
+    }
     if (!inTop && !inSide) return MakeHit(Hit::None);
     if (inTop) {
         if (L.bmBar.Width > 0 && L.bmBar.Contains(x, y)) {
@@ -944,7 +969,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             g.FillRectangle(&frame, 0.f, 0.f, fw, L.chromeH);
             if (L.sideW > 0) g.FillRectangle(&frame, 0.f, L.chromeH, L.sideW, fh - L.chromeH);
         }
-        g.FillRectangle(&page, L.sideW, L.chromeH, fw - L.sideW, fh - L.chromeH);
+        g.FillRectangle(&page, L.pageL, L.chromeH, L.pageR - L.pageL, fh - L.chromeH);
         Pen sep(T.sep, 1.f);
         g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
         if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
@@ -955,6 +980,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             BookmarksBarPaint(g, L.bmBar, hoverIndex, pressIndex, hoverIndex != -1000 ? HoverAmount(g_hover) : 0.f);
         }
         SplitPaint(g);                                   // split view: gutter, outline, divider
+        SidebarPaint(g, s_paintTransparent);             // the sidebar's strip and panel header
         if (cur && cur->pipHwnd && !g_fullScreenView) {      // its view is in the picture-in-picture window
             StringFormat cf(StringFormat::GenericTypographic());
             cf.SetAlignment(StringAlignmentCenter);
@@ -962,7 +988,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             SolidBrush tb(T.text2);
             g.DrawString(Tr(L"This tab is playing in picture-in-picture.\nClick here to bring it back.",
                             L"Эта вкладка играет в режиме «картинка в картинке».\nНажмите здесь, чтобы вернуть её."),
-                         -1, g_fText.get(), RectF(L.sideW, L.chromeH, fw - L.sideW, fh - L.chromeH), &cf, &tb);
+                         -1, g_fText.get(), RectF(L.pageL, L.chromeH, L.pageR - L.pageL, fh - L.chromeH), &cf, &tb);
         }
     }
 
@@ -1533,8 +1559,16 @@ void UpdateMainBackdrop() {
     if (!g_hWnd) return;
     MARGINS m = { 0, 0, 0, 0 };
     if (!g_fullScreenView) {
-        m.cxLeftWidth = (int)std::ceil(g_L.sideW);
+        m.cxLeftWidth = (int)std::ceil(g_L.pageL);         // the tab list and a left sidebar
         m.cyTopHeight = (int)std::ceil(g_L.chromeH);
+        if (g_L.pageR > 0) m.cxRightWidth = std::max(0, g_clientW - (int)std::floor(g_L.pageR));   // a right sidebar
+        // The sidebar's panel stays out of the backdrop: a web view in a Mica area comes out fully
+        // transparent (it draws without alpha), so the backdrop ends at the strip.
+        const RectF sp = SidebarPanelRect();
+        if (sp.Width > 0) {
+            if (sp.GetRight() <= g_L.pageL + 1) m.cxLeftWidth = (int)std::floor(sp.X);
+            else if (g_L.pageR > 0 && sp.X >= g_L.pageR - 1) m.cxRightWidth = std::max(0, g_clientW - (int)std::ceil(sp.GetRight()));
+        }
     }
     ApplyBackdrop(g_hWnd, 2 /* DWMSBT_MAINWINDOW: Mica */, m);
     // Switching between Lyra's window buttons and the system ones changes the space they take.

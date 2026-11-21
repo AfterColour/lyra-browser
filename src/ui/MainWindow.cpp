@@ -54,6 +54,7 @@
 #include "browser/Touchpad.h"
 #include "ui/SwipeNav.h"
 #include "browser/WebAuthn.h"
+#include "ui/Sidebar.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -253,17 +254,18 @@ void LayoutWebViews() {
     GetClientRect(g_hWnd, &cr);
     // fullscreen: the page covers the tab strip, toolbar and vertical tab list
     int top = g_fullScreenView ? 0 : (int)g_L.chromeH;
-    int left = g_fullScreenView ? 0 : (int)g_L.sideW;
+    int left = g_fullScreenView ? 0 : (int)g_L.pageL;
     int h = std::max(0, (int)cr.bottom - top);
     // The active view in place; the "ready" tabs parked off-screen at the same size, the rest
     // hidden (they get the right size when they are selected, so a window resize does not send
     // resize IPC to every background page).
-    const int w = std::max(0, (int)cr.right - left);
+    const int w = std::max(0, (g_fullScreenView ? (int)cr.right : (int)g_L.pageR) - left);
     if (g_fullScreenView) SplitHidePartner();
     if (g_fullScreenView || !SplitLayout(left, top, w, h))   // split view: both halves
         if (Tab* t = ActiveTab())
             if (t->hwnd) MoveWindow(t->hwnd, left, top, w, h, TRUE);
     if (!g_fullScreenView) ParkBackgroundViews(w, h);
+    SidebarPositionViews();                              // the sidebar's panel (hidden in fullscreen)
 }
 
 void RefreshLayout(bool animate) {
@@ -274,6 +276,7 @@ void RefreshLayout(bool animate) {
     PositionEdit();
     LayoutWebViews();
     InvalidateChrome();
+    SidebarInvalidate();
 }
 
 void FocusWebView() {
@@ -500,10 +503,27 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 1;
 
     case WM_PAINT: {
+        // Only the parts that changed: the toolbar and a column at the side (the vertical tab
+        // list, the sidebar) together have the whole window as their bounding box, and painting
+        // that on every animation frame took the main thread (GDI+ over millions of pixels).
+        HRGN rgn = CreateRectRgn(0, 0, 0, 0);
+        const int kind = GetUpdateRgn(hWnd, rgn, FALSE);
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
-        PaintChrome(hdc, ps.rcPaint);       // chrome + the area under the web view (seen before it paints)
+        bool done = false;
+        if (kind == COMPLEXREGION) {
+            const DWORD size = GetRegionData(rgn, 0, nullptr);
+            std::vector<BYTE> buf(size);
+            auto* rd = (RGNDATA*)buf.data();
+            if (size && GetRegionData(rgn, size, rd) && rd->rdh.nCount <= 16) {
+                const RECT* rs = (const RECT*)rd->Buffer;
+                for (DWORD i = 0; i < rd->rdh.nCount; ++i) PaintChrome(hdc, rs[i]);
+                done = true;
+            }
+        }
+        if (!done) PaintChrome(hdc, ps.rcPaint);   // chrome + the area under the web view (seen before it paints)
         EndPaint(hWnd, &ps);
+        DeleteObject(rgn);
         return 0;
     }
     case WM_CTLCOLOREDIT:
@@ -521,7 +541,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         // A command sent as a message (no control): the same as choosing it from the menu.
-        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_BOOKMARKSBAR) {
+        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_READINGLIST) {
             RunCommand(LOWORD(wParam));
             return 0;
         }
@@ -540,9 +560,16 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd && SplitSetCursor()) return TRUE;
         if (s_tabDragging) { SetCursor(LoadCursor(nullptr, IDC_ARROW)); return TRUE; }
+        if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd) {
+            POINT cp;
+            GetCursorPos(&cp);
+            ScreenToClient(hWnd, &cp);
+            if (SidebarResizing() || HitTest(cp.x, cp.y).kind == Hit::SideResize) { SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return TRUE; }
+        }
         break;
 
     case WM_MOUSEMOVE: {
+        if (SidebarResizing()) { SidebarResizeMove(GET_X_LPARAM(lParam)); return 0; }
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
             if (!g_trackingMouse) {
                 TRACKMOUSEEVENT t = { sizeof(t), TME_LEAVE, hWnd, 0 };
@@ -577,9 +604,14 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         TabHoverCardHide();
         if (TabGroupEditingId()) TabGroupEditFinish(true);   // a click in the chrome ends a group's renaming
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // divider / gutter
+        if (HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)).kind == Hit::SideResize) {   // the sidebar's edge
+            SidebarResizeBegin(GET_X_LPARAM(lParam));
+            SetCapture(hWnd);
+            return 0;
+        }
         // The active tab is in picture-in-picture: a click on its empty page brings it back.
         if (Tab* t = ActiveTab())
-            if (t->pipHwnd && GET_Y_LPARAM(lParam) >= (int)g_L.chromeH && GET_X_LPARAM(lParam) >= (int)g_L.sideW) {
+            if (t->pipHwnd && GET_Y_LPARAM(lParam) >= (int)g_L.chromeH && GET_X_LPARAM(lParam) >= (int)g_L.pageL && GET_X_LPARAM(lParam) < (int)g_L.pageR) {
                 PipExit(false, true);
                 return 0;
             }
@@ -602,6 +634,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (SidebarResizing()) { SidebarResizeEnd(); if (GetCapture() == hWnd) ReleaseCapture(); return 0; }
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
         if (TabDragEnd(true)) {                          // a tab dropped (on another tab: split view)
             g_down = Hit();
@@ -634,6 +667,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::Translate: TranslateToggle(); break;
             case Hit::Zoom:     SiteZoomReset(); break;
             case Hit::BookmarkItem: BookmarksBarClick(up.index, (GetKeyState(VK_CONTROL) & 0x8000) != 0); break;
+            case Hit::SideItem: SidebarItemClick(up.index); break;
+            case Hit::SideButton: SidebarButtonClick(up.index); break;
             case Hit::GroupLabel:
                 if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupToggle(g_L.groupIds[up.index]);
                 break;
@@ -644,6 +679,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_CAPTURECHANGED:
+        SidebarResizeEnd();
         SplitMouse(msg, 0, 0);
         TabDragEnd(false);
         g_down = Hit();
@@ -654,6 +690,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         TabHoverCardHide();
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::ExtAction) { ExtensionButtonMenu(h.index); return 0; }
+        if (h.kind == Hit::SideItem) {
+            POINT sp = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ClientToScreen(hWnd, &sp);
+            SidebarItemMenu(h.index, sp);
+            return 0;
+        }
         if (h.kind == Hit::BookmarkItem) {
             POINT bp = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ClientToScreen(hWnd, &bp);
@@ -773,7 +815,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         HDROP drop = (HDROP)wParam;
         POINT at = {};
         DragQueryPoint(drop, &at);
-        const bool onPage = at.y >= (LONG)g_L.chromeH && at.x >= (LONG)g_L.sideW;
+        const bool onPage = at.y >= (LONG)g_L.chromeH && at.x >= (LONG)g_L.pageL && at.x < (LONG)g_L.pageR;
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         std::vector<std::wstring> urls;
         for (UINT i = 0; i < count && urls.size() < 20; ++i) {
@@ -813,6 +855,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         Hit h = HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (h.kind == Hit::TabBody || h.kind == Hit::TabClose) CloseTabWithMouse(hWnd, h.index);
         else if (h.kind == Hit::BookmarkItem && h.index >= 0) BookmarksBarMiddleClick(h.index);
+        else if (h.kind == Hit::SideItem) SidebarItemMiddleClick(h.index);
         return 0;
     }
     case WM_APP_ANIM_FRAME:
@@ -969,6 +1012,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_FAVICON:
         FaviconArrived(lParam);
         InvalidateChrome();
+        SidebarInvalidate();                             // (web panels' icons on the strip)
         return 0;
     case WM_APP_LYRA_URL: {
         std::unique_ptr<std::wstring> url((std::wstring*)lParam);
@@ -1066,6 +1110,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         AnimShutdown();
         SwipeNavCancel();
         TouchpadShutdown();
+        SidebarShutdown();
         if (g_editBrush) { DeleteObject(g_editBrush); g_editBrush = nullptr; }
         if (g_editFont) { DeleteObject(g_editFont); g_editFont = nullptr; }
         PostQuitMessage(0);

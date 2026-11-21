@@ -68,7 +68,7 @@ bool CoverUp() { return s_cover && IsWindowVisible(s_cover); }
 RECT PageArea() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    RECT r = { (LONG)g_L.sideW, (LONG)g_L.chromeH, cr.right, cr.bottom };
+    RECT r = { (LONG)g_L.pageL, (LONG)g_L.chromeH, (LONG)g_L.pageR, cr.bottom };
     return r;
 }
 

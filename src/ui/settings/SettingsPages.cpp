@@ -20,6 +20,7 @@
 #include "core/StringUtils.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
+#include "ui/Sidebar.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
@@ -293,6 +294,15 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Show bookmarks bar", L"Показывать панель закладок"),
             Tr(L"The Favorites folder under the address field. Ctrl+Shift+B", L"Папка «Избранное» под адресной строкой. Ctrl+Shift+B"),
             &g_prefs.bookmarksBar, []() { SaveSettings(); RefreshLayout(); }));
+        p.rows.push_back(RHeader(Tr(L"Sidebar", L"Боковая панель")));
+        p.rows.push_back(RToggle(Tr(L"Show sidebar", L"Показывать боковую панель"),
+            Tr(L"Bookmarks, history, reading list, downloads, notes and your web panels beside the page. Ctrl+Shift+E",
+               L"Закладки, история, список для чтения, загрузки, заметки и ваши веб-панели рядом со страницей. Ctrl+Shift+E"),
+            &g_prefs.sidebar, []() { SaveSettings(); SidebarSettingsChanged(); }));
+        p.rows.push_back(RChoice(Tr(L"Sidebar position", L"Положение боковой панели"), L"",
+            { Tr(L"Right", L"Справа"), Tr(L"Left", L"Слева") },
+            []() { return g_prefs.sidebarRight ? 0 : 1; },
+            [](int i) { g_prefs.sidebarRight = i == 0; SaveSettings(); SidebarSettingsChanged(); }));
         p.rows.push_back(RHeader(Tr(L"Touchpad", L"Тачпад")));
         p.rows.push_back(RToggle(Tr(L"Swipe between pages", L"Листать страницы свайпом"),
             Tr(L"Two fingers to the right go back, to the left go forward.",

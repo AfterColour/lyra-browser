@@ -17,6 +17,7 @@
 #include "ui/Animation.h"
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
+#include "ui/Sidebar.h"
 #include "ui/Draw.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
@@ -75,6 +76,9 @@ const std::vector<CommandDef>& Commands() {
         { L"History", L"История", L"visited посещённые", L"Ctrl+H", [] { RunCommand(CMD_HISTORY); }, L"\uE81C" },
         { L"Bookmarks", L"Закладки", L"favorites избранное", L"Ctrl+Shift+O", [] { RunCommand(CMD_BOOKMARKS); }, L"\uE728" },
         { L"Show or hide bookmarks bar", L"Показать или скрыть панель закладок", L"bookmarks bar toolbar панель закладок", L"Ctrl+Shift+B", [] { RunCommand(CMD_BOOKMARKSBAR); }, L"\uE728" },
+    { L"Show or hide sidebar", L"Показать или скрыть боковую панель", L"sidebar panel боковая панель", L"Ctrl+Shift+E", [] { RunCommand(CMD_SIDEBAR); }, L"\uE8A0" },
+    { L"Add page to reading list", L"Добавить страницу в список для чтения", L"reading list read later читать позже", L"", [] { RunCommand(CMD_READINGLIST); }, L"\uE736" },
+    { L"Notes", L"Заметки", L"notes заметки", L"", [] { SidebarOpen(4); }, L"\uE70B" },
         { L"Downloads", L"Загрузки", L"files файлы", L"Ctrl+J", [] { RunCommand(CMD_DOWNLOADS); }, L"\uE896" },
         { L"Settings", L"Настройки", L"preferences options параметры", L"Ctrl+,", [] { RunCommand(CMD_SETTINGS); }, L"\uE713" },
         { L"Saved passwords", L"Сохранённые пароли", L"logins пароли логины", L"", [] { RunCommand(CMD_PASSWORDS); }, L"\uE8D7" },

@@ -261,8 +261,8 @@ static LRESULT CALLBACK BarProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) 
 static POINT BarPosition() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    POINT tl = { (LONG)((float)cr.right - S(kW) - S(16)), (LONG)(g_L.chromeH + S(8)) };
-    tl.x = std::max<LONG>((LONG)(g_L.sideW + S(8)), tl.x);
+    POINT tl = { (LONG)((g_L.pageR > 0 ? g_L.pageR : (float)cr.right) - S(kW) - S(16)), (LONG)(g_L.chromeH + S(8)) };
+    tl.x = std::max<LONG>((LONG)(g_L.pageL + S(8)), tl.x);
     ClientToScreen(g_hWnd, &tl);
     return tl;
 }

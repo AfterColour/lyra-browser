@@ -154,7 +154,7 @@ void RepaintHalves(bool now) {
 RECT PageArea() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    return { (LONG)g_L.sideW, (LONG)g_L.chromeH, cr.right, cr.bottom };
+    return { (LONG)g_L.pageL, (LONG)g_L.chromeH, (LONG)g_L.pageR, cr.bottom };
 }
 
 // --- The divider picture ---------------------------------------------------------------
@@ -266,7 +266,8 @@ bool BeginCover() {
     if (s_coverState != Cover::None) FreeCover();
     RECT pa;
     GetClientRect(g_hWnd, &pa);
-    pa.left = (LONG)g_L.sideW;
+    pa.left = (LONG)g_L.pageL;
+    pa.right = (LONG)g_L.pageR;
     pa.top = (LONG)g_L.chromeH;
     const int w = pa.right - pa.left, h = pa.bottom - pa.top;
     if (w <= 0 || h <= 0 || IsIconic(g_hWnd)) return false;

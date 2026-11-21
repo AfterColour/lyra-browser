@@ -1,0 +1,410 @@
+<!doctype html>
+<!--
+  Lyra sidebar: the built-in panels (bookmarks, history, reading list, downloads, notes) in one
+  page. Lyra shows it in the sidebar's own view (ui/Sidebar.cpp) with
+  ?dark=..&ru=..&accent=..&icons=..#section. Data and commands go through the private
+  "lyraSidebar" message channel (JSON in, JSON back); Lyra calls lyraShow(section) to switch and
+  lyraChanged(section) when something changed.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), d = q.get("dark") === "1";
+  document.documentElement.dataset.theme = d ? "dark" : "light";
+  document.documentElement.style.colorScheme = d ? "dark" : "light";
+  document.documentElement.style.background = d ? "#1F2024" : "#F7F8FA";
+})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebar</title>
+<style>
+  :root {
+    --page: #F7F8FA; --card: #FFFFFF; --border: #E2E5EA; --text: #1B1D21; --text2: #636A75;
+    --hover: rgba(0,0,0,.05); --press: rgba(0,0,0,.08); --field: #FFFFFF; --accent: #0067C0; --danger: #C42B1C;
+  }
+  :root[data-theme="dark"] {
+    --page: #1F2024; --card: #2A2C31; --border: #383B42; --text: #ECEDEF; --text2: #A6ABB4;
+    --hover: rgba(255,255,255,.06); --press: rgba(255,255,255,.1); --field: #2A2C31; --danger: #FF8A80;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--page); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         overflow: hidden; user-select: none; }
+  section { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; pointer-events: none;
+            transform: translateY(4px); transition: opacity .14s ease, transform .14s ease; }
+  section.on { opacity: 1; pointer-events: auto; transform: none; }
+  .top { padding: 10px 10px 6px; display: flex; gap: 6px; align-items: center; flex: none; }
+  .search { position: relative; flex: 1; min-width: 0; }
+  .search svg { position: absolute; left: 9px; top: 9px; color: var(--text2); pointer-events: none; }
+  .search input { width: 100%; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--field);
+                  color: var(--text); padding: 0 10px 0 30px; font: inherit; outline: none; }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .btn { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+         color: var(--text); font: inherit; cursor: default; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: var(--hover); }
+  .btn:active { background: var(--press); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .list { flex: 1; overflow-y: auto; padding: 2px 6px 16px; scroll-behavior: smooth; }
+  .list::-webkit-scrollbar { width: 10px; }
+  .list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 3px solid var(--page); }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 4px 6px 4px 8px; border-radius: 7px;
+         color: var(--text); text-decoration: none; position: relative; }
+  .row:hover { background: var(--hover); }
+  .row:active { background: var(--press); }
+  .icon { width: 16px; height: 16px; border-radius: 4px; flex: none; display: flex; align-items: center; justify-content: center;
+          color: #fff; font-size: 9px; font-weight: 700; overflow: hidden; }
+  .icon img { width: 100%; height: 100%; }
+  .folder { color: var(--text2); background: none !important; font-size: 14px; }
+  .main { flex: 1; min-width: 0; }
+  .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub { color: var(--text2); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .x { width: 26px; height: 26px; border-radius: 6px; border: 0; background: none; color: var(--text2); flex: none;
+       opacity: 0; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .row:hover .x { opacity: 1; }
+  .x:hover { background: var(--press); color: var(--text); }
+  .group { margin: 12px 8px 4px; font-size: 11.5px; font-weight: 600; color: var(--text2); }
+  .children { margin-left: 14px; }
+  .chev { width: 12px; flex: none; color: var(--text2); font-size: 9px; transition: transform .12s ease; }
+  .open > .row .chev { transform: rotate(90deg); }
+  .empty { text-align: center; color: var(--text2); padding: 48px 16px; line-height: 1.6; }
+  .empty b { display: block; color: var(--text); font-weight: 600; margin-bottom: 4px; }
+  .tabs { display: flex; gap: 2px; padding: 0 10px 6px; flex: none; }
+  .tab { height: 26px; padding: 0 10px; border-radius: 13px; border: 0; background: none; color: var(--text2); font: inherit; font-size: 12px; }
+  .tab.on { background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+  .dot { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--text2); flex: none; background: none; padding: 0; }
+  .dot.read { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--card); }
+  .read-row .title { color: var(--text2); }
+  .bar { height: 3px; border-radius: 2px; background: var(--border); margin-top: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+  .acts { display: flex; gap: 2px; flex: none; }
+  .acts .x { opacity: .85; }
+  .gone .title { text-decoration: line-through; color: var(--text2); }
+  .failed { color: var(--danger); }
+  .note-card { padding: 8px 10px; }
+  .note-card .title { font-weight: 600; }
+  .editor { flex: 1; display: flex; flex-direction: column; padding: 0 10px 10px; gap: 8px; min-height: 0; }
+  .editor textarea { flex: 1; width: 100%; resize: none; border-radius: 10px; border: 1px solid var(--border); background: var(--field);
+                     color: var(--text); padding: 12px; font: 13.5px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+                     outline: none; user-select: text; }
+  .editor textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .meta { color: var(--text2); font-size: 11.5px; flex: 1; }
+  .hidden { display: none !important; }
+  .spacer { flex: 1; }
+</style>
+</head>
+<body>
+<section id="bookmarks">
+  <div class="top"><label class="search"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input id="bq" type="search" autocomplete="off"></label></div>
+  <div class="list" id="bl"></div>
+</section>
+<section id="history">
+  <div class="top"><label class="search"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input id="hq" type="search" autocomplete="off"></label></div>
+  <div class="list" id="hl"></div>
+</section>
+<section id="reading">
+  <div class="top"><button class="btn primary" id="radd"></button><span class="spacer"></span></div>
+  <div class="tabs"><button class="tab on" id="runread"></button><button class="tab" id="rall"></button></div>
+  <div class="list" id="rl"></div>
+</section>
+<section id="downloads">
+  <div class="top"><button class="btn" id="dfolder"></button><span class="spacer"></span><button class="btn" id="dclear"></button></div>
+  <div class="list" id="dl"></div>
+</section>
+<section id="notes">
+  <div id="nlist" style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div class="top"><button class="btn primary" id="nnew"></button></div>
+    <div class="list" id="nl"></div>
+  </div>
+  <div id="ned" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div class="top"><button class="btn" id="nback"></button><span class="meta" id="nmeta"></span><button class="btn" id="nlink"></button><button class="btn" id="ndel"></button></div>
+    <div class="editor"><textarea id="ntext" spellcheck="true"></textarea></div>
+  </div>
+</section>
+<script>
+"use strict";
+const q = new URLSearchParams(location.search);
+const ru = q.get("ru") === "1";
+if (/^[0-9a-fA-F]{6}$/.test(q.get("accent") || "")) document.documentElement.style.setProperty("--accent", "#" + q.get("accent"));
+const ICONS = q.get("icons") || "";
+const S = ru ? {
+  searchB: "Поиск в закладках", searchH: "Поиск в истории", noB: "Закладок пока нет", noBsub: "Добавляйте страницы звёздочкой в адресной строке.",
+  nothing: "Ничего не найдено", noH: "История пуста", today: "Сегодня", yesterday: "Вчера", remove: "Удалить",
+  add: "+ Добавить эту страницу", unread: "Непрочитанные", all: "Все", noR: "Список пуст", noRsub: "Сохраняйте статьи, чтобы прочитать их позже.",
+  allRead: "Всё прочитано", markRead: "Отметить прочитанной", markUnread: "Отметить непрочитанной",
+  folder: "Открыть папку", clear: "Очистить", noD: "Загрузок пока нет", open: "Открыть", show: "Показать в папке", cancel: "Отменить", retry: "Повторить",
+  newNote: "+ Новая заметка", noN: "Заметок пока нет", noNsub: "Записывайте мысли, ссылки и идеи — они сохраняются на этом компьютере.",
+  back: "← Назад", del: "Удалить", link: "Вставить ссылку", empty: "Пустая заметка", edited: "Изменено ", confirmDel: "Точно удалить?",
+} : {
+  searchB: "Search bookmarks", searchH: "Search history", noB: "No bookmarks yet", noBsub: "Add pages with the star in the address field.",
+  nothing: "Nothing found", noH: "No history yet", today: "Today", yesterday: "Yesterday", remove: "Remove",
+  add: "+ Add this page", unread: "Unread", all: "All", noR: "Your reading list is empty", noRsub: "Save articles to read them later.",
+  allRead: "All caught up", markRead: "Mark as read", markUnread: "Mark as unread",
+  folder: "Open folder", clear: "Clear", noD: "No downloads yet", open: "Open", show: "Show in folder", cancel: "Cancel", retry: "Retry",
+  newNote: "+ New note", noN: "No notes yet", noNsub: "Jot down thoughts, links and ideas — they stay on this computer.",
+  back: "← Back", del: "Delete", link: "Insert link", empty: "Empty note", edited: "Edited ", confirmDel: "Really delete?",
+};
+const $ = (id) => document.getElementById(id);
+const locale = ru ? "ru-RU" : "en-US";
+function lyra(msg) {
+  try { return window.webkit.messageHandlers.lyraSidebar.postMessage(JSON.stringify(msg)).then((t) => { try { return JSON.parse(t); } catch (e) { return null; } }); }
+  catch (e) { return Promise.resolve(null); }
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } }
+function how(ev) { return ev.button === 1 ? "background" : (ev.ctrlKey || ev.metaKey) ? "new" : "tab"; }
+function emptyBox(title, sub) { const d = el("div", "empty"); d.appendChild(el("b", "", title)); if (sub) d.appendChild(document.createTextNode(sub)); return d; }
+
+// Site icons: cached by Lyra as <folder>/<host>.png; the letter badge stays until there is one.
+const PALETTE = ["#6E56CF", "#D93F3F", "#5B6878", "#3B8A79", "#2F6FD6", "#C7681C", "#8A4FBF", "#1E88A8"];
+let iconAsk = [], iconTimer = 0;
+function icon(url) {
+  const box = el("span", "icon"), host = hostOf(url);
+  let h = 2166136261 >>> 0;
+  for (const ch of host) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  box.style.background = PALETTE[Math.imul(h, 2654435761) >>> 29];
+  box.textContent = ((host.match(/[\p{L}\p{N}]/u) || ["•"])[0]).toUpperCase();
+  let key = "";
+  try { key = new URL(url).host.replace(/^www\./, "").toLowerCase().replace(/[^a-z0-9.-]/g, "_"); } catch (e) {}
+  if (ICONS && key) {
+    const img = new Image();
+    img.onload = () => { box.textContent = ""; box.style.background = "transparent"; box.appendChild(img); };
+    img.onerror = () => {
+      iconAsk.push(url); clearTimeout(iconTimer);
+      iconTimer = setTimeout(() => { lyra({ op: "favicons", urls: iconAsk.splice(0, 60) }); }, 200);
+      setTimeout(() => { const again = new Image(); again.onload = () => { box.textContent = ""; box.style.background = "transparent"; box.appendChild(again); }; again.src = ICONS + key + ".png?r=1"; }, 3000);
+    };
+    img.src = ICONS + key + ".png";
+  }
+  return box;
+}
+function linkRow(url, title, sub, onOpen) {
+  const r = el("div", "row");
+  r.appendChild(icon(url));
+  const m = el("div", "main");
+  m.appendChild(el("div", "title", title || url));
+  if (sub) m.appendChild(el("div", "sub", sub));
+  r.appendChild(m);
+  r.title = (title ? title + "\n" : "") + url;
+  r.addEventListener("click", (ev) => onOpen(how(ev)));
+  r.addEventListener("auxclick", (ev) => { if (ev.button === 1) { ev.preventDefault(); onOpen("background"); } });
+  r.addEventListener("mousedown", (ev) => { if (ev.button === 1) ev.preventDefault(); });
+  return r;
+}
+function xButton(label, glyph, fn) {
+  const b = el("button", "x", glyph || "✕"); b.title = label;
+  b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+  b.addEventListener("auxclick", (ev) => ev.stopPropagation());
+  return b;
+}
+
+// --- bookmarks -----------------------------------------------------------------------------
+let BM = [];
+const openFolders = new Set(JSON.parse(localStorageGet("lyraSideFolders") || "[]"));
+function localStorageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function renderBookmarks() {
+  const list = $("bl"); list.textContent = "";
+  const words = $("bq").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const pages = BM.filter((b) => !b.f);
+  if (!pages.length) { list.appendChild(emptyBox(S.noB, S.noBsub)); return; }
+  if (words.length) {
+    const hits = pages.filter((b) => words.every((w) => (b.t + " " + b.u).toLowerCase().includes(w)));
+    if (!hits.length) { list.appendChild(emptyBox(S.nothing)); return; }
+    for (const b of hits.slice(0, 300)) list.appendChild(linkRow(b.u, b.t, hostOf(b.u), (h) => lyra({ op: "open", url: b.u, how: h })));
+    return;
+  }
+  const kids = new Map();
+  for (const b of BM) { if (!kids.has(b.p)) kids.set(b.p, []); kids.get(b.p).push(b); }
+  const ids = new Set(BM.map((b) => b.i));
+  const roots = BM.filter((b) => !ids.has(b.p));
+  function add(parent, items, depth) {
+    for (const b of items) {
+      if (b.f) {
+        const wrap = el("div", openFolders.has(b.i) || (depth === 0 && roots.length <= 3 && !localStorageGet("lyraSideFolders")) ? "open" : "");
+        if (wrap.className) openFolders.add(b.i);
+        const r = el("div", "row");
+        r.appendChild(el("span", "chev", "▶"));
+        r.appendChild(el("span", "icon folder", "📁"));
+        const m = el("div", "main"); m.appendChild(el("div", "title", b.t)); r.appendChild(m);
+        const box = el("div", "children");
+        r.addEventListener("click", () => {
+          const open = wrap.classList.toggle("open");
+          if (open) openFolders.add(b.i); else openFolders.delete(b.i);
+          localStorageSet("lyraSideFolders", JSON.stringify([...openFolders]));
+          if (open && !box.childNodes.length) add(box, kids.get(b.i) || [], depth + 1);
+          box.classList.toggle("hidden", !open);
+        });
+        wrap.appendChild(r); wrap.appendChild(box);
+        if (wrap.classList.contains("open")) add(box, kids.get(b.i) || [], depth + 1); else box.classList.add("hidden");
+        parent.appendChild(wrap);
+      } else {
+        parent.appendChild(linkRow(b.u, b.t, "", (h) => lyra({ op: "open", url: b.u, how: h })));
+      }
+    }
+  }
+  add(list, roots, 0);
+}
+function loadBookmarks() { return lyra({ op: "data", section: "bookmarks" }).then((d) => { BM = d || []; renderBookmarks(); }); }
+$("bq").addEventListener("input", renderBookmarks);
+
+// --- history ---------------------------------------------------------------------------------
+let HI = [], hTimer = 0;
+function dayLabel(t) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(t); d.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - d) / 86400000);
+  if (diff === 0) return S.today;
+  if (diff === 1) return S.yesterday;
+  return d.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" });
+}
+function renderHistory() {
+  const list = $("hl"); list.textContent = "";
+  if (!HI.length) { list.appendChild(emptyBox($("hq").value.trim() ? S.nothing : S.noH)); return; }
+  let last = "";
+  for (const e of HI.slice(0, 1500)) {
+    const label = e.l ? dayLabel(e.l) : "";
+    if (label !== last) { list.appendChild(el("div", "group", label)); last = label; }
+    const time = e.l ? new Date(e.l).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : "";
+    const r = linkRow(e.u, e.t, time + " · " + hostOf(e.u), (h) => lyra({ op: "open", url: e.u, how: h }));
+    r.appendChild(xButton(S.remove, "", () => { HI = HI.filter((x) => x !== e); r.remove(); lyra({ op: "history-remove", url: e.u }); }));
+    list.appendChild(r);
+  }
+}
+function loadHistory() { return lyra({ op: "data", section: "history", q: $("hq").value.trim() }).then((d) => { HI = d || []; renderHistory(); }); }
+$("hq").addEventListener("input", () => { clearTimeout(hTimer); hTimer = setTimeout(loadHistory, 160); });
+
+// --- reading list ------------------------------------------------------------------------------
+let RL = [], rFilter = "unread";
+function renderReading() {
+  const list = $("rl"); list.textContent = "";
+  const items = rFilter === "unread" ? RL.filter((r) => !r.r) : RL;
+  if (!RL.length) { list.appendChild(emptyBox(S.noR, S.noRsub)); return; }
+  if (!items.length) { list.appendChild(emptyBox(S.allRead)); return; }
+  for (const it of items) {
+    const r = linkRow(it.u, it.t, hostOf(it.u), (h) => lyra({ op: "reading-open", id: it.i, how: h }).then((d) => { if (d) { RL = d; renderReading(); } }));
+    if (it.r) r.classList.add("read-row");
+    const dot = el("button", "dot" + (it.r ? " read" : "")); dot.title = it.r ? S.markUnread : S.markRead;
+    dot.addEventListener("click", (ev) => { ev.stopPropagation(); lyra({ op: "reading-toggle", id: it.i }).then((d) => { if (d) { RL = d; renderReading(); } }); });
+    r.insertBefore(dot, r.firstChild);
+    r.appendChild(xButton(S.remove, "", () => lyra({ op: "reading-remove", id: it.i }).then((d) => { if (d) { RL = d; renderReading(); } })));
+    list.appendChild(r);
+  }
+}
+function loadReading() { return lyra({ op: "data", section: "reading" }).then((d) => { RL = d || []; renderReading(); }); }
+$("radd").addEventListener("click", () => lyra({ op: "reading-add" }).then((d) => { if (d) { RL = d; rFilter = "unread"; setTabs(); renderReading(); } }));
+function setTabs() { $("runread").classList.toggle("on", rFilter === "unread"); $("rall").classList.toggle("on", rFilter === "all"); }
+$("runread").addEventListener("click", () => { rFilter = "unread"; setTabs(); renderReading(); });
+$("rall").addEventListener("click", () => { rFilter = "all"; setTabs(); renderReading(); });
+
+// --- downloads -------------------------------------------------------------------------------------
+let DL = [];
+function size(n) { if (!(n > 0)) return ""; const u = ru ? ["Б", "КБ", "МБ", "ГБ"] : ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; }
+function renderDownloads() {
+  const list = $("dl"); list.textContent = "";
+  if (!DL.length) { list.appendChild(emptyBox(S.noD)); return; }
+  for (const d of DL) {
+    const r = el("div", "row" + (d.s === 1 && !d.x ? " gone" : ""));
+    r.appendChild(icon(d.u || "file://"));
+    const m = el("div", "main");
+    m.appendChild(el("div", "title", d.n));
+    const st = el("div", "sub" + (d.s === 2 ? " failed" : ""), d.e || (d.s === 1 ? size(d.t || d.r) : ""));
+    m.appendChild(st);
+    if (d.s === 0) { const bar = el("div", "bar"), fill = el("i"); fill.style.width = (d.t > 0 ? Math.min(100, d.r * 100 / d.t) : 8) + "%"; bar.appendChild(fill); m.appendChild(bar); }
+    r.appendChild(m);
+    const acts = el("div", "acts");
+    if (d.s === 0) acts.appendChild(xButton(S.cancel, "✕", () => lyra({ op: "dl-cancel", id: d.i })));
+    if (d.s === 1 && d.x) acts.appendChild(xButton(S.show, "📂", () => lyra({ op: "dl-show", id: d.i })));
+    if ((d.s === 2 || d.s === 3) && d.u) acts.appendChild(xButton(S.retry, "↻", () => lyra({ op: "dl-retry", id: d.i })));
+    if (d.s !== 0) acts.appendChild(xButton(S.remove, "", () => { DL = DL.filter((x) => x !== d); renderDownloads(); lyra({ op: "dl-remove", id: d.i }); }));
+    r.appendChild(acts);
+    if (d.s === 1 && d.x) r.addEventListener("click", () => lyra({ op: "dl-open", id: d.i }));
+    list.appendChild(r);
+  }
+}
+function loadDownloads() { return lyra({ op: "data", section: "downloads" }).then((d) => { DL = d || []; renderDownloads(); }); }
+$("dfolder").addEventListener("click", () => lyra({ op: "dl-folder" }));
+$("dclear").addEventListener("click", () => { DL = DL.filter((d) => d.s === 0); renderDownloads(); lyra({ op: "dl-clear" }); });
+
+// --- notes ---------------------------------------------------------------------------------------------
+let NOTES = [], editing = null, saveTimer = 0;
+function noteTitle(n) { const line = (n.x || "").split("\n").find((l) => l.trim()); return line ? line.trim() : S.empty; }
+function notePreview(n) { const lines = (n.x || "").split("\n").filter((l) => l.trim()); return lines.slice(1).join(" ").slice(0, 120); }
+function when(t) { return new Date(t).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
+function renderNotes() {
+  const list = $("nl"); list.textContent = "";
+  if (!NOTES.length) { list.appendChild(emptyBox(S.noN, S.noNsub)); return; }
+  for (const n of NOTES) {
+    const r = el("div", "row note-card");
+    const m = el("div", "main");
+    m.appendChild(el("div", "title", noteTitle(n)));
+    m.appendChild(el("div", "sub", when(n.m) + (notePreview(n) ? " · " + notePreview(n) : "")));
+    r.appendChild(m);
+    r.addEventListener("click", () => openNote(n));
+    list.appendChild(r);
+  }
+}
+function showEditor(on) { $("nlist").classList.toggle("hidden", on); $("ned").classList.toggle("hidden", !on); }
+function openNote(n) {
+  editing = n || { i: 0, x: "", m: Date.now() };
+  $("ntext").value = editing.x;
+  $("nmeta").textContent = editing.i ? S.edited + when(editing.m) : "";
+  showEditor(true);
+  setTimeout(() => $("ntext").focus(), 30);
+}
+function saveNote() {
+  if (!editing) return Promise.resolve();
+  clearTimeout(saveTimer);
+  const text = $("ntext").value;
+  if (!editing.i && !text.trim()) return Promise.resolve();
+  if (editing.i && text === editing.x) return Promise.resolve();
+  editing.x = text;
+  return lyra({ op: "note-save", id: editing.i, text: text }).then((id) => { if (editing && typeof id === "number") editing.i = id; $("nmeta").textContent = S.edited + when(Date.now()); });
+}
+$("ntext").addEventListener("input", () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveNote, 500); });
+$("nnew").addEventListener("click", () => openNote(null));
+$("nback").addEventListener("click", () => { saveNote().then(() => { editing = null; showEditor(false); loadNotes(); }); });
+let delArmed = 0;
+$("ndel").addEventListener("click", () => {
+  if (!editing) return;
+  if (editing.i && !delArmed) {                    // a second click deletes (no dialog in the panel)
+    $("ndel").textContent = S.confirmDel; $("ndel").style.color = "var(--danger)";
+    delArmed = setTimeout(() => { delArmed = 0; $("ndel").textContent = S.del; $("ndel").style.color = ""; }, 3000);
+    return;
+  }
+  clearTimeout(delArmed); delArmed = 0; $("ndel").textContent = S.del; $("ndel").style.color = "";
+  const id = editing.i; editing = null; showEditor(false);
+  if (id) lyra({ op: "note-delete", id: id }).then((d) => { NOTES = d || []; renderNotes(); }); else renderNotes();
+});
+$("nlink").addEventListener("click", () => lyra({ op: "note-page" }).then((p) => {
+  if (!p) return;
+  const ta = $("ntext"), insert = (ta.value && !ta.value.endsWith("\n") ? "\n" : "") + p.t + "\n" + p.u + "\n";
+  ta.setRangeText(insert, ta.selectionStart, ta.selectionEnd, "end"); ta.focus(); ta.dispatchEvent(new Event("input"));
+}));
+function loadNotes() { return lyra({ op: "data", section: "notes" }).then((d) => { NOTES = d || []; if (!editing) renderNotes(); }); }
+
+// --- switching -----------------------------------------------------------------------------------------
+const LOADERS = { bookmarks: loadBookmarks, history: loadHistory, reading: loadReading, downloads: loadDownloads, notes: loadNotes };
+let current = "";
+window.lyraShow = function (name) {
+  if (!LOADERS[name]) name = "bookmarks";
+  if (current === "notes" && name !== "notes") saveNote();
+  current = name;
+  for (const s of document.querySelectorAll("section")) s.classList.toggle("on", s.id === name);
+  LOADERS[name]();
+  const field = { bookmarks: "bq", history: "hq" }[name];
+  if (field) setTimeout(() => $(field).focus({ preventScroll: true }), 60);
+};
+window.lyraChanged = function (name) { if (name === current && LOADERS[name]) LOADERS[name](); };
+$("bq").placeholder = S.searchB; $("hq").placeholder = S.searchH;
+$("radd").textContent = S.add; $("runread").textContent = S.unread; $("rall").textContent = S.all;
+$("dfolder").textContent = S.folder; $("dclear").textContent = S.clear;
+$("nnew").textContent = S.newNote; $("nback").textContent = S.back; $("ndel").textContent = S.del; $("nlink").textContent = S.link;
+addEventListener("beforeunload", () => { saveNote(); });
+lyraShow((location.hash || "#bookmarks").slice(1));
+setInterval(() => { if (current === "downloads" && DL.some((d) => d.s === 0)) loadDownloads(); }, 1000);
+</script>
+</body>
+</html>

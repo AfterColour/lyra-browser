@@ -7,6 +7,7 @@
 #include "ui/Chrome.h"
 #include "ui/MainWindow.h"
 #include "ui/SwipeNav.h"
+#include "ui/Sidebar.h"
 #include "browser/Touchpad.h"
 
 #include <atomic>
@@ -61,7 +62,8 @@ void AnimOnFrame() {
     const bool drag = TabDragAnimStep(dt);
     const bool touchpad = TouchpadAnimStep(dt);
     const bool swipe = SwipeNavAnimStep(dt);
-    if (!chrome && !settings && !split && !drag && !touchpad && !swipe) {
+    const bool sidebar = SidebarAnimStep(dt);
+    if (!chrome && !settings && !split && !drag && !touchpad && !swipe && !sidebar) {
         std::lock_guard<std::mutex> lock(s_lock);
         s_running = false;
     }

@@ -22,6 +22,7 @@
 #include "ui/CommandPalette.h"
 #include "ui/Screenshot.h"
 #include "ui/BookmarksBar.h"
+#include "ui/Sidebar.h"
 #include "browser/SplitView.h"
 #include "ui/MainWindow.h"
 #include "ui/Menu.h"
@@ -88,6 +89,8 @@ void RunCommand(int cmd) {
     case CMD_TABSEARCH: CommandPaletteShowTabs(); break;
     case CMD_SCREENSHOT: ScreenshotMenu(); break;
     case CMD_BOOKMARKSBAR: BookmarksBarToggle(); break;
+    case CMD_SIDEBAR: SidebarToggle(); break;
+    case CMD_READINGLIST: SidebarAddCurrentToReadingList(); SidebarOpen(2); break;
     case CMD_SPLIT:     SplitToggle(); break;
     case CMD_UPDATE:    UpdaterRestartAndInstall(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
@@ -149,6 +152,13 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_BOOKMARKS, Tr(L"Bookmarks\tCtrl+Shift+O", L"Закладки\tCtrl+Shift+O"));
     AppendMenuW(m, MF_STRING | (BookmarksBarShown() ? MF_CHECKED : 0), CMD_BOOKMARKSBAR,
                 Tr(L"Show Bookmarks Bar\tCtrl+Shift+B", L"Панель закладок\tCtrl+Shift+B"));
+    AppendMenuW(m, MF_STRING | (SidebarPanelOpen() ? MF_CHECKED : 0), CMD_SIDEBAR,
+                Tr(L"Sidebar\tCtrl+Shift+E", L"Боковая панель\tCtrl+Shift+E"));
+    {
+        const Tab* t = ActiveTab();
+        AppendMenuW(m, MF_STRING | ((t && CanBookmark(t->url)) ? 0 : MF_GRAYED), CMD_READINGLIST,
+                    Tr(L"Add to Reading List", L"Добавить в список для чтения"));
+    }
     AppendMenuW(m, MF_STRING, CMD_PASSWORDS, Tr(L"Passwords", L"Пароли"));
     AppendMenuW(m, MF_STRING, CMD_DOWNLOADS, Tr(L"Downloads\tCtrl+J", L"Загрузки\tCtrl+J"));
     {
@@ -240,6 +250,7 @@ bool HandleShortcut(const MSG& m) {
         if (k == 'A') { RunCommand(CMD_TABSEARCH); return true; }
         if (k == 'S') { RunCommand(CMD_SCREENSHOT); return true; }
         if (k == 'B') { RunCommand(CMD_BOOKMARKSBAR); return true; }
+        if (k == 'E') { RunCommand(CMD_SIDEBAR); return true; }
         if (k == VK_DELETE) { OpenClearDataSettings(); return true; }
     }
     if (ctrl && !alt) {

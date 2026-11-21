@@ -21,6 +21,7 @@
 #include "browser/MediaControls.h"
 #include "browser/Passwords.h"
 #include "browser/WebAuthn.h"
+#include "ui/Sidebar.h"
 #include "browser/PictureInPicture.h"
 #include "browser/Reader.h"
 #include "browser/Translate.h"
@@ -183,6 +184,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     WKTextCheckerSetContinuousSpellCheckingEnabled(g_prefs.spellCheck);   // spelling (Windows dictionaries)
     ReaderInit();                                      // reader view
     TranslateInit();                                   // page translation (the DeepL key)
+    SidebarInit();                                     // the sidebar: panels, web panels, reading list, notes
     // (WKPreferencesSetAVFoundationEnabled was removed: AVFoundation is Apple-only and
     //  does nothing on the Windows port, which plays media through Media Foundation.)
 

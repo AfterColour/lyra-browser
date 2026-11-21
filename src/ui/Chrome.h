@@ -33,6 +33,7 @@ struct Layout {
     std::vector<RectF> ext;          // extensions' buttons, left of downloads (ExtensionButtons())
     RectF capMin, capMax, capClose;
     RectF bmBar;                     // the bookmarks bar under the toolbar (ui/BookmarksBar), empty when hidden
+    float pageL = 0, pageR = 0;      // the page area's left and right edges (after the tab list and the sidebar)
     std::vector<RectF> tabs;         // one per tab; in the compact layout the active one is the address field
     // Tab groups (browser/TabGroups): a label before each group's first tab.
     std::vector<RectF> groups;
@@ -42,7 +43,7 @@ struct Layout {
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem, SideItem, SideButton, SideResize };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }

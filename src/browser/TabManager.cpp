@@ -1,6 +1,7 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
 #include "browser/Touchpad.h"
+#include "ui/Sidebar.h"
 #include "ui/TabHoverCard.h"
 #include "browser/SystemProxy.h"
 #include "browser/Extensions.h"
@@ -289,8 +290,8 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
 
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    int top = (int)g_L.chromeH, left = (int)g_L.sideW;
-    RECT r = { left, top, std::max<LONG>(cr.right, left + 1), std::max<LONG>(cr.bottom, top + 1) };
+    int top = (int)g_L.chromeH, left = (int)g_L.pageL;
+    RECT r = { left, top, std::max<LONG>((LONG)g_L.pageR, left + 1), std::max<LONG>(cr.bottom, top + 1) };
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     if (!view) { Log("CreateTab: WKViewCreate failed"); return nullptr; }
     WKViewSetUseDarkAppearance(view, g_dark);
@@ -347,8 +348,8 @@ bool UnloadTab(Tab& t, const std::string& state) {
     TabOpGuard guard;
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    const int top = (int)g_L.chromeH, left = (int)g_L.sideW;
-    RECT r = { left, top, std::max<LONG>(cr.right, left + 1), std::max<LONG>(cr.bottom, top + 1) };
+    const int top = (int)g_L.chromeH, left = (int)g_L.pageL;
+    RECT r = { left, top, std::max<LONG>((LONG)g_L.pageR, left + 1), std::max<LONG>(cr.bottom, top + 1) };
     WKPageConfigurationRef conf = CreatePageConfiguration();
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);
     WKRelease(conf);
@@ -412,6 +413,7 @@ void ScheduleSpareTab(UINT delayMs) {
 void TabsApplyAppearance() {
     for (auto& t : g_tabs) if (t->view) WKViewSetUseDarkAppearance(t->view, g_dark);
     if (s_spare && s_spare->view) WKViewSetUseDarkAppearance(s_spare->view, g_dark);
+    SidebarThemeChanged();
 }
 
 void PrepareSpareTab() {
@@ -419,8 +421,8 @@ void PrepareSpareTab() {
     TabOpGuard guard;
     RECT cr;
     GetClientRect(g_hWnd, &cr);
-    const int top = (int)g_L.chromeH, left = (int)g_L.sideW;
-    const int w = std::max<int>(1, cr.right - left), h = std::max<int>(1, cr.bottom - top);
+    const int top = (int)g_L.chromeH, left = (int)g_L.pageL;
+    const int w = std::max<int>(1, (int)g_L.pageR - left), h = std::max<int>(1, cr.bottom - top);
     RECT r = { -(w + 400), 0, -400, h };
     WKPageConfigurationRef conf = CreatePageConfiguration();
     WKViewRef view = WKViewCreate(r, conf, g_hWnd);

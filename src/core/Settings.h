@@ -39,6 +39,8 @@ struct Prefs {
     bool spareTab = true;        // a start page is prepared in the background for the next new tab
     bool swipeNav = true;          // two-finger swipe on a touchpad goes back / forward (ui/SwipeNav)
     bool pinchZoom = true;         // pinching on a touchpad zooms the page (browser/Touchpad)
+    bool sidebar = true;           // the sidebar's strip of icons beside the page (ui/Sidebar)
+    bool sidebarRight = true;      // on the right (Edge) or the left (Vivaldi)
     bool bookmarksBar = false;   // the bookmarks bar under the toolbar (ui/BookmarksBar)
     int  frameRate = 2;          // pages' frame rate: 0 the display's, 1 about 60 fps, 2 about 60 on battery
     bool restoreSession = true;  // reopen the last session's tabs at startup (always after a crash)

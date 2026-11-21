@@ -128,6 +128,15 @@ void Watch() {
             late = waited >= kStallMs;
         }
         if (s_quit) break;
+        {   // Developer check: LYRA_SAMPLE_MAIN=1 logs where the main thread is once a second, busy or not
+            static const bool sampleAlways = GetEnvironmentVariableW(L"LYRA_SAMPLE_MAIN", nullptr, 0) != 0;
+            static ULONGLONG lastSample = 0;
+            if (sampleAlways && GetTickCount64() - lastSample > 1000) {
+                lastSample = GetTickCount64();
+                RefreshModules();
+                Log("sample: main thread at %s", Frames(TakeSample()).c_str());
+            }
+        }
         const ULONGLONG took = GetTickCount64() - t0;
         if (late && took >= kStallMs) {
             RefreshModules();
