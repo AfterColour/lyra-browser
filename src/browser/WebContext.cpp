@@ -4,6 +4,9 @@
 #include "core/Settings.h"
 #include "core/StringUtils.h"
 
+#include <algorithm>
+#include <vector>
+
 WKContextRef          g_context = nullptr;
 
 WKPreferencesRef      g_preferences = nullptr;
@@ -91,14 +94,36 @@ bool OnBatteryPower() {
 
 // Pages render at the display's refresh rate (120/144/240 Hz), or at the nearest 60 fps divisor to
 // spare the GPU and the battery (the engine reads the preference in DrawingAreaWC).
+// Pages with preferences of their own (the settings window, extension pages, the sidebar's page)
+// follow the same frame rate: the preference is ON by default in WebKit, so a fresh set of
+// preferences left those pages at 60 fps on a 240 Hz display.
+static std::vector<WKPreferencesRef>& FollowingPrefs() {
+    static std::vector<WKPreferencesRef> list;
+    return list;
+}
+
+static bool Near60() { return g_prefs.frameRate == 1 || (g_prefs.frameRate == 2 && OnBatteryPower()); }
+
+static void SetNear60(WKPreferencesRef p, bool near60) {
+    WKStringRef near60Key = WKStringCreateWithUTF8CString("PreferPageRenderingUpdatesNear60FPSEnabled");
+    WKPreferencesSetBoolValueForKeyForTesting(p, near60, near60Key);
+    WKRelease(near60Key);
+}
+
+void FollowFrameRate(WKPreferencesRef prefs) {
+    if (!prefs) return;
+    auto& list = FollowingPrefs();
+    if (std::find(list.begin(), list.end(), prefs) == list.end()) list.push_back((WKPreferencesRef)WKRetain(prefs));
+    SetNear60(prefs, Near60());
+}
+
 void ApplyFrameRate() {
     if (!g_preferences) return;
-    const bool near60 = g_prefs.frameRate == 1 || (g_prefs.frameRate == 2 && OnBatteryPower());
+    const bool near60 = Near60();
     static int applied = -1;
     if (applied == (int)near60) return;
     applied = near60;
-    WKStringRef near60Key = WKStringCreateWithUTF8CString("PreferPageRenderingUpdatesNear60FPSEnabled");
-    WKPreferencesSetBoolValueForKeyForTesting(g_preferences, near60, near60Key);
-    WKRelease(near60Key);
+    SetNear60(g_preferences, near60);
+    for (WKPreferencesRef p : FollowingPrefs()) SetNear60(p, near60);
     Log("frame rate: %s", near60 ? "about 60 fps" : "the display's");
 }

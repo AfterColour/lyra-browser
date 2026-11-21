@@ -24,6 +24,19 @@ static bool                    s_running = false;     // frames wanted (guarded 
 static bool                    s_quit = false;
 static std::atomic<bool>       s_posted { false };    // a frame message is waiting in the queue
 static LARGE_INTEGER           s_last = {};
+static std::vector<bool (*)()> s_tickers;             // (main thread only)
+
+void AnimAddTicker(bool (*tick)()) {
+    if (std::find(s_tickers.begin(), s_tickers.end(), tick) == s_tickers.end()) s_tickers.push_back(tick);
+    AnimRequest();
+}
+
+DWORD AnimMs() {
+    static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return (DWORD)(now.QuadPart * 1000 / freq.QuadPart);
+}
 
 // The vertical blank of the display the window is on. DwmFlush (used before) waits for the next
 // composition, which DWM runs only when something changed: on a 240 Hz display the clock ticked at
@@ -107,6 +120,15 @@ void AnimOnFrame() {
     const bool touchpad = TouchpadAnimStep(dt);
     const bool swipe = SwipeNavAnimStep(dt);
     const bool sidebar = SidebarAnimStep(dt);
+    bool tickers = false;
+    for (size_t i = 0; i < s_tickers.size();) {           // (a ticker may add another: index, not iterator)
+        bool (*tick)() = s_tickers[i];
+        if (tick()) { tickers = true; ++i; }
+        else {
+            auto it = std::find(s_tickers.begin(), s_tickers.end(), tick);
+            if (it != s_tickers.end()) s_tickers.erase(it);
+        }
+    }
     // LYRA_ANIM_FPS=1: the animation clock's frames per second and longest gap, about every second
     // while something moves (tabs.log).
     static const bool fpsLog = [] { wchar_t v[4] = {}; return GetEnvironmentVariableW(L"LYRA_ANIM_FPS", v, 4) && v[0] == L'1'; }();
@@ -129,7 +151,7 @@ void AnimOnFrame() {
             s_winStart = now; s_frames = 0; s_maxDt = 0; s_work = 0; s_dtSum = 0;
         }
     }
-    if (!chrome && !settings && !split && !drag && !touchpad && !swipe && !sidebar) {
+    if (!chrome && !settings && !split && !drag && !touchpad && !swipe && !sidebar && !tickers) {
         {
             std::lock_guard<std::mutex> lock(s_lock);
             s_running = false;
@@ -170,7 +192,6 @@ struct Reveal {
     DWORD start;
 };
 std::vector<Reveal> s_reveals;
-UINT_PTR s_revealTimer = 0;
 constexpr DWORD kRevealMs = 150;
 
 // The window itself grows from its top edge (its contents stay where they are: every popup lays
@@ -182,8 +203,8 @@ void SetRevealHeight(const Reveal& r, int h) {
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
-void CALLBACK RevealStep(HWND, UINT, UINT_PTR, DWORD) {
-    const DWORD now = GetTickCount();
+bool RevealTick() {                                      // (on the frame clock)
+    const DWORD now = AnimMs();
     for (size_t i = 0; i < s_reveals.size();) {
         Reveal& r = s_reveals[i];
         const float t = std::min(1.f, (float)(now - r.start) / (float)kRevealMs * ((float)std::max(25, g_prefs.animSpeed) / 100.f));
@@ -197,10 +218,7 @@ void CALLBACK RevealStep(HWND, UINT, UINT_PTR, DWORD) {
         if (t >= 1.f || !IsWindow(r.hwnd)) s_reveals.erase(s_reveals.begin() + i);
         else ++i;
     }
-    if (s_reveals.empty() && s_revealTimer) {
-        KillTimer(nullptr, s_revealTimer);
-        s_revealTimer = 0;
-    }
+    return !s_reveals.empty();
 }
 }  // namespace
 
@@ -210,10 +228,10 @@ void PopupReveal(HWND popup) {
     Reveal r;
     r.hwnd = popup;
     GetWindowRect(popup, &r.full);
-    r.start = GetTickCount();
+    r.start = AnimMs();
     s_reveals.push_back(r);
     SetRevealHeight(r, std::max(1, (int)((r.full.bottom - r.full.top) * 0.35f)));
-    if (!s_revealTimer) s_revealTimer = SetTimer(nullptr, 0, 10, RevealStep);
+    AnimAddTicker(RevealTick);
 }
 
 void PopupRevealStop(HWND popup) {
@@ -248,7 +266,6 @@ struct Ghost {
     DWORD start;
 };
 std::vector<Ghost> s_ghosts;
-UINT_PTR s_ghostTimer = 0;
 constexpr DWORD kFadeMs = 140;
 
 void FreeGhost(Ghost& g) {
@@ -276,8 +293,8 @@ LRESULT CALLBACK GhostProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-void CALLBACK GhostStep(HWND, UINT, UINT_PTR, DWORD) {
-    const DWORD now = GetTickCount();
+bool GhostTick() {                                       // (on the frame clock)
+    const DWORD now = AnimMs();
     for (size_t i = 0; i < s_ghosts.size();) {
         Ghost& g = s_ghosts[i];
         const float t = std::min(1.f, (float)(now - g.start) / (float)kFadeMs * ((float)std::max(25, g_prefs.animSpeed) / 100.f));
@@ -286,10 +303,7 @@ void CALLBACK GhostStep(HWND, UINT, UINT_PTR, DWORD) {
         SetLayeredWindowAttributes(g.hwnd, 0, (BYTE)std::lround(255.f * (1.f - e)), LWA_ALPHA);
         ++i;
     }
-    if (s_ghosts.empty() && s_ghostTimer) {
-        KillTimer(nullptr, s_ghostTimer);
-        s_ghostTimer = 0;
-    }
+    return !s_ghosts.empty();
 }
 
 bool Windows11() {
@@ -345,12 +359,12 @@ void PopupFadeOut(HWND popup) {
         const int d = MulDiv(16, (int)GetDpiForWindow(popup), 96) + 1;
         SetWindowRgn(g.hwnd, CreateRoundRectRgn(0, 0, w + 1, h + 1, d, d), FALSE);
     }
-    g.start = GetTickCount();
+    g.start = AnimMs();
     s_ghosts.push_back(g);
     // Right below the popup: it shows the same picture until the popup goes, then fades.
     SetWindowPos(g.hwnd, popup, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UpdateWindow(g.hwnd);
-    if (!s_ghostTimer) s_ghostTimer = SetTimer(nullptr, 0, 10, GhostStep);
+    AnimAddTicker(GhostTick);
 }
 
 void PopupShow(HWND popup, bool activate) {

@@ -913,6 +913,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         Tab* act = ActiveTab();
         for (auto& tp : g_tabs) {
             Tab& t = *tp;
+            if (g_prefs.animations && &t == act) {       // (on the frame clock: ChromeAnimStep)
+                if ((t.loading && t.page) || t.fade > 0.f) AnimRequest();
+                continue;
+            }
             if (t.loading && t.page) {
                 float target = std::max(0.08f, (float)WKPageGetEstimatedProgress(t.page));
                 target = std::min(target, 0.92f);

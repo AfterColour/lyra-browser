@@ -2864,6 +2864,7 @@ Host& EnsureHost(const Extension& e) {
         WKPreferencesSetFileAccessFromFileURLsAllowed(s_extPrefs, true);
         WKPreferencesSetUniversalAccessFromFileURLsAllowed(s_extPrefs, true);
         WKPreferencesSetWebSecurityEnabled(s_extPrefs, false);   // fetch() to the sites it works with, as Chrome lets it
+        FollowFrameRate(s_extPrefs);                 // (popups at the display's rate, not WebKit's default 60 fps)
     }
     h.ucc = WKUserContentControllerCreate();
     const std::string source = "(" + LoadApi() + ")(" + ExtJson(e, "extension") + ");";

@@ -12,6 +12,7 @@
 #include "ui/Crossfade.h"
 #include "core/Settings.h"
 #include "ui/MainWindow.h"
+#include "ui/Animation.h"
 
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
@@ -36,8 +37,10 @@ static void SetAlpha(BYTE a) {
     UpdateLayeredWindow(s_wnd, nullptr, nullptr, nullptr, nullptr, nullptr, 0, &bf, ULW_ALPHA);
 }
 
-static LRESULT CALLBACK CrossfadeProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_TIMER && h == s_wnd) {
+// One frame of the fade, on the frame clock (each refresh of the display); false when done.
+static bool CrossfadeTick() {
+    if (!s_wnd) return false;
+    {
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
         const double ms = (double)(now.QuadPart - s_start.QuadPart) * 1000.0 / (double)s_freq.QuadPart;
@@ -45,19 +48,22 @@ static LRESULT CALLBACK CrossfadeProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             const double t = ms / s_rise;
             s_alpha = s_from + (255.0 - s_from) * (1.0 - (1.0 - t) * (1.0 - t));
             SetAlpha((BYTE)std::lround(s_alpha));
-            return 0;
+            return true;
         }
         if (ms < s_rise + s_hold) {
             if (s_alpha < 255) { s_alpha = 255; SetAlpha(255); }
-            return 0;
+            return true;
         }
         const double t = std::min(1.0, (ms - s_rise - s_hold) / s_fade);
-        if (t >= 1.0) { Finish(); return 0; }
+        if (t >= 1.0) { Finish(); return false; }
         const double e = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);     // ease out
         s_alpha = 255.0 * (1.0 - e);
         SetAlpha((BYTE)std::lround(s_alpha));
-        return 0;
+        return true;
     }
+}
+
+static LRESULT CALLBACK CrossfadeProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_NCHITTEST) return HTTRANSPARENT;
     if (m == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
     return DefWindowProcW(h, m, w, l);
@@ -77,6 +83,7 @@ void CrossfadeBegin() {
         Timing();
         s_from = s_alpha;
         s_rise = s_alpha < 250 ? 110.0 * (255.0 - s_alpha) / 255.0 + 40.0 : 0.0;
+        AnimAddTicker(CrossfadeTick);
         return;
     }
     if (!g_hWnd || !g_prefs.animations || !IsWindowVisible(g_hWnd) || IsIconic(g_hWnd)) return;
@@ -123,6 +130,5 @@ void CrossfadeBegin() {
     Timing();
     s_alpha = s_from = 255;
     s_rise = 0;
-    s_period = timeBeginPeriod(1) == TIMERR_NOERROR;
-    SetTimer(s_wnd, 1, 4, nullptr);
+    AnimAddTicker(CrossfadeTick);
 }

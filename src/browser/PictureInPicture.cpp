@@ -1,5 +1,6 @@
 // Lyra — «картинка в картинке»: видео в маленьком окне поверх всех окон.
 #include "browser/PictureInPicture.h"
+#include "ui/Animation.h"
 #include "app/Log.h"
 #include "browser/AdBlock.h"
 #include "browser/Tab.h"
@@ -780,7 +781,7 @@ void RenderFly(const RECT& r, BYTE alpha, const RECT& clip) {
 void SetFlyTarget(const RECT& to) {
     s_flyFrom = s_flyNow;
     s_flyTo = to;
-    s_flyStart = GetTickCount();
+    s_flyStart = AnimMs();
     s_flyHasTarget = true;
 }
 
@@ -794,7 +795,7 @@ void SetFlyFallbackTarget() {
 
 void FlyStep() {
     if (!s_fly) return;
-    const DWORD now = GetTickCount();
+    const DWORD now = AnimMs();
     if (!s_flyHasTarget) {
         if (now - s_flyCreated > kFlyWaitMs) SetFlyFallbackTarget();
         else return;
@@ -880,9 +881,9 @@ bool StartFly() {
     s_flyClip = {};
     RenderFly(rc, 255, {});
     ShowWindow(s_fly, SW_SHOWNOACTIVATE);
-    s_flyCreated = GetTickCount();
+    s_flyCreated = AnimMs();
     s_flyHasTarget = false;
-    SetTimer(s_fly, kFlyTimer, 7, nullptr);
+    AnimAddTicker([] { FlyStep(); return s_fly != nullptr; });   // (each refresh of the display)
     return true;
 }
 
@@ -903,7 +904,7 @@ bool VideoScreenRect(Tab& t, const float* v, RECT& out) {
 
 void OnLeaveMeasured(WKTypeRef result, WKErrorRef, void* ctx) {
     if (!s_fly) return;
-    s_flyReadyAt = GetTickCount() + 60;                  // a frame or two (the page did not change)
+    s_flyReadyAt = AnimMs() + 60;                  // a frame or two (the page did not change)
     const unsigned long long tabId = (unsigned long long)(uintptr_t)ctx;
     std::wstring s;
     if (result && WKGetTypeID(result) == WKStringGetTypeID()) s = WKStr((WKStringRef)result);

@@ -606,7 +606,7 @@ constexpr DWORD kDlAnimMs = 900;
 
 void ChromeDownloadStarted() {
     if (!g_prefs.animations) return;
-    s_dlAnimAt = GetTickCount();
+    s_dlAnimAt = AnimMs();
     if (!s_dlAnimAt) s_dlAnimAt = 1;
     AnimRequest();
 }
@@ -614,7 +614,7 @@ void ChromeDownloadStarted() {
 // 0..1 through the download start animation, or -1 when it is not playing.
 static float DownloadAnimT() {
     if (!s_dlAnimAt) return -1.f;
-    const DWORD el = GetTickCount() - s_dlAnimAt;
+    const DWORD el = AnimMs() - s_dlAnimAt;
     if (el >= kDlAnimMs) { s_dlAnimAt = 0; return -1.f; }
     return (float)el / (float)kDlAnimMs;
 }
@@ -627,6 +627,18 @@ static bool PageLoadingShown() {
 
 bool ChromeAnimStep(float dt) {
     bool moving = false;
+    // The active tab's loading line follows its progress and fades out on the frame clock (each
+    // refresh of the display; the other tabs' on the 30 ms UI timer).
+    if (g_prefs.animations && !g_tabOp) if (Tab* t = ActiveTab()) {
+        if (t->loading && t->page) {
+            const float target = std::min(0.92f, std::max(0.08f, (float)WKPageGetEstimatedProgress(t->page)));
+            if (t->progress < target - 0.001f) { t->progress += (target - t->progress) * (1.f - std::pow(0.75f, dt / 0.03f)); moving = true; }
+        } else if (t->fade > 0.f) {
+            t->progress += (1.f - t->progress) * (1.f - std::pow(0.6f, dt / 0.03f));
+            t->fade = std::max(0.f, t->fade - dt * (0.07f / 0.03f));
+            moving = true;
+        }
+    }
     // Things that move by themselves: the download start animation, the "size unknown" bar on
     // the downloads button and the running light of the loading line.
     if (DownloadAnimT() >= 0) moving = true;
@@ -1065,7 +1077,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             if (p >= 0) {
                 if (p > 0) FillRound(g, T.accent, RectF(track.X, track.Y, std::max(bh, bw * p), bh), bh / 2);
             } else {                                     // size unknown: a segment sliding along
-                const float t = (float)(GetTickCount() % 1200) / 1200.f;
+                const float t = (float)(AnimMs() % 1200) / 1200.f;
                 const float sw = bw * 0.35f, sx = track.X + (bw - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
                 FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
             }
@@ -1428,7 +1440,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 // a light running along the line
                 if (g_prefs.animations && w > S(40)) {
                     const float period = 1300.f;
-                    const float t = (float)(GetTickCount() % (DWORD)period) / period;
+                    const float t = (float)(AnimMs() % (DWORD)period) / period;
                     const float sw = std::min(w * 0.5f, S(90));
                     const float cx = pill.X - sw + (w + sw) * t;
                     const Color white((BYTE)(230 * cur->fade), 255, 255, 255), clear(0, 255, 255, 255);

@@ -316,7 +316,7 @@ bool BeginCover() {
 void CoverPainted(WKErrorRef, void*) {
     if (s_coverState == Cover::Waiting && --s_waitPaints <= 0) {
         s_coverState = Cover::Fading;
-        s_coverSince = GetTickCount();
+        s_coverSince = AnimMs();
     }
 }
 
@@ -327,12 +327,12 @@ void CommitCover() {
     InvalidateRect(g_hWnd, nullptr, FALSE);
     if (s_coverState != Cover::Moving) return;
     s_coverState = Cover::Waiting;
-    s_coverSince = GetTickCount();
+    s_coverSince = AnimMs();
     s_waitPaints = 0;
     for (Tab* t : { Left(), Right() })
         if (t && t->page) { ++s_waitPaints; WKPageForceRepaint(t->page, nullptr, CoverPainted); }
     if (!s_waitPaints) { s_coverState = Cover::Fading; }
-    SetTimer(g_hWnd, TIMER_SPLIT_COVER, 15, nullptr);
+    AnimAddTicker([] { SplitCoverTimer(); return s_cover != nullptr; });   // (each refresh of the display)
 }
 
 } // namespace
@@ -575,10 +575,10 @@ bool SplitAnimStep(float dt) {
 void SplitCoverTimer() {
     switch (s_coverState) {
     case Cover::Waiting:
-        if (GetTickCount() - s_coverSince > 700) { s_coverState = Cover::Fading; s_coverSince = GetTickCount(); }
+        if (AnimMs() - s_coverSince > 700) { s_coverState = Cover::Fading; s_coverSince = AnimMs(); }
         break;
     case Cover::Fading: {
-        const DWORD t = GetTickCount() - s_coverSince;
+        const DWORD t = AnimMs() - s_coverSince;
         if (t >= 120) { FreeCover(); RepaintHalves(true); return; }
         s_coverAlpha = (BYTE)(255 - 255 * t / 120);
         PushCover();

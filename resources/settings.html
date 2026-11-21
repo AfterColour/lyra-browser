@@ -301,11 +301,12 @@ function send(cmd, params) {
 // the page drawing at the display's full rate.
 (() => {
   if (!new URLSearchParams(location.search).has("perf")) return;
-  let raf = 0, last = 0, until = 0, cause = "", frames = 0, slow = 0, worst = 0, causes = {};
+  let raf = 0, last = 0, until = 0, cause = "", frames = 0, slow = 0, worst = 0, causes = {}, timed = 0;
   const tick = (t) => {
     if (last) {
       const d = t - last;
       frames++;
+      timed += d;
       if (d > 25) { slow++; worst = Math.max(worst, d); causes[cause] = (causes[cause] || 0) + 1; }
     }
     last = t;
@@ -319,10 +320,11 @@ function send(cmd, params) {
   };
   ["pointermove", "pointerdown", "wheel", "keydown", "scroll", "input"].forEach((n) => addEventListener(n, poke, { passive: true, capture: true }));
   setInterval(() => {
-    if (!slow) { frames = 0; return; }
+    if (!frames) return;
     const by = Object.keys(causes).map((k) => k + ":" + causes[k]).join(" ");
-    ((q) => send("perf", q))("frames=" + frames + "&slow=" + slow + "&worst=" + Math.round(worst) + "&during=" + encodeURIComponent(by));
-    frames = slow = worst = 0; causes = {};
+    const fps = timed > 0 ? Math.round(frames * 1000 / timed) : 0;   // (while timed: the frame rate it ran at)
+    ((q) => send("perf", q))("frames=" + frames + "&fps=" + fps + "&slow=" + slow + "&worst=" + Math.round(worst) + "&during=" + encodeURIComponent(by));
+    frames = slow = worst = timed = 0; causes = {};
   }, 5000);
 })();
 const setRow = (p, r, v) => { if (p >= 0) send("set", "p=" + p + "&r=" + r + "&v=" + v); };   // p < 0: a row of the page itself

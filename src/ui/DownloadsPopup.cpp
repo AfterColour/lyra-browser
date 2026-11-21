@@ -227,7 +227,7 @@ static void Paint(HDC hdc) {
                     const float p = std::min(1.f, (float)((double)d.received / (double)d.total));
                     if (p > 0) FillRound(g, T.accent, RectF(track.X, track.Y, std::max(bh, track.Width * p), bh), bh / 2);
                 } else {
-                    const float t = (float)(GetTickCount() % 1400) / 1400.f;
+                    const float t = (float)(AnimMs() % 1400) / 1400.f;
                     const float sw = track.Width * 0.25f, sx = track.X + (track.Width - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
                     FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
                 }
@@ -500,8 +500,18 @@ static void OnDownloadsChanged(bool listChanged) {
 }
 static const bool s_hooked = (g_downloadsChanged = &OnDownloadsChanged, true);
 
+// The "size unknown" bar slides on the frame clock (each refresh of the display) while the list is
+// open, not at the downloads' 30 ms tick.
+static bool IndeterminateTick() {
+    if (!s_popup || !g_prefs.animations) return false;
+    for (const DownloadItem& d : DownloadsList())
+        if (d.state == DownloadItem::Running && d.total <= 0) { InvalidateRect(s_popup, nullptr, FALSE); return true; }
+    return false;
+}
+
 void DownloadsPopupRefresh() {
     if (!s_popup) return;
+    if (g_prefs.animations && DownloadsProgress() < 0) AnimAddTicker(IndeterminateTick);
     RECT wr;
     GetWindowRect(s_popup, &wr);
     if (wr.bottom - wr.top != PopupH()) { PopupRevealStop(s_popup); PlacePopup(); }

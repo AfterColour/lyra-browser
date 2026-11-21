@@ -4,7 +4,7 @@
 #include "common/Platform.h"
 
 // Animations run only while something moves: AnimRequest() starts the frame clock, which posts
-// WM_APP_ANIM_FRAME to the main window once per display refresh (DwmFlush), and stops by itself
+// WM_APP_ANIM_FRAME to the main window once per display refresh (its vblank), and stops by itself
 // when AnimOnFrame() finds nothing left to animate.
 void AnimRequest();
 void AnimOnFrame();                 // main window: on WM_APP_ANIM_FRAME
@@ -12,6 +12,13 @@ void AnimShutdown();                // main window: on WM_DESTROY
 // Something is moving (the frame clock runs): the chrome is painted with faster blending for these
 // frames; the still picture after the last one is painted again at full quality.
 bool AnimRunning();
+// `tick` is called on every frame of the clock (each refresh of the display) until it returns
+// false; adding one already there does nothing. For animations of their own windows (popups
+// unfolding, fades, menus...) that used to step on timers: Windows timers fire at most every
+// 15.6 ms, about 64 frames a second whatever the display.
+void AnimAddTicker(bool (*tick)());
+// Milliseconds from a precise clock (GetTickCount moves in 15.6 ms steps), for animation timing.
+DWORD AnimMs();
 // The settings window's smooth scrolling runs on the same frame clock (ui/settings/SettingsWindow.cpp);
 // returns true while it still moves.
 bool SettingsAnimStep(float dt);

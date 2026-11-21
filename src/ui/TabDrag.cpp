@@ -50,7 +50,7 @@ void Destroy() {
     if (s_phase == Phase::Landing || s_phase == Phase::Returning) {   // it has arrived: the pulse
         Log("tab drag: tab#%llu landed", s_id);
         s_pulseId = s_id;
-        s_pulseAt = GetTickCount();
+        s_pulseAt = AnimMs();
         AnimRequest();
     }
     if (s_wnd) { DestroyWindow(s_wnd); s_wnd = nullptr; }
@@ -200,14 +200,14 @@ void TabDragFinish(const RectF* into) {
 
 float TabLandPulse(unsigned long long tabId) {
     if (!s_pulseId || tabId != s_pulseId) return -1.f;
-    const DWORD t = GetTickCount() - s_pulseAt;
+    const DWORD t = AnimMs() - s_pulseAt;
     return t >= kPulseMs ? -1.f : (float)t / (float)kPulseMs;
 }
 
 bool TabDragAnimStep(float dt) {
     if (s_pulseId) {
         InvalidateChrome();
-        if (GetTickCount() - s_pulseAt >= kPulseMs) s_pulseId = 0;
+        if (AnimMs() - s_pulseAt >= kPulseMs) s_pulseId = 0;
         else if (s_phase == Phase::None) return true;
     }
     if (s_phase == Phase::None) return false;

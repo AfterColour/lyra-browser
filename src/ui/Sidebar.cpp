@@ -469,6 +469,7 @@ void EnsureInternalView(int item) {
     WKPreferencesRef prefs = WKPreferencesCreateCopy(g_preferences);
     WKPreferencesSetJavaScriptEnabled(prefs, true);
     WKPreferencesSetLoadsImagesAutomatically(prefs, true);
+    FollowFrameRate(prefs);                              // (and later changes of it: power source)
     WKPageConfigurationSetPreferences(conf, prefs);
     if (g_dataStore) WKPageConfigurationSetWebsiteDataStore(conf, g_dataStore);
     s_controller = WKUserContentControllerCreate();

@@ -307,12 +307,17 @@ static void CreateView() {
     WKPageConfigurationRef conf = WKPageConfigurationCreate();
     WKPageConfigurationSetContext(conf, g_context);
     // Its own preferences: the page needs JavaScript even if the user turned it off for sites.
-    WKPreferencesRef prefs = WKPreferencesCreate();
-    WKPreferencesSetJavaScriptEnabled(prefs, true);
+    // (Made once and kept: it follows the frame rate - the display's, not WebKit's default 60 fps.)
+    static WKPreferencesRef prefs = [] {
+        WKPreferencesRef p = WKPreferencesCreate();
+        WKPreferencesSetJavaScriptEnabled(p, true);
+        WKPreferencesSetSuppressesIncrementalRendering(p, false);
+        FollowFrameRate(p);
+        return p;
+    }();
     WKPageConfigurationSetPreferences(conf, prefs);
     if (g_dataStore) WKPageConfigurationSetWebsiteDataStore(conf, g_dataStore);
     s_view = WKViewCreate(cr, conf, g_setHwnd);
-    WKRelease(prefs);
     WKRelease(conf);
     if (!s_view) { Log("settings: WKViewCreate failed"); return; }
     s_page = WKViewGetPage(s_view);

@@ -42,6 +42,7 @@ struct Level {
     bool iconCol = false, arrows = false;
     int w = 0, h = 0;
     float pillY = 0, pillH = 0, pillA = 0;   // the highlight, as drawn
+    bool pillMoving = false;                 // it glides or fades (PillTick)
     DWORD lastStep = 0;
 };
 
@@ -218,19 +219,22 @@ void Paint(Level& L, HDC hdc) {
 
 // The highlight follows the hovered item: it glides there (or appears on the spot when nothing
 // was highlighted) and fades out when the pointer leaves the items.
+bool PillTick();
+
 void PillTarget(Level& L, bool jump) {
     if (L.hover >= 0 && L.hover < (int)L.items.size()) {
         const Item& it = L.items[L.hover];
         if (L.pillA < 0.05f || jump || !AnimHoverEnabled()) { L.pillY = it.y; L.pillH = it.h; }
     }
     if (!AnimHoverEnabled()) L.pillA = L.hover >= 0 ? 1.f : 0.f;
-    L.lastStep = GetTickCount();
-    SetTimer(L.wnd, kTimerPill, 10, nullptr);
+    L.lastStep = AnimMs();
+    L.pillMoving = true;
+    AnimAddTicker(PillTick);
     InvalidateRect(L.wnd, nullptr, FALSE);
 }
 
 bool PillStep(Level& L) {
-    const DWORD now = GetTickCount();
+    const DWORD now = AnimMs();
     const float dt = std::clamp((float)(now - L.lastStep) / 1000.f, 0.001f, 0.05f);
     L.lastStep = now;
     bool moving = false;
@@ -249,6 +253,17 @@ bool PillStep(Level& L) {
     }
     InvalidateRect(L.wnd, nullptr, FALSE);
     return moving;
+}
+
+// The highlights of the open menus, on the frame clock (each refresh of the display).
+bool PillTick() {
+    bool any = false;
+    for (auto& L : s_levels) {
+        if (!L.pillMoving || !L.wnd) continue;
+        L.pillMoving = PillStep(L);
+        any = any || L.pillMoving;
+    }
+    return any;
 }
 
 void SetHover(int li, int idx, bool jump = false) {
