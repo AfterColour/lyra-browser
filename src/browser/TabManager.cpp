@@ -1,5 +1,6 @@
 // Lyra — список вкладок: создание, закрытие, переключение, навигация, восстановление.
 #include "browser/TabManager.h"
+#include "browser/Touchpad.h"
 #include "ui/TabHoverCard.h"
 #include "browser/SystemProxy.h"
 #include "browser/Extensions.h"
@@ -305,6 +306,7 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     }
 
     WKViewSetIsInWindow(view, true);
+    TouchpadAttach(viewWnd);
 
     auto tab = std::make_unique<Tab>();
     auto ctx = std::make_unique<TabCtx>();
@@ -361,6 +363,7 @@ bool UnloadTab(Tab& t, const std::string& state) {
         return false;
     }
     WKViewSetIsInWindow(view, true);
+    TouchpadAttach(hwnd);
     ShowWindow(hwnd, SW_HIDE);
 
     // The old page: no more callbacks, then closed with its view (as in DestroyTab).
@@ -433,6 +436,7 @@ void PrepareSpareTab() {
         return;
     }
     WKViewSetIsInWindow(view, true);
+    TouchpadAttach(viewWnd);
     auto tab = std::make_unique<Tab>();
     auto ctx = std::make_unique<TabCtx>();
     ctx->id = g_nextTabId++;

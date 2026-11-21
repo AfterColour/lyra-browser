@@ -21,6 +21,7 @@
 #include "ui/Chrome.h"
 #include "ui/FullScreen.h"
 #include "ui/MainWindow.h"
+#include "ui/SwipeNav.h"
 
 #include <set>
 
@@ -365,11 +366,15 @@ void TransitionTick() {
     if (Tab* a = ActiveTab()) if (!s_fresh.count(a->id)) Capture(*a);
 }
 
+bool TransitionCovering() { return CoverUp(); }
+
 void TransitionCancel() {
     if (s_waitTab || CoverUp()) HideCover();
+    SwipeNavCancel();
 }
 
 void TransitionForget(unsigned long long tabId) {
+    SwipeNavForget(tabId);                           // its pages' pictures for swiping
     s_fresh.erase(tabId);
     auto it = s_pictures.find(tabId);
     if (it != s_pictures.end()) {

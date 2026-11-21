@@ -293,6 +293,15 @@ void BuildPages() {
         p.rows.push_back(RToggle(Tr(L"Show bookmarks bar", L"Показывать панель закладок"),
             Tr(L"The Favorites folder under the address field. Ctrl+Shift+B", L"Папка «Избранное» под адресной строкой. Ctrl+Shift+B"),
             &g_prefs.bookmarksBar, []() { SaveSettings(); RefreshLayout(); }));
+        p.rows.push_back(RHeader(Tr(L"Touchpad", L"Тачпад")));
+        p.rows.push_back(RToggle(Tr(L"Swipe between pages", L"Листать страницы свайпом"),
+            Tr(L"Two fingers to the right go back, to the left go forward.",
+               L"Двумя пальцами вправо \x2014 назад, влево \x2014 вперёд."),
+            &g_prefs.swipeNav, save));
+        p.rows.push_back(RToggle(Tr(L"Pinch to zoom", L"Масштаб щипком"),
+            Tr(L"Spread two fingers to magnify the page around the pointer.",
+               L"Разведите два пальца, чтобы увеличить страницу вокруг курсора."),
+            &g_prefs.pinchZoom, save));
         g_pages.push_back(std::move(p));
     }
     {   // Start Page

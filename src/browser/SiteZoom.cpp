@@ -132,7 +132,15 @@ void SiteZoomStep(int direction) {
 }
 
 void SiteZoomReset() {
-    if (Tab* t = ActiveTab()) if (t->page) Set(*t, g_zoom);
+    Tab* t = ActiveTab();
+    if (!t || !t->page) return;
+    Set(*t, g_zoom);
+    // A pinch zoom (touchpad) goes too, around the middle of the page.
+    if (t->view && t->hwnd && std::fabs(WKPageGetScaleFactor(t->page) - 1.0) > 0.001) {
+        RECT r;
+        GetClientRect(t->hwnd, &r);
+        WKViewScalePageAroundPoint(t->view, 1.0, POINT { r.right / 2, r.bottom / 2 });
+    }
 }
 
 void SiteZoomDefaultChanged() {

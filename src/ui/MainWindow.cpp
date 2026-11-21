@@ -51,6 +51,8 @@
 #include "browser/CustomThemes.h"
 #include "ui/WindowFrame.h"
 #include "app/Updater.h"
+#include "browser/Touchpad.h"
+#include "ui/SwipeNav.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -915,6 +917,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_APP_TAB_PAINTED:
         TransitionPainted((unsigned long long)wParam);
         return 0;
+    case WM_APP_SWIPE_PAINTED:
+        SwipeNavPainted((unsigned long long)wParam);
+        return 0;
     case WM_APP_PRINT:
         if (Tab* t = ActiveTab()) if (t->id == (unsigned long long)wParam && !g_closing) PrintActivePage();
         return 0;
@@ -1055,6 +1060,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         KillTimer(hWnd, TIMER_UI);
         KillTimer(hWnd, TIMER_TAB_UNFREEZE);
         AnimShutdown();
+        SwipeNavCancel();
+        TouchpadShutdown();
         if (g_editBrush) { DeleteObject(g_editBrush); g_editBrush = nullptr; }
         if (g_editFont) { DeleteObject(g_editFont); g_editFont = nullptr; }
         PostQuitMessage(0);

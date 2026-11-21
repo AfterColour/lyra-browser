@@ -80,12 +80,16 @@ void LoadInfoPage(Tab& t, const std::wstring& heading, const std::wstring& text,
     WKRelease(body);
 }
 
+#include "browser/Touchpad.h"
+#include "ui/SwipeNav.h"
+
 // --- navigation client --------------------------------------------------------
 static void OnDidStart(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     Tab* t = ResolveTab(ci, "didStart");
     if (!t) return;
     t->navStart = GetTickCount();
     Log("tab#%llu didStart", t->id);
+    SwipeNavLeavingPage(*t);             // the page being left: its picture, for swiping back
     t->loading = true;
     t->progress = 0.08f;
     t->fade = 1.f;
@@ -102,6 +106,7 @@ static void OnDidCommit(WKPageRef, WKNavigationRef, WKTypeRef, const void* ci) {
     ExtensionsOnTabCommitted(t);
     SyncTab(*t);
     SiteZoomApply(*t);                   // the new page's site keeps its own zoom
+    SwipeNavCommitted(t->id);            // swiped here: the picture waits for the page to draw
     ExtensionsOnTabUpdated(t);
     Log("tab#%llu didCommit +%lums %ls", t->id, t->navStart ? GetTickCount() - t->navStart : 0UL, HostOf(t->url).c_str());
     InvalidateChrome();
@@ -433,6 +438,7 @@ void SetPageClients(WKPageRef page, TabCtx* ctx) {
     ui.runJavaScriptPrompt  = OnJsPrompt;
     ui.runOpenPanel         = OnRunOpenPanel;
     ui.printFrame           = OnPrintFrame;
+    ui.didNotHandleWheelEvent = [](WKPageRef page, WKNativeEventPtr, const void*) { TouchpadWheelNotHandled(page); };
     ui.isPlayingAudioDidChange = [](WKPageRef page, const void* ci) {
         Tab* t = ResolveTab(ci, "audio");
         if (!t) return;

@@ -22,5 +22,6 @@ void TransitionWaitLoad(Tab* to);
 void TransitionLoaded(unsigned long long tabId);
 void TransitionPainted(unsigned long long tabId);   // WM_APP_TAB_PAINTED
 void TransitionTick();                               // TIMER_TRANSITION
+bool TransitionCovering();                           // a cover is up over the page area
 void TransitionCancel();                             // resize, move, fullscreen, closing
 void TransitionForget(unsigned long long tabId);     // the tab closed

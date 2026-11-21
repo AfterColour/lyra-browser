@@ -6,6 +6,8 @@
 #include "core/Settings.h"
 #include "ui/Chrome.h"
 #include "ui/MainWindow.h"
+#include "ui/SwipeNav.h"
+#include "browser/Touchpad.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -57,7 +59,9 @@ void AnimOnFrame() {
     const bool settings = SettingsAnimStep(dt);
     const bool split = SplitAnimStep(dt);
     const bool drag = TabDragAnimStep(dt);
-    if (!chrome && !settings && !split && !drag) {
+    const bool touchpad = TouchpadAnimStep(dt);
+    const bool swipe = SwipeNavAnimStep(dt);
+    if (!chrome && !settings && !split && !drag && !touchpad && !swipe) {
         std::lock_guard<std::mutex> lock(s_lock);
         s_running = false;
     }
