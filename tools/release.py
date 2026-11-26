@@ -6,7 +6,9 @@
 Steps:
  1. checks: Lyra and the engine have nothing uncommitted, Lyra is pushed, the version
     was not released before, gh is signed in
- 2. builds Lyra (build.bat) and the installer (tools\\make-installer.py)
+ 2. builds Lyra (build.bat) and the installer (tools\\make-installer.py), then the update smoke
+    test (tools\\smoke-update.py: the previous version updated to this one, first start on
+    YouTube; --no-smoke skips it)
  3. dist\\lyra-<v>-lgpl-sources.zip: the source of the LGPL libraries in the install
     (GStreamer, FFmpeg, GLib, gettext, libiconv) exactly as built - the LGPL asks for it
  4. the engine: its branch and a tag lyra-v<v> go to github.com/AfterColour/lyra-webkit
@@ -155,6 +157,12 @@ def main():
     run(["cmd", "/c", os.path.join(LYRA, "build.bat") + " < nul"], cwd=LYRA)
     run([sys.executable, os.path.join(LYRA, "tools", "make-installer.py")])
     setup = os.path.join(LYRA, "dist", "LyraSetup.exe")
+    if "--no-smoke" in sys.argv:
+        print("  note: update smoke test skipped (--no-smoke)")
+    else:
+        step("2/6 update smoke test: the previous version -> this one, first start on YouTube")
+        if subprocess.run([sys.executable, os.path.join(LYRA, "tools", "smoke-update.py"), "--to", setup]).returncode != 0:
+            fail("the update smoke test failed - see above (python tools\\smoke-update.py runs it alone)")
 
     step("3/6 LGPL sources")
     sources = lgpl_sources(ver)
