@@ -17,7 +17,7 @@
 #include "ui/settings/SettingsPages.h"
 
 #include <WebKit/WKContextMenuItem.h>
-#include <WebKit/WKHitTestResult.h>
+#include <WebKit/WKHitTestResultRef.h>
 #include <WebKit/WKPageContextMenuClient.h>
 
 namespace {
