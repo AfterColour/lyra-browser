@@ -150,7 +150,9 @@ def main():
         print("  note: " + msg + " - needed before a real release")
 
     step("2/6 build")
-    run(["cmd", "/c", "echo.| build.bat"], cwd=LYRA)
+    # Full path and input from nul ("echo.| build.bat" made cmd run it from the pipe, which
+    # did not always find it); nul answers build.bat's closing pause.
+    run(["cmd", "/c", os.path.join(LYRA, "build.bat") + " < nul"], cwd=LYRA)
     run([sys.executable, os.path.join(LYRA, "tools", "make-installer.py")])
     setup = os.path.join(LYRA, "dist", "LyraSetup.exe")
 
