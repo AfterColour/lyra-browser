@@ -6,18 +6,19 @@
   - releases.json: every version's notes (release-notes/<v>.md, English, "---", Russian), written
     by tools/release.py with each release; "What's new" shows them. GitHub's releases are asked
     first, so a release shows here as soon as it is published.
-  - shots/: Lyra's looks for the switcher (tools: patches/set/shots2.ps1, a clean profile).
+  - shots/: Lyra's looks for the switcher, theme x tab layout x sidebar panel closed/open
+    (tools: patches/set/shots3.ps1, a clean profile).
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lyra — a calm browser for Windows</title>
-<meta name="description" content="Lyra is a fast, quiet web browser for Windows on its own WebKit engine.">
+<meta name="description" content="Lyra is a web browser for Windows on its own WebKit engine, with a built-in ad blocker, a sidebar and Chrome and Firefox extensions.">
 <link rel="icon" href="icon.png">
 <meta property="og:title" content="Lyra">
-<meta property="og:description" content="A fast, quiet web browser for Windows on its own WebKit engine.">
-<meta property="og:image" content="https://aftercolour.github.io/lyra-browser/shots/dark-compact.webp">
+<meta property="og:description" content="A web browser for Windows on its own WebKit engine, with a built-in ad blocker, a sidebar and Chrome and Firefox extensions.">
+<meta property="og:image" content="https://aftercolour.github.io/lyra-browser/shots/dark-compact-open.webp">
 <style>
   :root {
     --a1: #9E80FF; --a2: #6A4CE0; --gold: #FFD68C;
@@ -47,7 +48,7 @@
   nav a.link { color: var(--text2); text-decoration: none; font-size: 14px; padding: 6px 10px; border-radius: 8px; transition: color .2s, background .2s; }
   nav a.link:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
   .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
-  .seg button { font-size: 13px; color: var(--text2); background: none; border: 0; height: 30px; padding: 0 14px; border-radius: 999px; cursor: pointer; transition: background .25s, color .25s; }
+  .seg button { font-size: 13px; color: var(--text2); background: none; border: 0; height: 30px; padding: 0 14px; white-space: nowrap; border-radius: 999px; cursor: pointer; transition: background .25s, color .25s; }
   .seg button:hover { color: var(--text); }
   .seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .14); color: var(--text); }
   .lang { margin-left: 8px; }
@@ -129,7 +130,7 @@
   footer a:hover { color: var(--text); }
 
   @media (max-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } h1 { font-size: 50px; } nav a.link { display: none; } }
-  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 42px; } h2 { font-size: 30px; } .rel .date { display: none; } }
+  @media (max-width: 560px) { .looks .seg button { padding: 0 10px; font-size: 12px; } .grid { grid-template-columns: 1fr; } h1 { font-size: 42px; } h2 { font-size: 30px; } .rel .date { display: none; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } .reveal { opacity: 1; transform: none; } }
 </style>
 </head>
@@ -166,6 +167,7 @@
     <div class="controls reveal">
       <div class="seg" id="themeSeg"><button data-v="dark" data-t="dark"></button><button data-v="light" data-t="light"></button></div>
       <div class="seg" id="layoutSeg"><button data-v="compact" data-t="compact"></button><button data-v="row" data-t="row"></button><button data-v="side" data-t="side"></button></div>
+      <div class="seg" id="panelSeg"><button data-v="closed" data-t="panelClosed"></button><button data-v="open" data-t="panelOpen"></button></div>
     </div>
     <div class="frame reveal" id="frame"></div>
     <div class="caption" id="caption"></div>
@@ -211,67 +213,78 @@ const ICON = {
   quiet: '<path d="M12 3 5 6v6c0 4 3 7.5 7 9 4-1.5 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/>',
   read: '<path d="M4 5h6a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4z"/><path d="M20 5h-6a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6z"/>',
   video: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M18 8h0M18 12h0M18 16h0"/>',
+  gesture: '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V10a1.5 1.5 0 0 1 3 0v2"/><path d="M14 11a1.5 1.5 0 0 1 3 0v3a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-2.5-3.3a1.5 1.5 0 0 1 2.3-1.9L8 15"/><path d="M3 5h3M3 5l1.5-1.5M3 5l1.5 1.5"/>',
+  leaf: '<path d="M5 19c0-8 5-13 15-14-1 10-6 15-14 15"/><path d="M5 19 13 11"/>',
 };
 const T = {
   en: {
-    title: "A calm browser for Windows", tag: "Fast, quiet and made with care — on its own WebKit engine.",
+    title: "A calm browser for Windows", tag: "Lyra runs on its own WebKit engine, blocks ads out of the box and takes extensions from Chrome and Firefox.",
     download: "Download for Windows", smartscreen: "Windows may ask about an unknown publisher the first time: More info → Run anyway.",
     meta: (v, mb) => "Version " + v + " · Windows 10 and 11, 64-bit · " + mb + " MB · updates itself",
     metaNone: "Windows 10 and 11, 64-bit · updates itself",
     navLooks: "Looks", navFeatures: "Features", navNews: "What's new", source: "Source", releases: "Releases", feedback: "Feedback",
-    looksTitle: "Make it yours", looksText: "Light or dark, tabs next to the address, in their own row or down the side — these are real screenshots of Lyra.",
-    dark: "Dark", light: "Light", compact: "Compact", row: "Tabs in a row", side: "Tabs on the side",
+    looksTitle: "Make it yours", looksText: "Light or dark, three places for the tabs, the sidebar's panel closed or open. These are screenshots of Lyra itself.",
+    dark: "Dark", light: "Light", compact: "Compact", row: "Tabs in a row", side: "Tabs on the side", panelClosed: "Panel closed", panelOpen: "Panel open",
     captions: {
-      compact: "Compact: the tabs sit next to the address — the most room for the page.",
+      compact: "Compact: the tabs sit next to the address, which leaves the most room for the page.",
       row: "A row of tabs above the address, the classic way.",
       side: "Tabs down the side: long titles stay readable, lots of tabs stay tidy.",
     },
+    panelCaption: "On the right, the Bookmarks panel; the strip beside it also opens history, the reading list, downloads, notes and web panels.",
     featuresTitle: "What's inside",
     features: [
-      ["tabs", "Tabs your way", "Next to the address, in their own row or down the side. Pin the ones you keep; tabs you don't use go to sleep."],
-      ["split", "Split view", "Two pages side by side — drop one tab onto another."],
+      ["tabs", "Tabs your way", "Next to the address, in their own row or down the side. Pin the ones you keep and group the rest under a name and a colour; tabs you haven't looked at for a while go to sleep."],
+      ["sidebar", "Sidebar", "Bookmarks, history, a reading list, downloads and notes beside the page. Any site can live there too as a web panel, Telegram or your music for example, signed in. Ctrl+Shift+E opens it.", true],
+      ["split", "Split view", "Two pages side by side: drop one tab onto another."],
       ["palette", "Command palette", "Ctrl+K finds tabs, bookmarks, history and every command."],
-      ["ext", "Extensions", "Add them from Chrome Web Store or Firefox Add-ons: uBlock Origin Lite, Dark Reader, Bitwarden and more.", true],
-      ["theme", "Themes", "Thousands of themes from the themes.vivaldi.net catalog — choose what each one changes.", true],
-      ["key", "Your passwords, your choice", "Lyra keeps them on this computer, encrypted for your Windows account — or use Bitwarden or Proton Pass.", true],
-      ["quiet", "Quiet by default", "A built-in ad and tracker blocker and private tabs."],
-      ["read", "Read, translate, watch", "Reader view, page translation and picture-in-picture for videos."],
+      ["ext", "Extensions", "From Chrome Web Store and Firefox Add-ons. The full uBlock Origin works, and so do Dark Reader, Bitwarden and others."],
+      ["theme", "Themes", "Thousands of themes from the themes.vivaldi.net catalog, and you choose what each one changes. Sites with a dark theme of their own turn dark with Lyra."],
+      ["key", "Passwords and passkeys", "Lyra keeps passwords on this computer, encrypted for your Windows account, or leaves them to Bitwarden or Proton Pass. Passkeys sign you in with Windows Hello, a security key or your phone.", true],
+      ["gesture", "Touchpad gestures", "Swipe with two fingers to go back and forward, pinch to zoom.", true],
+      ["quiet", "Quiet by default", "A built-in ad and tracker blocker and private tabs. Settings list which sites may use your camera, microphone, notifications and location."],
+      ["read", "Read, translate, watch", "Reader view, page translation, PDF files right in the tab and picture-in-picture for videos."],
       ["video", "Smooth video", "GStreamer with Direct3D 11 hardware decoding for YouTube and the rest."],
+      ["leaf", "Light on memory", "Tabs you aren't looking at give their memory back to Windows and stop their animations. Minimised, Lyra uses almost no processor.", true],
     ],
-    newsTitle: "What's new", newsText: "Every version's notes, straight from the releases.",
-    latest: "Latest", allReleases: "All releases on GitHub →", notesFail: "The notes could not be loaded here — they are on GitHub.",
-    openTitle: "Open where it matters", openText: "The engine is open source. Lyra's own code is public to read, so you can see what runs on your computer.",
+    newsTitle: "What's new", newsText: "The notes of every version, the same as on GitHub.",
+    latest: "Latest", allReleases: "All releases on GitHub →", notesFail: "The notes could not be loaded here. They are on GitHub.",
+    openTitle: "Source code", openText: "The engine is open source. Lyra's own code is public to read, so you can see what runs on your computer.",
     chipLyra: "Lyra on GitHub", chipEngine: "The WebKit engine", chipLicense: "License",
     date: (d) => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
   },
   ru: {
-    title: "Спокойный браузер для Windows", tag: "Быстрый, тихий и сделанный с любовью — на собственном движке WebKit.",
+    title: "Спокойный браузер для Windows", tag: "Lyra работает на собственном движке WebKit, сразу блокирует рекламу и ставит расширения из Chrome и Firefox.",
     download: "Скачать для Windows", smartscreen: "При первом запуске Windows может спросить о неизвестном издателе: «Подробнее» → «Выполнить в любом случае».",
     meta: (v, mb) => "Версия " + v + " · Windows 10 и 11, 64-бит · " + mb + " МБ · обновляется сама",
     metaNone: "Windows 10 и 11, 64-бит · обновляется сама",
     navLooks: "Внешний вид", navFeatures: "Возможности", navNews: "Что нового", source: "Исходники", releases: "Версии", feedback: "Обратная связь",
-    looksTitle: "Настройте под себя", looksText: "Светлая или тёмная, вкладки рядом с адресом, отдельной строкой или сбоку — это настоящие снимки Lyra.",
-    dark: "Тёмная", light: "Светлая", compact: "Компактно", row: "Вкладки строкой", side: "Вкладки сбоку",
+    looksTitle: "Настройте под себя", looksText: "Светлая или тёмная, три места для вкладок, панель сбоку закрыта или открыта. Это снимки самой Lyra.",
+    dark: "Тёмная", light: "Светлая", compact: "Компактно", row: "Вкладки строкой", side: "Вкладки сбоку", panelClosed: "Панель закрыта", panelOpen: "Панель открыта",
     captions: {
-      compact: "Компактно: вкладки рядом с адресом — больше всего места для страницы.",
+      compact: "Компактно: вкладки рядом с адресом, и странице остаётся больше всего места.",
       row: "Строка вкладок над адресом, по-классически.",
-      side: "Вкладки сбоку: длинные названия видно целиком, много вкладок — и всё аккуратно.",
+      side: "Вкладки сбоку: длинные названия видно целиком, а много вкладок не превращается в кашу.",
     },
+    panelCaption: "Справа открыта панель закладок; полоса значков рядом открывает ещё историю, список для чтения, загрузки, заметки и веб-панели.",
     featuresTitle: "Что внутри",
     features: [
-      ["tabs", "Вкладки как удобно", "Рядом с адресом, отдельной строкой или сбоку. Нужные можно закрепить, неиспользуемые засыпают."],
-      ["split", "Разделённый экран", "Две страницы рядом — просто перетащите вкладку на вкладку."],
+      ["tabs", "Вкладки как удобно", "Рядом с адресом, отдельной строкой или сбоку. Нужные можно закрепить, остальные собрать в группы с названием и цветом; вкладки, которые давно не открывали, засыпают."],
+      ["sidebar", "Боковая панель", "Закладки, история, список для чтения, загрузки и заметки рядом со страницей. Там же может жить любой сайт как веб-панель, например Telegram или музыка, с вашим входом. Открывается по Ctrl+Shift+E.", true],
+      ["split", "Разделённый экран", "Две страницы рядом: перетащите вкладку на вкладку."],
       ["palette", "Палитра команд", "Ctrl+K находит вкладки, закладки, историю и любые команды."],
-      ["ext", "Расширения", "Из Chrome Web Store и Firefox Add-ons: uBlock Origin Lite, Dark Reader, Bitwarden и другие.", true],
-      ["theme", "Темы", "Тысячи тем из каталога themes.vivaldi.net — и выбор, что каждая из них меняет.", true],
-      ["key", "Пароли — как вам удобно", "Lyra хранит их на этом компьютере, зашифрованными для вашей учётной записи Windows, — или Bitwarden и Proton Pass.", true],
-      ["quiet", "Тихий с самого начала", "Встроенный блокировщик рекламы и трекеров, приватные вкладки."],
-      ["read", "Читать, переводить, смотреть", "Режим чтения, перевод страниц и «картинка в картинке» для видео."],
-      ["video", "Плавное видео", "GStreamer и аппаратное декодирование через Direct3D 11 — для YouTube и не только."],
+      ["ext", "Расширения", "Из Chrome Web Store и Firefox Add-ons. Полный uBlock Origin работает, как и Dark Reader, Bitwarden и другие."],
+      ["theme", "Темы", "Тысячи тем из каталога themes.vivaldi.net, и вы выбираете, что каждая из них меняет. Сайты со своей тёмной темой темнеют вместе с Lyra."],
+      ["key", "Пароли и ключи доступа", "Lyra хранит пароли на этом компьютере, зашифрованными для вашей учётной записи Windows, или доверяет их Bitwarden и Proton Pass. Ключи доступа впускают на сайты через Windows Hello, ключ безопасности или телефон.", true],
+      ["gesture", "Жесты тачпада", "Двумя пальцами листайте назад и вперёд, щипком меняйте масштаб.", true],
+      ["quiet", "Тихий с самого начала", "Встроенный блокировщик рекламы и трекеров и приватные вкладки. В настройках видно, каким сайтам вы разрешили камеру, микрофон, уведомления и местоположение."],
+      ["read", "Читать, переводить, смотреть", "Режим чтения, перевод страниц, PDF прямо во вкладке и «картинка в картинке» для видео."],
+      ["video", "Плавное видео", "GStreamer и аппаратное декодирование через Direct3D 11 для YouTube и остальных сайтов."],
+      ["leaf", "Бережёт память", "Вкладки, на которые вы не смотрите, отдают память Windows и останавливают анимации. Свёрнутая Lyra почти не нагружает процессор.", true],
     ],
-    newsTitle: "Что нового", newsText: "Заметки к каждой версии — прямо из релизов.",
-    latest: "Последняя", allReleases: "Все версии на GitHub →", notesFail: "Заметки не загрузились — они есть на GitHub.",
-    openTitle: "Открыт там, где это важно", openText: "Движок — с открытым исходным кодом. Код самой Lyra открыт для чтения: видно, что работает на вашем компьютере.",
+    newsTitle: "Что нового", newsText: "Заметки к каждой версии, те же, что на GitHub.",
+    latest: "Последняя", allReleases: "Все версии на GitHub →", notesFail: "Заметки не загрузились. Они есть на GitHub.",
+    openTitle: "Исходный код", openText: "У движка открытый исходный код. Код самой Lyra открыт для чтения: видно, что работает на вашем компьютере.",
     chipLyra: "Lyra на GitHub", chipEngine: "Движок WebKit", chipLicense: "Лицензия",
     date: (d) => d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }),
   },
@@ -280,37 +293,40 @@ const NEW_LABEL = { en: "New", ru: "Новое" };
 let lang = "en";
 try { lang = localStorage.getItem("lyra.lang") || ((navigator.language || "").toLowerCase().startsWith("ru") ? "ru" : "en"); } catch (e) {}
 let manifest = null, releases = null, notesFailed = false;
-const look = { theme: "dark", layout: "compact" };
+const look = { theme: "dark", layout: "compact", panel: "closed" };
 let lookTouched = false;
 function $(id) { return document.getElementById(id); }
 
 // ---- the looks switcher ----------------------------------------------------------------------
 const frame = $("frame");
 const imgs = {};
-for (const th of ["dark", "light"]) for (const ly of ["compact", "row", "side"]) {
+const lookKey = () => look.theme + "-" + look.layout + "-" + look.panel;
+for (const th of ["dark", "light"]) for (const ly of ["compact", "row", "side"]) for (const pn of ["closed", "open"]) {
   const im = new Image();
-  im.src = "shots/" + th + "-" + ly + ".webp";
-  im.alt = "Lyra: " + th + ", " + ly;
+  im.src = "shots/" + th + "-" + ly + "-" + pn + ".webp";
+  im.alt = "Lyra: " + th + ", " + ly + ", sidebar panel " + pn;
   im.decoding = "async";
   frame.appendChild(im);
-  imgs[th + "-" + ly] = im;
+  imgs[th + "-" + ly + "-" + pn] = im;
 }
 function showLook() {
-  for (const k in imgs) imgs[k].classList.toggle("on", k === look.theme + "-" + look.layout);
-  document.querySelectorAll("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === look.theme)));
-  document.querySelectorAll("#layoutSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === look.layout)));
-  $("caption").textContent = T[lang].captions[look.layout];
+  for (const k in imgs) imgs[k].classList.toggle("on", k === lookKey());
+  for (const [seg, key] of [["themeSeg", "theme"], ["layoutSeg", "layout"], ["panelSeg", "panel"]])
+    document.querySelectorAll("#" + seg + " button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === look[key])));
+  $("caption").textContent = T[lang].captions[look.layout] + (look.panel === "open" ? " " + T[lang].panelCaption : "");
 }
-for (const [seg, key] of [["themeSeg", "theme"], ["layoutSeg", "layout"]])
+for (const [seg, key] of [["themeSeg", "theme"], ["layoutSeg", "layout"], ["panelSeg", "panel"]])
   document.querySelectorAll("#" + seg + " button").forEach((b) => b.addEventListener("click", () => { lookTouched = true; look[key] = b.dataset.v; showLook(); }));
-// Until it is touched, it goes through the looks by itself (while it is on screen).
+// Until it is touched, it goes through the looks by itself (while it is on screen): each layout,
+// then the same with the sidebar's panel open.
 let lookVisible = false;
-const order = [["dark", "compact"], ["dark", "row"], ["dark", "side"], ["light", "side"], ["light", "row"], ["light", "compact"]];
+const order = [["dark", "compact", "closed"], ["dark", "compact", "open"], ["dark", "row", "closed"], ["dark", "side", "closed"],
+               ["dark", "side", "open"], ["light", "side", "closed"], ["light", "row", "open"], ["light", "compact", "closed"]];
 let step = 0;
 setInterval(() => {
   if (lookTouched || !lookVisible || document.hidden || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   step = (step + 1) % order.length;
-  [look.theme, look.layout] = order[step];
+  [look.theme, look.layout, look.panel] = order[step];
   showLook();
 }, 3500);
 if ("IntersectionObserver" in window) new IntersectionObserver((es) => { lookVisible = es[0].isIntersecting; }, { threshold: .4 }).observe(frame);
