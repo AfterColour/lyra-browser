@@ -9,3 +9,5 @@ struct Tab;
 // function body in every web page that finishes loading; whatever it returns (it may await) is
 // written to tabs.log as "probe: ...". Nothing happens without the variable.
 void DevProbePageLoaded(Tab& t);
+// LYRA_PROCS=<seconds> (developer): pages, their processes and memory in tabs.log.
+void DevProcessesStart();

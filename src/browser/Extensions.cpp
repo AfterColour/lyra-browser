@@ -3406,6 +3406,11 @@ void ExtensionsOnTabRemoved(unsigned long long id) {
     Broadcast("tabs.onRemoved", "[" + std::to_string(id) + ",{\"windowId\":1,\"isWindowClosing\":false}]");
 }
 
+void ExtensionsListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out) {
+    for (auto& [id, h] : s_hosts)
+        if (h && h->bgPage) out.push_back({ L"extension background " + id, h->bgPage });
+}
+
 void ExtensionsShutdown() {
     FlushWrites();
     for (auto& [id, h] : s_hosts) StopBackground(id);

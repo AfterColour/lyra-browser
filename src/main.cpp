@@ -38,6 +38,7 @@
 #include "browser/Extensions.h"
 #include "app/Environment.h"
 #include "app/Log.h"
+#include "browser/DevProbe.h"
 #include <algorithm>
 #include <map>
 #include <string>
@@ -209,6 +210,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     ScheduleSpareTab(3000);              // the next new tab, once the first page is up
     UpdaterInit();                       // installed copies look for updates (app/Updater.cpp)
     StallWatchStart();                   // notes in tabs.log where the window got stuck (app/StallWatch.cpp)
+    DevProcessesStart();                 // LYRA_PROCS (developer)
 
     // LYRA_MSG_PROF=1 (developer): where the main thread's time goes, by window class and
     // message, every 2 s in tabs.log.

@@ -42,6 +42,7 @@
 #include "ui/FullScreen.h"
 #include "ui/Crossfade.h"
 #include "browser/TabSleep.h"
+#include "browser/MemorySaver.h"
 #include "browser/ContextMenu.h"
 #include "browser/SplitView.h"
 #include "browser/SystemProxy.h"
@@ -361,6 +362,40 @@ static void RunCaptionButton(HWND hWnd, Hit::Kind k) {
     }
 }
 
+// The window minimised: the pages on screen are told they are hidden, and shown again when it
+// comes back. A WebKit view learns only of its own window being hidden, not of the main window
+// (WebKit's FIXME, bug 54104): a minimised page went on animating and painting - a third to half
+// of a core in the page's process and as much in the GPU process for nothing. (A WM_SHOWWINDOW
+// with lParam 0 is what WebKit takes as its window being hidden or shown; nothing is moved.)
+static void PagesSeeMinimized(bool minimized) {
+    static std::vector<HWND> s_hidden;
+    if (minimized) {
+        if (!s_hidden.empty()) return;
+        EnumChildWindows(g_hWnd, [](HWND h, LPARAM) -> BOOL {
+            wchar_t cls[64] = {};
+            GetClassNameW(h, cls, 64);
+            if (wcscmp(cls, L"WebKit2WebViewWindowClass") == 0 && IsWindowVisible(h)) {
+                s_hidden.push_back(h);
+                SendMessageW(h, WM_SHOWWINDOW, FALSE, 0);
+            }
+            return TRUE;
+        }, 0);
+        if (!s_hidden.empty()) Log("minimised: %zu page(s) told they are hidden", s_hidden.size());
+        return;
+    }
+    if (s_hidden.empty()) return;
+    for (HWND h : std::exchange(s_hidden, {})) {
+        if (!IsWindow(h) || !(GetWindowLongW(h, GWL_STYLE) & WS_VISIBLE)) continue;
+        SendMessageW(h, WM_SHOWWINDOW, TRUE, 0);
+        RedrawWindow(h, nullptr, nullptr, RDW_INVALIDATE);
+    }
+    // (A page that was hidden paints a fresh frame; asked for at once.)
+    if (Tab* t = ActiveTab()) {
+        if (t->page) WKPageForceRepaint(t->page, nullptr, [](WKErrorRef, void*) {});
+        if (Tab* p = SplitPartnerOf(*t)) if (p->page) WKPageForceRepaint(p->page, nullptr, [](WKErrorRef, void*) {});
+    }
+}
+
 // ----------------------------------------------------------------------------
 //  Window procedure
 // ----------------------------------------------------------------------------
@@ -393,6 +428,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         BookmarkPopupClose();
         DownloadsPopupClose();
         TransitionCancel();
+        PagesSeeMinimized(wParam == SIZE_MINIMIZED);
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         FindBarReposition();
         return 0;
@@ -946,6 +982,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (g_tick % 32 == 0) ExpireReadyTabs();
         if (g_tick % 32 == 16) TabSleepTick();
+        if (g_tick % 160 == 80) MemorySaverTick();       // (about every 5 s)
         if (g_tick % 32 == 0) {
             for (auto& tp : g_tabs)
                 if (SyncTab(*tp)) dirty = true;

@@ -83,6 +83,7 @@ void LoadSettings() {
     g_prefs.loadIndicator = std::max(0, std::min(1, geti(L"LoadIndicator", 0)));
     g_prefs.warmTabs = std::max(0, std::min(4, geti(L"ReadyTabs", 2)));
     g_prefs.spareTab = geti(L"PrepareNewTab", 1) != 0;
+    g_prefs.memorySaver = geti(L"MemorySaver", 1) != 0;
     g_prefs.frameRate = std::max(0, std::min(2, geti(L"FrameRate", 2)));
     g_prefs.bookmarksBar = geti(L"BookmarksBar", 0) != 0;
     g_prefs.sidebar = geti(L"Sidebar", 1) != 0;
@@ -151,7 +152,7 @@ void SaveSettings() {
     puti(L"WebAudio", g_prefs.webAudio);
     puti(L"AskDownloadFolder", g_prefs.askDownload); puti(L"ShowDownloads", g_prefs.downloadsPopup);
     puti(L"LoadIndicator", g_prefs.loadIndicator); puti(L"ReadyTabs", g_prefs.warmTabs);
-    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"FrameRate", g_prefs.frameRate); puti(L"BookmarksBar", g_prefs.bookmarksBar);
+    puti(L"PrepareNewTab", g_prefs.spareTab); puti(L"MemorySaver", g_prefs.memorySaver); puti(L"FrameRate", g_prefs.frameRate); puti(L"BookmarksBar", g_prefs.bookmarksBar);
     puti(L"Sidebar", g_prefs.sidebar); puti(L"SidebarRight", g_prefs.sidebarRight); puti(L"SidebarMode", g_prefs.sidebarMode);
     puti(L"SwipeNavigation", g_prefs.swipeNav); puti(L"PinchZoom", g_prefs.pinchZoom);
     puti(L"ClearOnExitHistory", g_prefs.clearExitHistory); puti(L"ClearOnExitCookies", g_prefs.clearExitCookies);

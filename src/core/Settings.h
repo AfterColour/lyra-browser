@@ -36,7 +36,8 @@ struct Prefs {
     bool downloadsPopup = true;  // show the downloads list when a download starts
     int  loadIndicator = 0;      // page loading in the address field: 0 glowing line, 1 fill (Safari)
     int  warmTabs = 2;           // recently used tabs kept rendered for instant switching (0..4)
-    bool spareTab = true;        // a start page is prepared in the background for the next new tab
+    bool spareTab = true;
+    bool memorySaver = true;     // idle WebKit processes give their memory back (browser/MemorySaver.cpp)        // a start page is prepared in the background for the next new tab
     bool swipeNav = true;          // two-finger swipe on a touchpad goes back / forward (ui/SwipeNav)
     bool pinchZoom = true;         // pinching on a touchpad zooms the page (browser/Touchpad)
     bool sidebar = true;           // the sidebar's strip of icons beside the page (ui/Sidebar)

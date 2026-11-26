@@ -1161,6 +1161,11 @@ void SidebarTestPointer(WPARAM kind, LPARAM lp) {
     Log("sidebar test: pointer %ld,%ld%s shown=%d open=%d pinned=%d", s_testPt.x, s_testPt.y, kind == 1 ? " click" : "", (int)s_autoShown, s_open, (int)s_pinned);
 }
 
+void SidebarListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out) {
+    if (s_page) out.push_back({ L"sidebar panels", s_page });
+    for (auto& w : s_web) if (w->page) out.push_back({ L"sidebar web panel " + w->title, w->page });
+}
+
 void SidebarRaise() {
     if (s_host && IsWindowVisible(s_host)) SetWindowPos(s_host, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }

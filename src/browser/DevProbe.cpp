@@ -7,7 +7,10 @@
 
 #include <WebKit/WKMutableDictionary.h>
 #include <WebKit/WKPagePrivate.h>
+#include <psapi.h>
 #include <fstream>
+#include <map>
+#include <vector>
 #include <iterator>
 
 // LYRA_PROBE_SNAPSHOT=<file.png>: after the probe, a picture of the page (WKPageTakeSnapshot) goes there.
@@ -54,4 +57,46 @@ void DevProbePageLoaded(Tab& t) {
     WKPageCallAsyncJavaScript(t.page, js, (WKDictionaryRef)args, nullptr, (void*)(uintptr_t)t.id, OnProbeDone);
     WKRelease(args);
     WKRelease(js);
+}
+
+// LYRA_PROCS=<seconds> (developer): that long after start, and again every 30 s, which page runs
+// in which process and how much memory each process takes (tabs.log).
+void TabsListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out);
+void SidebarListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out);
+void ExtensionsListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out);
+
+static void LogProcesses() {
+    std::vector<std::pair<std::wstring, WKPageRef>> pages;
+    TabsListPages(pages);
+    SidebarListPages(pages);
+    ExtensionsListPages(pages);
+    std::map<WKProcessID, std::vector<std::wstring>> byPid;
+    for (auto& [what, page] : pages) byPid[WKPageGetProcessIdentifier(page)].push_back(what);
+    if (!pages.empty()) {
+        if (WKProcessID gpu = WKPageGetGPUProcessIdentifier(pages.front().second)) byPid[gpu].push_back(L"(GPU process)");
+    }
+    size_t total = 0;
+    for (auto& [pid, whats] : byPid) {
+        size_t ws = 0, priv = 0;
+        if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid)) {
+            PROCESS_MEMORY_COUNTERS_EX pmc = {};
+            if (GetProcessMemoryInfo(h, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) { ws = pmc.WorkingSetSize; priv = pmc.PrivateUsage; }
+            CloseHandle(h);
+        }
+        total += ws;
+        std::wstring list;
+        for (auto& w : whats) list += (list.empty() ? L"" : L", ") + w;
+        Log("procs: pid %lu %zu MB (private %zu MB): %ls", (unsigned long)pid, ws >> 20, priv >> 20, list.c_str());
+    }
+    Log("procs: %zu MB in these processes", total >> 20);
+}
+
+void DevProcessesStart() {
+    wchar_t v[8] = {};
+    if (!GetEnvironmentVariableW(L"LYRA_PROCS", v, 8) || _wtoi(v) <= 0) return;
+    SetTimer(nullptr, 0, (UINT)_wtoi(v) * 1000, [](HWND, UINT, UINT_PTR id, DWORD) {
+        KillTimer(nullptr, id);
+        LogProcesses();
+        SetTimer(nullptr, 0, 30000, [](HWND, UINT, UINT_PTR, DWORD) { LogProcesses(); });
+    });
 }

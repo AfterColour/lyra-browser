@@ -574,6 +574,10 @@ void BuildPages() {
             Tr(L"A start page waits in the background, so a new tab appears at once.",
                L"Стартовая страница ждёт в фоне, и новая вкладка появляется сразу."),
             &g_prefs.spareTab, [save]() { if (g_prefs.spareTab) ScheduleSpareTab(300); else DiscardSpareTab(); save(); }));
+        p.rows.push_back(RToggle(Tr(L"Compress idle memory", L"Сжимать память в простое"),
+            Tr(L"Background tabs, extensions and other hidden parts that do nothing for half a minute give their memory to Windows to compress; it comes back in a moment.",
+               L"Фоновые вкладки, расширения и другие скрытые части, которые полминуты ничего не делают, отдают память Windows на сжатие; она возвращается за мгновение."),
+            &g_prefs.memorySaver, save));
         p.rows.push_back(RInfo(Tr(L"Most tabs at once", L"Наибольшее число вкладок"), std::to_wstring(metrics::kMaxTabs)));
         p.rows.push_back(RInfo(Tr(L"Closing the last tab", L"Закрытие последней вкладки"),
                                Tr(L"Closes the window", L"Закрывает окно")));

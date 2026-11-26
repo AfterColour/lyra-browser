@@ -464,6 +464,11 @@ void PrepareSpareTab() {
     Log("spare tab#%llu prepared", s_spare->id);
 }
 
+void TabsListPages(std::vector<std::pair<std::wstring, WKPageRef>>& out) {
+    for (auto& t : g_tabs) if (t->page) out.push_back({ L"tab#" + std::to_wstring(t->id) + L" " + HostOf(t->url), t->page });
+    if (s_spare && s_spare->page) out.push_back({ L"spare new tab", s_spare->page });
+}
+
 void DiscardSpareTab() {
     KillTimer(g_hWnd, TIMER_SPARE_TAB);
     if (!s_spare) return;

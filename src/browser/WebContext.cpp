@@ -63,6 +63,13 @@ void ApplyWebPrefs() {
     WKPreferencesSetWebAudioEnabled(g_preferences, g_prefs.webAudio);
     WKPreferencesSetDefaultFontSize(g_preferences, (uint32_t)g_prefs.defaultFont);
     WKPreferencesSetMinimumFontSize(g_preferences, (uint32_t)g_prefs.minFont);
+    // Pages not on screen (background tabs, the window minimised) stop their CSS animations and run
+    // their timers less often, as WebKit does on macOS and Linux (off by default on Windows: a
+    // hidden page with an endless animation, Wikipedia's pulsing dot, kept a third of a core and as
+    // much of the GPU process busy). Extensions' background pages keep their own preferences.
+    WKPreferencesSetHiddenPageCSSAnimationSuspensionEnabled(g_preferences, true);
+    WKPreferencesSetHiddenPageDOMTimerThrottlingEnabled(g_preferences, true);
+    WKPreferencesSetHiddenPageDOMTimerThrottlingAutoIncreases(g_preferences, true);
     // Camera and microphone (navigator.mediaDevices), on secure sites only, as in other browsers.
     WKPreferencesSetMediaDevicesEnabled(g_preferences, true);
     WKPreferencesSetMediaCaptureRequiresSecureConnection(g_preferences, true);
