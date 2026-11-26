@@ -7,6 +7,8 @@ rem    build.bat run      - build and start run\Lyra.exe
 rem                         (arguments combine: build.bat fresh run)
 rem  Lyra is built against WebKit with the GStreamer media backend (YouTube, MSE):
 rem  WebKitBuild\ReleaseGst, made by C:\WebKit\build-webkit-gst.bat.
+rem  LYRA_WEBKITDIR, LYRA_BUILDDIR, LYRA_RUNDIR: another engine build and folders of its own
+rem  (tools\update-engine.py builds against the upstream merge into build-next\, run-next\).
 rem ==========================================================================
 setlocal
 
@@ -45,6 +47,9 @@ set "RUN="
 set "BUILDDIR=build"
 set "RUNDIR=run"
 set "WEBKITDIR=C:/WebKit/WebKit/WebKitBuild/ReleaseGst"
+if defined LYRA_WEBKITDIR set "WEBKITDIR=%LYRA_WEBKITDIR:\=/%"
+if defined LYRA_BUILDDIR set "BUILDDIR=%LYRA_BUILDDIR%"
+if defined LYRA_RUNDIR set "RUNDIR=%LYRA_RUNDIR%"
 for %%a in (%*) do (
     if /i "%%a"=="fresh" set "FRESH=--fresh"
     if /i "%%a"=="run" set "RUN=1"
@@ -54,10 +59,10 @@ if not exist "%WEBKITDIR_WIN%\bin\WebKit2.dll" goto :no_webkit
 
 rem --- 4. Leftover browser processes keep the WebKit DLLs locked: stop them --------
 rem Only those started from this run\ folder: an installed Lyra (and its WebKit processes) stays open.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$run = '%~dp0run\'; Get-Process Lyra,MyBrowser,WebKitGPUProcess,WebKitWebProcess,WebKitNetworkProcess -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($run, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Write-Host ('[build] ' + $_.Name + ' is still running, stopping it'); Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 300"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$run = '%~dp0%RUNDIR%\';Get-Process Lyra,MyBrowser,WebKitGPUProcess,WebKitWebProcess,WebKitNetworkProcess -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($run, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Write-Host ('[build] ' + $_.Name + ' is still running, stopping it'); Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 300"
 rem A process that cannot be stopped still lets its files be renamed: move them aside so
 rem the new ones can be copied in. The *.locked files are removed by a later build.
-for %%d in (run run-gst) do if exist "%~dp0%%d" (
+for %%d in (run run-gst %RUNDIR%) do if exist "%~dp0%%d" (
     del /q "%~dp0%%d\*.locked" >nul 2>&1
     for %%f in ("%~dp0%%d\*.dll" "%~dp0%%d\*.exe") do (
         2>nul ( >>"%%~f" call; ) || (

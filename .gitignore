@@ -19,3 +19,5 @@
 /_to_delete/
 # Python caches of tools/
 __pycache__/
+/build-next/
+/run-next/

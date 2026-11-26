@@ -2,6 +2,7 @@
 
     python tools\\smoke-update.py                      the newest earlier dist\\LyraSetup-<v>.exe -> dist\\LyraSetup.exe
     python tools\\smoke-update.py --from A.exe --to B.exe
+    python tools\\smoke-update.py --app run-next          a built folder, no installers (steps 1-2 skipped)
 
 In a folder and a profile of its own (%TEMP%\\lyra-smoke-*, never the installed Lyra or your
 profile):
@@ -24,11 +25,32 @@ LOAD_LIMIT_S = 90          # from start to the probe's answer
 OLD_WARMUP_S = 120         # the earlier version: until its plugin cache is written
 
 PROBE = r"""
+// A fresh profile gets YouTube's cookie consent dialog, which pauses the video (a person would
+// answer it): "Reject all". On consent.youtube.com (a page of its own) the click navigates back to
+// the video, which ends this run of the probe; it runs again on that page.
+function consent() {
+  const boxes = document.querySelectorAll('ytd-consent-bump-v2-lightbox, tp-yt-paper-dialog, form[action*="consent"]');
+  const scope = location.hostname.startsWith('consent.') ? [document] : [...boxes].filter(b => b.offsetParent !== null || b.tagName === 'FORM');
+  for (const box of scope)
+    for (const b of box.querySelectorAll('button, tp-yt-paper-button, [role=button]')) {
+      const s = ((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')).toLowerCase();
+      if (/reject|отклонить/.test(s)) { b.click(); return true; }
+    }
+  return false;
+}
+let consented = false;
 const t0 = performance.now();
 let v = null;
-while (!(v = document.querySelector('video')) && performance.now() - t0 < 20000) await new Promise(r => setTimeout(r, 250));
+while (!(v = document.querySelector('video')) && performance.now() - t0 < 20000) {
+  consented = consent() || consented;
+  await new Promise(r => setTimeout(r, 250));
+}
 const out = { vis: document.visibilityState, video: !!v };
-await new Promise(r => setTimeout(r, 4000));          // (YouTube's own start-up work first)
+for (let i = 0; i < 16; ++i) {                       // (YouTube's own start-up work first: 4 s)
+  consented = consent() || consented;
+  await new Promise(r => setTimeout(r, 250));
+}
+out.consent = consented;
 let raf = 0; const r0 = performance.now();
 await new Promise(res => { (function f() { raf++; if (performance.now() - r0 < 2000) requestAnimationFrame(f); else res(); })(); setTimeout(res, 3000); });
 out.raf2s = raf;
@@ -42,6 +64,11 @@ if (v) {
   out.played = +(v.currentTime - c0).toFixed(2);
   out.readyState = v.readyState;
   out.error = v.error ? v.error.code : null;
+  // (for a failure: why it stands still)
+  out.paused = v.paused; out.t = +v.currentTime.toFixed(2); out.dur = +(v.duration || 0).toFixed(1);
+  out.ad = !!document.querySelector('.ad-showing');
+  const err = document.querySelector('.ytp-error, yt-playability-error-supported-renderers');
+  if (err && err.innerText) out.page = err.innerText.trim().slice(0, 120);
 }
 return JSON.stringify(out);
 """
@@ -110,8 +137,14 @@ def bring_to_front(pid):
     if not found: return False
     h = ctypes.c_void_p(found[0])
     user32.ShowWindow(h, 9)                                  # SW_RESTORE
-    user32.SetForegroundWindow(h)
-    return user32.GetForegroundWindow() == found[0]
+    for _ in range(3):
+        user32.SetForegroundWindow(h)
+        if user32.GetForegroundWindow() == found[0]: return True
+        # Windows refuses while another app has the focus; a key press (Alt) from this process
+        # lets SetForegroundWindow through.
+        user32.keybd_event(0x12, 0, 0, 0); user32.keybd_event(0x12, 0, 2, 0)
+        time.sleep(0.5)
+    return False
 
 
 def run_page(inst, env, log_path, limit):
@@ -125,16 +158,82 @@ def run_page(inst, env, log_path, limit):
         time.sleep(1)
         for line in log.lines():
             m = re.search(r"probe tab#\d+: (.*)$", line)
-            if m:
+            # "(no result)": the page navigated away while the probe ran (YouTube reloads itself on a
+            # fresh profile); the probe runs again on the next page.
+            if m and m.group(1).strip() != "(no result)":
                 try: result = json.loads(m.group(1))
                 except ValueError: result = {"raw": m.group(1)}
     return result, time.time() - t, log.lines()
+
+
+def check_page(result, secs, lines, cache_rebuilt, problems):
+    finish = [l for l in lines if "didFinish" in l and "tab#1" in l and "closed" not in l]
+    say("page: %s" % (finish[0].split("] ", 1)[-1] if finish else "no didFinish"))
+    say("probe after %.0f s: %s" % (secs, json.dumps(result) if result else "none"))
+    if cache_rebuilt:
+        problems.append("the plugin cache was rebuilt when the page opened - the first page with video waits for it")
+    if result is None:
+        problems.append("the YouTube page did not finish loading in %d s" % LOAD_LIMIT_S)
+    else:
+        if not result.get("video"): problems.append("no <video> on the page")
+        if result.get("raf2s", 0) < 30: problems.append("the page hardly draws: %s animation frames in 2 s" % result.get("raf2s"))
+        if result.get("video") and result.get("played", 0) < 1.0:
+            problems.append("the video does not play: %.2f s of it in 2 s (%s)" % (result.get("played", 0), result.get("playError") or "error %s" % result.get("error")))
+
+
+def finish(problems, work):
+    if problems:
+        for p in problems: say("FAIL: " + p)
+        say("kept for a look: " + work)
+        return 1
+    shutil.rmtree(work, ignore_errors=True)
+    say("passed")
+    return 0
+
+
+def setup_work():
+    work = tempfile.mkdtemp(prefix="lyra-smoke-")
+    prof = os.path.join(work, "profile")
+    os.makedirs(prof)
+    probe = os.path.join(work, "probe.js")
+    open(probe, "w", encoding="utf-8").write(PROBE)
+    env = dict(os.environ, LOCALAPPDATA=prof, LYRA_PROBE=probe)
+    registry = os.path.join(prof, "Lyra", "gstreamer-registry.bin")
+    mtime = lambda: os.path.getmtime(registry) if os.path.exists(registry) else None
+    return work, prof, env, os.path.join(prof, "Lyra", "tabs.log"), mtime
+
+
+def check_app(app):
+    """--app: a built Lyra folder as it is (no installers): the plugin cache built the way the
+    installer builds it (Lyra.exe --gst-registry), then the same page checks. For an engine that is
+    not released yet (tools/update-engine.py: run-next)."""
+    app = os.path.abspath(app)
+    if not os.path.exists(os.path.join(app, "Lyra.exe")): raise SystemExit("no Lyra.exe in " + app)
+    work, prof, env, log_path, mtime = setup_work()
+    say("%s, profile in %s" % (app, work))
+    problems = []
+    try:
+        t = time.time()
+        subprocess.run([os.path.join(app, "Lyra.exe"), "--gst-registry"], env=env, cwd=app, timeout=180)
+        built = mtime()
+        say("plugin cache: %s in %.0f s" % ("built" if built else "NOT built", time.time() - t))
+        if not built: problems.append("Lyra.exe --gst-registry did not build the plugin cache")
+        result, secs, lines = run_page(app, env, log_path, LOAD_LIMIT_S)
+        kill_under(app)
+        check_page(result, secs, lines, built is not None and mtime() != built, problems)
+    finally:
+        kill_under(app)
+    return finish(problems, work)
 
 
 def main():
     args = sys.argv[1:]
     def opt(name):
         return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
+    if opt("--app"):
+        if lyra_window_open():
+            raise SystemExit("Lyra is open: close it first (a second Lyra hands its page to the open one)")
+        return check_app(opt("--app"))
     new = opt("--to") or os.path.join(DIST, "LyraSetup.exe")
     ver = re.search(r"VERSION (\d+\.\d+\.\d+)", open(os.path.join(LYRA, "CMakeLists.txt"), encoding="utf-8").read()).group(1)
     old = opt("--from") or previous_setup(".".join(map(str, vkey(new))) if vkey(new) else ver)
@@ -144,15 +243,8 @@ def main():
     if lyra_window_open():
         raise SystemExit("Lyra is open: close it first (a second Lyra hands its page to the open one)")
 
-    work = tempfile.mkdtemp(prefix="lyra-smoke-")
-    inst, prof = os.path.join(work, "inst"), os.path.join(work, "profile")
-    os.makedirs(prof)
-    probe = os.path.join(work, "probe.js")
-    open(probe, "w", encoding="utf-8").write(PROBE)
-    env = dict(os.environ, LOCALAPPDATA=prof, LYRA_PROBE=probe)
-    log_path = os.path.join(prof, "Lyra", "tabs.log")
-    registry = os.path.join(prof, "Lyra", "gstreamer-registry.bin")
-    mtime = lambda: os.path.getmtime(registry) if os.path.exists(registry) else None
+    work, prof, env, log_path, mtime = setup_work()
+    inst = os.path.join(work, "inst")
     say("%s -> %s in %s" % (os.path.basename(old), os.path.basename(new), work))
     problems = []
     try:
@@ -179,28 +271,11 @@ def main():
         say("first start after the update, YouTube")
         result, secs, lines = run_page(inst, env, log_path, LOAD_LIMIT_S)
         kill_under(inst)
-        finish = [l for l in lines if "didFinish" in l and "tab#1" in l and "closed" not in l]
-        say("page: %s" % (finish[0].split("] ", 1)[-1] if finish else "no didFinish"))
-        say("probe after %.0f s: %s" % (secs, json.dumps(result) if result else "none"))
-        if mtime() != after_install:
-            problems.append("the plugin cache was rebuilt when the page opened - the first page with video waits for it")
-        if result is None:
-            problems.append("the YouTube page did not finish loading in %d s" % LOAD_LIMIT_S)
-        else:
-            if not result.get("video"): problems.append("no <video> on the page")
-            if result.get("raf2s", 0) < 30: problems.append("the page hardly draws: %s animation frames in 2 s" % result.get("raf2s"))
-            if result.get("video") and result.get("played", 0) < 1.0:
-                problems.append("the video does not play: %.2f s of it in 2 s (%s)" % (result.get("played", 0), result.get("playError") or "error %s" % result.get("error")))
+        check_page(result, secs, lines, mtime() != after_install, problems)
     finally:
         kill_under(inst)
 
-    if problems:
-        for p in problems: say("FAIL: " + p)
-        say("kept for a look: " + work)
-        return 1
-    shutil.rmtree(work, ignore_errors=True)
-    say("passed")
-    return 0
+    return finish(problems, work)
 
 
 if __name__ == "__main__":
