@@ -68,6 +68,7 @@ bool CloseLyra(const std::wstring& dir, DWORD timeoutMs);   // asks Lyra to clos
 bool Install(const Payload& p, const Options& o, Progress& pr, std::wstring& err);
 bool Uninstall(const Options& o, Progress& pr, std::wstring& err);
 void LaunchLyra(const std::wstring& dir);
+void BuildMediaCache(const std::wstring& dir);   // Lyra.exe --gst-registry (GStreamer's plugin cache)
 void OpenDefaultAppsSettings();
 
 // ---- window ------------------------------------------------------------------------

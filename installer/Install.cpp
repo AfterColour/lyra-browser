@@ -340,8 +340,24 @@ bool Install(const Payload& p, const Options& o, Progress& pr, std::wstring& err
     RemoveLeftovers(o.dir);
     WriteManifest(o.dir, now);
     if (o.registerApp) Register(o, p.version, p.totalSize);
+    BuildMediaCache(o.dir);
     pr.done = pr.total.load();
     return true;
+}
+
+// GStreamer's plugin cache, built now: after an update every plugin file is new, and without
+// this the first page with video (YouTube) scanned all of them itself and froze meanwhile.
+// Lyra.exe --gst-registry does it and exits; a failure only means the page does it as before.
+void BuildMediaCache(const std::wstring& dir) {
+    const std::wstring exe = dir + L"\\Lyra.exe";
+    std::wstring cmd = L"\"" + exe + L"\" --gst-registry";
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi))
+        return;
+    if (WaitForSingleObject(pi.hProcess, 180000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
 }
 
 bool Uninstall(const Options& o, Progress& pr, std::wstring& err) {

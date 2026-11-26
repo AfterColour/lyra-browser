@@ -51,6 +51,34 @@ void ConfigureGStreamerEnvironment() {
     Log("GStreamer plugins: %ls", plugins.c_str());
 }
 
+// The plugin cache is checked against every plugin file. After an install or an update all of them
+// are new, and the first web process that plays media (YouTube) loaded and scanned every plugin
+// (~165 DLLs, slower still with an antivirus looking at each new file) before its page could go on:
+// the page froze for many seconds on the first start after an update. The installer runs this
+// before Lyra starts, so pages find the cache ready.
+int BuildGStreamerRegistry() {
+    InitPaths();
+    LogOpen();
+    CreateDirectoryW(g_settingsDir.c_str(), nullptr);
+    ConfigureGStreamerEnvironment();
+    wchar_t exe[MAX_PATH] = {};
+    DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return 1;
+    std::wstring dir(exe, n);
+    dir.resize(dir.find_last_of(L"\\/"));
+    if (GetFileAttributesW((dir + L"\\gstreamer-1.0").c_str()) == INVALID_FILE_ATTRIBUTES) return 0;   // (Media Foundation build)
+    HMODULE gst = LoadLibraryExW((dir + L"\\gstreamer-1.0-0.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!gst) { Log("GStreamer registry: gstreamer-1.0-0.dll not loaded (%lu)", GetLastError()); return 1; }
+    using InitCheck = int (*)(int*, char***, void**);
+    auto initCheck = reinterpret_cast<InitCheck>(GetProcAddress(gst, "gst_init_check"));
+    if (!initCheck) return 1;
+    const ULONGLONG start = GetTickCount64();
+    void* error = nullptr;                                   // (a GError, left to the process exit)
+    const bool ok = initCheck(nullptr, nullptr, &error) != 0;
+    Log("GStreamer registry: %s in %llu ms", ok ? "ready" : "FAILED", GetTickCount64() - start);
+    return ok ? 0 : 1;
+}
+
 // WebKit's curl network backend allows only 17 connections in total (6 per site) by default:
 // a heavy page with images, scripts and video from a dozen hosts waits in line for them.
 // Other browsers allow far more in total. The network process reads these at start-up; a

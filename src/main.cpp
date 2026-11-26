@@ -85,6 +85,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Must happen before any window is created.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+    // The installer: build the GStreamer plugin cache and exit (app/Environment.cpp).
+    if (lpCmdLine && TrimWs(lpCmdLine) == L"--gst-registry") return BuildGStreamerRegistry();
+
     // One Lyra at a time: a second Lyra.exe (a link opened from another app, a shortcut, the
     // installer's "Launch") hands its URL to the running one, which opens it in a new tab and
     // comes to the front, and exits before touching the profile.
