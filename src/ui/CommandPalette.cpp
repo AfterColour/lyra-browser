@@ -22,6 +22,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/settings/SettingsPages.h"
+#include "app/BugReport.h"
 
 namespace {
 
@@ -82,6 +83,7 @@ const std::vector<CommandDef>& Commands() {
         { L"Downloads", L"Загрузки", L"files файлы", L"Ctrl+J", [] { RunCommand(CMD_DOWNLOADS); }, L"\uE896" },
         { L"Settings", L"Настройки", L"preferences options параметры", L"Ctrl+,", [] { RunCommand(CMD_SETTINGS); }, L"\uE713" },
         { L"Saved passwords", L"Сохранённые пароли", L"logins пароли логины", L"", [] { RunCommand(CMD_PASSWORDS); }, L"\uE8D7" },
+        { L"Report a problem", L"Сообщить о проблеме", L"bug issue crash freeze report ошибка баг зависает вылет", L"", [] { ReportProblem(g_hWnd); }, L"" },
         { L"Clear browsing data", L"Очистить данные браузера", L"cookies cache history кэш куки удалить", L"Ctrl+Shift+Del", [] { OpenClearDataSettings(); }, L"\uE74D" },
         { L"Reader view", L"Режим чтения", L"article статья читать", L"F9", [] { RunCommand(CMD_READER); }, L"\uE736" },
         { L"Translate page", L"Перевести страницу", L"translation перевод", L"", [] { RunCommand(CMD_TRANSLATE); }, L"\uF2B7" },

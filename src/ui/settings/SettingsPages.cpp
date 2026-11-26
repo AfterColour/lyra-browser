@@ -31,6 +31,7 @@
 #include "ui/settings/SettingsWindow.h"
 #include "LyraVersion.h"
 #include "app/Updater.h"
+#include "app/BugReport.h"
 
 // Icon background colours in the sidebar
 static const Color kTintPink(214, 69, 126);
@@ -713,6 +714,12 @@ void BuildPages() {
         p.rows.push_back(RInfo(Tr(L"Settings file", L"Файл настроек"), g_settingsFile));
         p.rows.push_back(RButton(Tr(L"Settings folder", L"Папка настроек"), L"", Tr(L"Open", L"Открыть"),
             []() { ShellExecuteW(nullptr, L"open", g_settingsDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }));
+        p.rows.push_back(RHeader(Tr(L"Problems", L"Проблемы")));
+        p.rows.push_back(RButton(Tr(L"Report a problem", L"Сообщить о проблеме"),
+            Tr(L"Saves a file with Lyra's log and this computer's details and opens a new issue on GitHub. Nothing is sent by itself.",
+               L"Сохраняет файл с журналом Lyra и сведениями о компьютере и открывает новое обращение на GitHub. Само ничего не отправляется."),
+            Tr(L"Report\x2026", L"Сообщить\x2026"),
+            []() { ReportProblem(g_setHwnd); }));
         p.rows.push_back(RHeader(Tr(L"Reset", L"Сброс")));
         p.rows.push_back(RButton(Tr(L"Reset all settings", L"Сбросить все настройки"),
             Tr(L"Every option goes back to its default.", L"Все параметры вернутся к значениям по умолчанию."),

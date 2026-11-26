@@ -103,6 +103,7 @@ target_link_libraries(Lyra PRIVATE
     shell32 shlwapi comdlg32 comctl32 winspool
     ole32 oleaut32 uuid advapi32
     winhttp bcrypt crypt32      # updates: download, SHA-256, signature (app/Updater.cpp)
+    dxgi                        # the graphics cards in a problem report (app/BugReport.cpp)
 )
 
 # ----------------------------------------------------------------------------
