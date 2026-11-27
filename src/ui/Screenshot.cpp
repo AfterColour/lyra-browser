@@ -301,7 +301,8 @@ void ScreenshotMenu() {
     MenuSetIcon(m, kSaveVisible, L"");
     MenuSetIcon(m, kCopyFull, L"");
     MenuSetIcon(m, kSaveFull, L"");
-    POINT pt = { (LONG)g_L.more.GetRight(), (LONG)(g_L.more.GetBottom() + S(4)) };
+    const RectF anchor = ChromeMenuAnchor();
+    POINT pt = { (LONG)anchor.GetRight(), (LONG)(anchor.GetBottom() + S(4)) };
     ClientToScreen(g_hWnd, &pt);
     const int cmd = MenuTrack(m, TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
     DestroyMenu(m);

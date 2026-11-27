@@ -79,6 +79,7 @@ const std::vector<CommandDef>& Commands() {
         { L"Show or hide bookmarks bar", L"Показать или скрыть панель закладок", L"bookmarks bar toolbar панель закладок", L"Ctrl+Shift+B", [] { RunCommand(CMD_BOOKMARKSBAR); }, L"\uE728" },
     { L"Show or hide sidebar", L"Показать или скрыть боковую панель", L"sidebar panel боковая панель", L"Ctrl+Shift+E", [] { RunCommand(CMD_SIDEBAR); }, L"\uE8A0" },
     { L"Add page to reading list", L"Добавить страницу в список для чтения", L"reading list read later читать позже", L"", [] { RunCommand(CMD_READINGLIST); }, L"\uE736" },
+    { L"Customize toolbar", L"Настроить интерфейс", L"customize toolbar layout buttons interface настроить интерфейс раскладка кнопки панель", L"", [] { RunCommand(CMD_CUSTOMIZE); }, L"\uE771" },
     { L"Notes", L"Заметки", L"notes заметки", L"", [] { SidebarOpen(4); }, L"\uE70B" },
         { L"Downloads", L"Загрузки", L"files файлы", L"Ctrl+J", [] { RunCommand(CMD_DOWNLOADS); }, L"\uE896" },
         { L"Settings", L"Настройки", L"preferences options параметры", L"Ctrl+,", [] { RunCommand(CMD_SETTINGS); }, L"\uE713" },

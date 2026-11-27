@@ -13,6 +13,7 @@ void SettingsOpenPage(int index);
 // The pages must be built again (language changed, a list changed): rebuilt and re-sent shortly,
 // never inside the caller (it may be a row of the pages being rebuilt).
 void SettingsLanguageChanged();
+void SettingsRebuild();                 // the pages changed (a layout made, renamed or deleted)
 // A value changed outside the window (updater status...): the page is sent the current values.
 void SettingsRefresh();
 // Light/dark or the accent colour changed.

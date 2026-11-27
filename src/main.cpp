@@ -115,6 +115,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LogOpen();
     SetUnhandledExceptionFilter(CrashFilter);
     LoadSettings();
+    UiLoad();
     HistoryLoad();
     BookmarksLoad();
     DownloadsLoad();

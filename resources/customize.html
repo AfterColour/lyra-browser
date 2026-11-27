@@ -1,0 +1,376 @@
+<!doctype html>
+<!--
+  Lyra's "Customize toolbar" panel (ui/Customize.cpp). Lyra loads this page as
+  file:///<Lyra folder>/resources/customize.html?dark=..&ru=.. into a small window at the right of
+  the browser and calls lyraCustomize(<model>) with the active layout, again after every change.
+  The page answers with lyra://cust-... addresses sent through short-lived hidden frames:
+    cust-ready, cust-set?k=&v=, cust-color?k=&v=, cust-item?k=&v=, cust-sel?i=, cust-name?s=,
+    cust-pick?id=, cust-delete, cust-done.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), d = q.get("dark") === "1";
+  document.documentElement.dataset.theme = d ? "dark" : "light";
+  document.documentElement.style.background = d ? "#1C1C1F" : "#F4F4F6";
+  document.documentElement.style.colorScheme = d ? "dark" : "light";
+})();
+</script>
+<title>Customize</title>
+<style>
+  :root {
+    --bg: #F4F4F6; --card: #FFFFFF; --line: rgba(0,0,0,.075); --text: #1D1D1F; --text2: #6E6E73; --text3: #9A9AA1;
+    --field: #E8E8ED; --field2: #DCDCE2; --hover: rgba(0,0,0,.045); --shadow: 0 1px 2px rgba(0,0,0,.05), 0 0 0 .5px rgba(0,0,0,.04);
+    --accent: #7B61FF; --ease: cubic-bezier(.2, .8, .2, 1);
+  }
+  :root[data-theme="dark"] {
+    --bg: #1C1C1F; --card: #2A2A2F; --line: rgba(255,255,255,.07); --text: #F2F2F5; --text2: rgba(235,235,245,.6);
+    --text3: rgba(235,235,245,.38); --field: #3A3A40; --field2: #47474E; --hover: rgba(255,255,255,.06); --shadow: 0 0 0 .5px rgba(255,255,255,.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); -webkit-user-select: none; user-select: none;
+         font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; }
+  input { font: inherit; color: inherit; }
+  .ico { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-style: normal; line-height: 1; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px 16px; }
+  header h1 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+  .iconbtn { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text2); }
+  .iconbtn:hover { background: var(--hover); color: var(--text); }
+  #scroll { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
+  #scroll::-webkit-scrollbar { width: 8px; }
+  #scroll::-webkit-scrollbar-thumb { background: var(--field2); border-radius: 4px; border: 2px solid var(--bg); }
+  footer { padding: 10px 12px 12px; box-shadow: 0 -1px 0 var(--line); }
+  .primary { width: 100%; height: 34px; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 600; }
+  .primary:hover { filter: brightness(1.08); }
+
+  h2 { margin: 14px 4px 6px; font-size: 11.5px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .04em; }
+  .card { background: var(--card); border-radius: 10px; box-shadow: var(--shadow); padding: 4px 12px; }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 38px; }
+  .row + .row { box-shadow: 0 -1px 0 var(--line); }
+  .row > .l { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row > .v { font-variant-numeric: tabular-nums; color: var(--text2); width: 34px; text-align: right; font-size: 12px; }
+  .note { margin: 6px 4px 0; font-size: 11.5px; color: var(--text3); line-height: 1.45; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 112px; height: 18px; background: none; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--p, 50%), var(--field2) var(--p, 50%)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); }
+
+  .text { width: 100%; height: 30px; border: 0; outline: none; border-radius: 8px; padding: 0 10px; background: var(--field); }
+  .text:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); background: var(--card); }
+
+  .toggle { position: relative; width: 36px; height: 20px; border-radius: 10px; background: var(--field2); transition: background .2s; flex: none; }
+  .toggle::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;
+                   box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .25s var(--ease); }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { transform: translateX(16px); }
+
+  /* layouts */
+  .layouts { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+  .lay { display: flex; align-items: center; gap: 9px; height: 32px; padding: 0 8px; border-radius: 8px; text-align: left; }
+  .lay:hover { background: var(--hover); }
+  .lay .dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text3); flex: none; }
+  .lay.on .dot { box-shadow: inset 0 0 0 4.5px var(--accent); }
+  .lay .n { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lay .tag { font-size: 11px; color: var(--text3); }
+  .danger { color: #E5484D; }
+  .smallbtn { height: 28px; padding: 0 10px; border-radius: 7px; background: var(--field); font-size: 12.5px; }
+  .smallbtn:hover { background: var(--field2); }
+
+  /* selected button */
+  .sel { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+  .sel .g { width: 34px; height: 34px; border-radius: 8px; background: var(--field); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .sel .n { flex: 1; font-weight: 600; }
+
+  /* colours */
+  .swatch { width: 26px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(128,128,128,.35); flex: none; position: relative; }
+  .swatch.theme::after { content: ""; position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%;
+                         background: var(--text3); box-shadow: 0 0 0 2px var(--card); display: none; }
+  .row.set .swatch.theme::after { display: block; background: var(--accent); }
+  .reset { font-size: 10px; color: var(--text3); width: 20px; height: 20px; border-radius: 5px; display: flex; align-items: center; justify-content: center; visibility: hidden; }
+  .row.set .reset { visibility: visible; }
+  .reset:hover { background: var(--hover); color: var(--text); }
+  #picker { position: fixed; z-index: 10; width: 228px; padding: 10px; border-radius: 12px; background: var(--card);
+            box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 0 0 .5px rgba(0,0,0,.12); display: none; }
+  #picker.open { display: block; }
+  #picker .grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+  #picker .grid button { height: 21px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(128,128,128,.3); }
+  #picker .grid button:hover { transform: scale(1.12); }
+  #picker .hexrow { display: flex; gap: 6px; margin-top: 9px; }
+  #picker .hexrow .text { height: 28px; font-family: Consolas, monospace; }
+
+  /* fonts */
+  #fontList { max-height: 180px; overflow-y: auto; margin: 6px 0 8px; display: none; }
+  #fontList.open { display: block; }
+  #fontList button { display: block; width: 100%; text-align: left; height: 28px; padding: 0 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #fontList button:hover { background: var(--hover); }
+  #fontList button.on { color: var(--accent); font-weight: 600; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+</header>
+<div id="scroll">
+  <h2 data-t="Layout|Раскладка"></h2>
+  <div class="card">
+    <div class="layouts" id="layouts"></div>
+    <div class="row" id="nameRow">
+      <input class="text" id="name" maxlength="40" spellcheck="false">
+      <button class="smallbtn danger" id="del" data-t="Delete|Удалить"></button>
+    </div>
+  </div>
+  <div class="note" id="builtinNote" data-t="Built-in layouts never change: your first change makes a copy of your own.|Встроенные раскладки не меняются: первое изменение создаёт вашу копию."></div>
+
+  <div id="selBox" class="hide">
+    <h2 data-t="Selected button|Выбранная кнопка"></h2>
+    <div class="card">
+      <div class="sel"><div class="g ico" id="selG"></div><div class="n" id="selN"></div>
+        <button class="smallbtn" id="selHide"></button></div>
+      <div class="row"><span class="l" data-t="Size|Размер"></span><input type="range" id="selSize" min="0" max="56" step="1"><span class="v" id="selSizeV"></span></div>
+      <div class="row" id="selColorRow"><span class="l" data-t="Icon colour|Цвет значка"></span>
+        <button class="reset ico" data-reset="item">&#xE711;</button><button class="swatch" id="selColor"></button></div>
+    </div>
+  </div>
+  <div class="note" id="dragNote" data-t="Drag buttons between the outlined areas on the toolbar; click one to change it.|Перетаскивайте кнопки между обведёнными зонами на панели, щёлкните кнопку, чтобы настроить её."></div>
+
+  <h2 data-t="Sizes|Размеры"></h2>
+  <div class="card" id="sizes"></div>
+
+  <h2 data-t="Shape|Форма"></h2>
+  <div class="card" id="shape"></div>
+
+  <h2 data-t="Colours|Цвета"></h2>
+  <div class="card" id="colors"></div>
+
+  <h2 data-t="Font|Шрифт"></h2>
+  <div class="card">
+    <div class="row"><input class="text" id="fontSearch" spellcheck="false"></div>
+    <div id="fontList"></div>
+  </div>
+</div>
+<footer><button class="primary" id="done" data-t="Done|Готово"></button></footer>
+
+<div id="picker">
+  <div class="grid" id="pgrid"></div>
+  <div class="hexrow"><input class="text" id="phex" maxlength="7" spellcheck="false"><button class="smallbtn" id="pok">OK</button></div>
+</div>
+
+<script>
+const RU = new URLSearchParams(location.search).get("ru") === "1";
+const T = s => { const p = s.split("|"); return RU && p[1] ? p[1] : p[0]; };
+document.querySelectorAll("[data-t]").forEach(e => e.textContent = T(e.dataset.t));
+document.getElementById("title").textContent = T("Customize toolbar|Настройка интерфейса");
+
+function send(cmd, params) {
+  const f = document.createElement("iframe");
+  f.style.display = "none";
+  f.src = "lyra://cust-" + cmd + (params ? "?" + params : "");
+  document.body.appendChild(f);
+  setTimeout(() => f.remove(), 1500);
+}
+const enc = encodeURIComponent;
+const $ = id => document.getElementById(id);
+let M = null;
+
+// Sliders send while dragging, a little throttled.
+const timers = {};
+function later(key, fn) { clearTimeout(timers[key]); timers[key] = setTimeout(fn, 40); }
+function fill(r) { r.style.setProperty("--p", ((r.value - r.min) / (r.max - r.min) * 100) + "%"); }
+
+const SIZES = [
+  ["bar", "Toolbar height|Высота панели", 28, 72],
+  ["strip", "Tab bar height|Высота полосы вкладок", 26, 64, m => m.mode === 1],
+  ["btn", "Buttons|Кнопки", 20, 56],
+  ["tab", "Tab height|Высота вкладки", 20, 56],
+  ["icon", "Icons|Значки", 10, 24],
+  ["font", "Text|Текст", 9, 18],
+  ["sideW", "Tab list width|Ширина списка вкладок", 160, 420, m => m.mode === 2],
+  ["tabMaxW", "Widest tab|Макс. ширина вкладки", 80, 360, m => m.mode !== 2],
+  ["fieldMaxW", "Widest address field|Макс. ширина адресной строки", 300, 2000],
+];
+const SHAPE = [
+  ["btnRadius", "Button corners|Скругление кнопок", 0, 20],
+  ["tabRadius", "Tab corners|Скругление вкладок", 0, 20],
+  ["fieldRadius", "Address field corners|Скругление адресной строки", 0, 24],
+  ["fieldBorder", "Address field border|Рамка адресной строки", 0, 4],
+  ["tabBorder", "Active tab border|Рамка активной вкладки", 0, 4],
+];
+
+function sliderRow(parent, key, label, min, max) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.dataset.key = key;
+  row.innerHTML = `<span class="l"></span><input type="range" min="${min}" max="${max}" step="1"><span class="v"></span>`;
+  row.querySelector(".l").textContent = T(label);
+  const r = row.querySelector("input"), v = row.querySelector(".v");
+  r.addEventListener("input", () => { v.textContent = r.value; fill(r); later(key, () => send("set", "k=" + key + "&v=" + r.value)); });
+  r.addEventListener("change", () => r.blur());
+  parent.appendChild(row);
+  return row;
+}
+SIZES.forEach(s => sliderRow($("sizes"), s[0], s[1], s[2], s[3]));
+SHAPE.forEach(s => sliderRow($("shape"), s[0], s[1], s[2], s[3]));
+{
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<span class="l"></span><button class="toggle" id="sep"></button>`;
+  row.querySelector(".l").textContent = T("Separator lines|Разделительные линии");
+  $("shape").appendChild(row);
+  $("sep").onclick = () => { const on = !$("sep").classList.contains("on"); $("sep").classList.toggle("on", on); send("set", "k=separators&v=" + (on ? 1 : 0)); };
+}
+
+// ---- colour picker -------------------------------------------------------------------------------
+const PRESETS = ["#FFFFFF","#F4F4F6","#E5E5EA","#C7C7CC","#8E8E93","#48484A","#2C2C2E","#000000",
+                 "#FF3B30","#FF9500","#FFCC00","#34C759","#00C7BE","#30B0C7","#007AFF","#5856D6",
+                 "#AF52DE","#FF2D55","#A2845E","#7B61FF","#1C1C1F","#232327","#3A3A40","#F2EDE4",
+                 "#FDE2E4","#FFF1D6","#E3F6E5","#DDF1FF","#EAE6FF","#F7E1F4","#1E2A3A","#2D1F3D"];
+let pickTarget = null;                      // {kind: "color"|"item", key}
+PRESETS.forEach(c => {
+  const b = document.createElement("button");
+  b.style.background = c;
+  b.onclick = () => choose(c);
+  $("pgrid").appendChild(b);
+});
+function openPicker(anchor, target, current) {
+  pickTarget = target;
+  $("phex").value = current && current[0] === "#" ? current : "";
+  const p = $("picker"), r = anchor.getBoundingClientRect();
+  p.classList.add("open");
+  const h = p.offsetHeight;
+  p.style.left = Math.max(8, Math.min(innerWidth - 236, r.right - 228)) + "px";
+  p.style.top = (r.bottom + 6 + h > innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6) + "px";
+}
+function closePicker() { $("picker").classList.remove("open"); pickTarget = null; }
+function choose(c) {
+  if (!pickTarget) return;
+  if (pickTarget.kind === "item") send("item", "k=color&v=" + enc(c));
+  else send("color", "k=" + pickTarget.key + "&v=" + enc(c));
+  closePicker();
+}
+$("pok").onclick = () => { let v = $("phex").value.trim(); if (v[0] !== "#") v = "#" + v; if (/^#[0-9a-fA-F]{6}$/.test(v)) choose(v.toUpperCase()); };
+$("phex").addEventListener("keydown", e => { if (e.key === "Enter") $("pok").click(); });
+document.addEventListener("mousedown", e => { if (!$("picker").contains(e.target) && !e.target.classList.contains("swatch")) closePicker(); });
+
+// ---- events ------------------------------------------------------------------------------------------
+$("done").onclick = () => send("done");
+$("del").onclick = () => send("delete");
+$("name").addEventListener("change", () => send("name", "s=" + enc($("name").value)));
+$("name").addEventListener("keydown", e => { if (e.key === "Enter") $("name").blur(); });
+$("selHide").onclick = () => { if (M && M.item && !M.item.hidden) send("item", "k=hide"); };
+$("selSize").addEventListener("input", () => {
+  const r = $("selSize"); fill(r);
+  $("selSizeV").textContent = r.value < 16 ? T("auto|авто") : r.value;
+  later("item", () => send("item", "k=size&v=" + (r.value < 16 ? 0 : r.value)));
+});
+$("selSize").addEventListener("change", () => $("selSize").blur());
+$("selColor").onclick = e => openPicker(e.currentTarget, { kind: "item" }, M && M.item && M.item.color);
+document.querySelector('[data-reset="item"]').onclick = () => send("item", "k=color&v=");
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { if ($("picker").classList.contains("open")) closePicker(); else send("done"); }
+});
+
+$("fontSearch").placeholder = T("Search fonts|Поиск шрифта");
+$("fontSearch").addEventListener("focus", () => {
+  $("fontList").classList.add("open"); renderFonts();
+  requestAnimationFrame(() => $("fontList").scrollIntoView({ block: "nearest", behavior: "smooth" }));
+});
+$("fontSearch").addEventListener("input", renderFonts);
+function renderFonts() {
+  if (!M) return;
+  const q = $("fontSearch").value.trim().toLowerCase(), list = $("fontList");
+  list.textContent = "";
+  const add = (name, label) => {
+    const b = document.createElement("button");
+    b.textContent = label || name;
+    if (name) b.style.fontFamily = `"${name}"`;
+    b.classList.toggle("on", (M.style.fontFamily || "") === name);
+    b.onclick = () => { send("set", "k=fontFamily&v=" + enc(name)); $("fontSearch").value = ""; list.classList.remove("open"); $("fontSearch").blur(); };
+    list.appendChild(b);
+  };
+  if (!q) add("", T("Default (Segoe UI)|По умолчанию (Segoe UI)"));
+  let n = 0;
+  for (const f of M.fonts) { if (q && !f.toLowerCase().includes(q)) continue; add(f); if (++n > 300) break; }
+}
+
+// ---- the model ---------------------------------------------------------------------------------------
+function setSlider(row, val) {
+  const r = row.querySelector("input");
+  if (document.activeElement === r) return;      // being dragged: leave it
+  r.value = val; fill(r);
+  row.querySelector(".v").textContent = r.value;
+}
+
+window.lyraCustomize = function (m) {
+  M = m;
+  document.documentElement.style.setProperty("--accent", m.accent);
+  document.documentElement.dataset.theme = m.dark ? "dark" : "light";
+
+  const lays = $("layouts");
+  lays.textContent = "";
+  m.layouts.forEach(l => {
+    const b = document.createElement("button");
+    b.className = "lay" + (l.id === m.id ? " on" : "");
+    b.innerHTML = `<span class="dot"></span><span class="n"></span><span class="tag"></span>`;
+    b.querySelector(".n").textContent = l.n;
+    b.querySelector(".tag").textContent = l.b ? T("built-in|встроенная") : "";
+    b.onclick = () => { if (l.id !== m.id) send("pick", "id=" + enc(l.id)); };
+    lays.appendChild(b);
+  });
+  if (document.activeElement !== $("name")) $("name").value = m.name;
+  $("del").classList.toggle("hide", m.builtin);
+  $("builtinNote").classList.toggle("hide", !m.builtin);
+
+  for (const row of document.querySelectorAll("#sizes .row, #shape .row[data-key]")) {
+    const k = row.dataset.key, def = SIZES.find(s => s[0] === k);
+    row.classList.toggle("hide", !!(def && def[4] && !def[4](m)));
+    setSlider(row, m.style[k]);
+  }
+  $("sep").classList.toggle("on", m.style.separators === 1);
+
+  const cl = $("colors");
+  if (!cl.children.length) m.colors.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.dataset.key = c.k;
+    row.innerHTML = `<span class="l"></span><button class="reset ico" title="">&#xE711;</button><button class="swatch theme"></button>`;
+    row.querySelector(".l").textContent = c.n;
+    row.querySelector(".reset").title = T("Theme colour|Цвет темы");
+    row.querySelector(".reset").onclick = () => send("color", "k=" + c.k + "&v=");
+    row.querySelector(".swatch").onclick = e => openPicker(e.currentTarget, { kind: "color", key: c.k }, row.dataset.v);
+    cl.appendChild(row);
+  });
+  m.colors.forEach(c => {
+    const row = cl.querySelector(`[data-key="${c.k}"]`);
+    row.classList.toggle("set", !!c.v);
+    row.dataset.v = c.v || c.e;
+    row.querySelector(".swatch").style.background = c.v || c.e;
+  });
+
+  $("selBox").classList.toggle("hide", m.sel < 0);
+  $("dragNote").classList.toggle("hide", m.sel >= 0);
+  if (m.item) {
+    $("selG").textContent = m.item.g;
+    $("selN").textContent = m.item.n;
+    $("selHide").textContent = m.item.hidden ? T("Hidden|Скрыта") : T("Hide|Скрыть");
+    $("selHide").disabled = m.item.hidden;
+    const r = $("selSize");
+    if (document.activeElement !== r) { r.value = m.item.size; fill(r); $("selSizeV").textContent = m.item.size < 16 ? T("auto|авто") : m.item.size; }
+    $("selColorRow").classList.toggle("set", !!m.item.color);
+    $("selColor").style.background = m.item.color || "var(--text)";
+  }
+  $("fontSearch").placeholder = (m.style.fontFamily || T("Default (Segoe UI)|По умолчанию (Segoe UI)"));
+  if ($("fontList").classList.contains("open")) renderFonts();
+};
+
+requestAnimationFrame(() => requestAnimationFrame(() => send("ready")));
+</script>
+</body>
+</html>

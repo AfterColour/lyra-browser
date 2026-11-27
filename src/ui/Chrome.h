@@ -2,8 +2,9 @@
 #pragma once
 
 #include "common/Platform.h"
+#include "ui/UiLayout.h"
 
-// Sizes of the window chrome in 96-DPI pixels for the current "toolbar size" setting.
+// Sizes of the window chrome in 96-DPI pixels for the active layout (ui/UiLayout).
 struct ChromeDims {
     float bar;      // row with the address field
     float strip;    // tab strip row (separate tab bar layout)
@@ -39,11 +40,21 @@ struct Layout {
     std::vector<RectF> groups;
     std::vector<unsigned> groupIds;  // the group of each label
     std::vector<int> groupFirst;     // the index of its first tab
+    // The layout's items (ui/UiLayout): where each went. Hidden ones have empty rectangles.
+    RectF home, sidebarBtn;
+    bool  inField[kItemCount] = {};  // inside the address field (drawn small, not while typing)
+    bool  fieldItems = false;        // any: they begin at fieldX
+    float fieldX = 0;
+    bool  newTabRow = false;         // vertical layout: "New tab" is a row under the list
+    RectF zoneRect[kZoneCount];      // each zone's extent (customizing: empty ones get a placeholder)
+    struct Slot { int item, zone, index; RectF r; };   // zone -1: the palette of hidden items
+    std::vector<Slot> slots;
+    RectF palette, palDone;          // customizing: the row of hidden items and its "Done" button
 };
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem, SideItem, SideButton, SideResize };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem, SideItem, SideButton, SideResize, Home, SidebarBtn };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }
@@ -85,6 +96,8 @@ void ChromeDownloadStarted();
 void UnfreezeTabWidths();
 bool TabWidthsFrozen();
 float TabStripBottom();             // the tab strip spans y in [0, TabStripBottom())
+// Where menus of the menu button open: the button, or (hidden) the top right corner of the toolbar.
+RectF ChromeMenuAnchor();
 
 extern std::unique_ptr<Font> g_fText, g_fTab, g_fTabBold, g_fIcon, g_fIconSm, g_fCaption, g_fBadge;
 

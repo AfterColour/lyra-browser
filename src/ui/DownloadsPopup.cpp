@@ -410,7 +410,7 @@ static void PlacePopup() {
     RECT cr;
     GetClientRect(g_hWnd, &cr);
     const float w = S(kW);
-    const RectF& b = g_L.downloads.Width > 0 ? g_L.downloads : g_L.more;
+    const RectF b = g_L.downloads.Width > 0 ? g_L.downloads : ChromeMenuAnchor();
     float x = std::min(b.GetRight() + S(4) - w, (float)cr.right - S(8) - w);
     x = std::max(S(8), x);
     POINT tl = { (LONG)x, (LONG)(b.GetBottom() + S(6)) };

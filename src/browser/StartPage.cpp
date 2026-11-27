@@ -19,6 +19,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/Dialogs.h"
+#include "ui/UiLayout.h"
 #include "ui/settings/SettingsPages.h"     // kEngines
 #include "ui/settings/SettingsWindow.h"
 
@@ -78,7 +79,7 @@ static bool RegisteredAsBrowser() {
 std::wstring StartPageUrl(bool welcome) {
     std::wstring url = welcome ? WelcomePageFileUrl() : StartPageFileUrl();
     url += L"?" + LookParams();
-    url += L"&layout=" + std::to_wstring(g_prefs.tabLayout);
+    url += L"&layout=" + std::to_wstring(UiActive().mode);
     url += L"&density=" + std::to_wstring(g_prefs.density);
     if (GetEnvironmentVariableW(L"LYRA_PAGE_PERF", nullptr, 0)) url += L"&perf=1";   // the page's smoothness log
     url += L"&fav=" + std::wstring(g_prefs.startFavorites ? L"1" : L"0");
@@ -544,6 +545,7 @@ void HandleLyraUrl(unsigned long long tabId, const std::wstring& url) {
     pick(L"themeMode", g_prefs.themeMode, 2);
     pick(L"layout", g_prefs.tabLayout, 2);
     pick(L"density", g_prefs.density, 2);
+    if (oldLayout != g_prefs.tabLayout && !UiActiveIsBuiltin()) UiSelectBuiltin(g_prefs.tabLayout);
     const int fav = QueryInt(query, L"fav");
     if (fav >= 0) g_prefs.startFavorites = fav != 0;
     const int freq = QueryInt(query, L"freq");

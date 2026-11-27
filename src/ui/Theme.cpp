@@ -8,6 +8,7 @@
 #include "core/Settings.h"
 #include "ui/AddressBar.h"
 #include "ui/MainWindow.h"
+#include "ui/UiLayout.h"
 #include "ui/settings/SettingsWindow.h"
 
 static Theme MakeTheme(bool dark);
@@ -137,7 +138,8 @@ bool MicaSupported() {
 bool MicaActive() {
     HIGHCONTRASTW hc = { sizeof(hc) };
     if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON)) return false;
-    return g_prefs.mica && MicaSupported() && !CustomThemeColorsOn();      // a theme brings its own colours
+    return g_prefs.mica && MicaSupported() && !CustomThemeColorsOn()      // a theme brings its own colours
+        && !UiFrameColorSet();                                            // ... and so may the layout (ui/UiLayout)
 }
 
 void ApplyBackdrop(HWND hwnd, int type, MARGINS margins) {
@@ -208,6 +210,25 @@ void ApplyDwm(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, kDwmTextColor, &txt, sizeof(txt));
 }
 
+static Theme s_baseTheme;                 // g_th before the layout's colours (ThemeReapplyUiColors)
+static bool s_haveBase = false;
+
+// The layout's colours changed (ui/Customize): the same theme with the new colours over it, without
+// the crossfade and the pages' refresh ApplyTheme does.
+void ThemeReapplyUiColors() {
+    if (!s_haveBase) return;              // (ApplyTheme has not run yet)
+    g_th = s_baseTheme;
+    UiApplyColors(g_th);
+    if (g_editBrush) DeleteObject(g_editBrush);
+    g_editBrush = CreateSolidBrush(ToColorRef(g_th.pillFocus));
+    if (g_hWnd) {
+        ApplyDwm(g_hWnd);
+        UpdateMainBackdrop();
+        InvalidateRect(g_hWnd, nullptr, FALSE);
+        if (g_urlEdit) InvalidateRect(g_urlEdit, nullptr, TRUE);
+    }
+}
+
 void ApplyTheme(bool dark) {
     if (g_hWnd) CrossfadeBegin();         // light/dark and accent changes dissolve too
     const CustomTheme* theme = CustomThemeActive();
@@ -226,6 +247,9 @@ void ApplyTheme(bool dark) {
         }
         g_th.accent = ReadableAccent(accent, dark);
     }
+    s_baseTheme = g_th;
+    s_haveBase = true;
+    UiApplyColors(g_th);                 // the layout's own colours over all of it
     if (g_editBrush) DeleteObject(g_editBrush);
     g_editBrush = CreateSolidBrush(ToColorRef(g_th.pillFocus));
 

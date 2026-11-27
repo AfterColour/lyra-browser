@@ -448,10 +448,15 @@ void SettingsOpenPage(int index) {
     ShowSettingsWindow();
 }
 
-void SettingsLanguageChanged() {
+void SettingsRebuild() {
     if (!g_setHwnd || s_rebuildPosted) return;
     s_rebuildPosted = true;                 // later: the caller may be a row of the pages being rebuilt
     PostMessageW(g_setHwnd, WM_SET_REBUILD, 0, 0);
+}
+
+void SettingsLanguageChanged() {
+    if (!g_setHwnd) return;
+    SettingsRebuild();
     SetWindowTextW(g_setHwnd, Tr(L"Lyra Settings", L"Настройки Lyra"));
 }
 

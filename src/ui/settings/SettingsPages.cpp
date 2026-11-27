@@ -21,6 +21,9 @@
 #include "ui/Chrome.h"
 #include "ui/Commands.h"
 #include "ui/Sidebar.h"
+#include "ui/Customize.h"
+#include "ui/Crossfade.h"
+#include "ui/UiLayout.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "ui/Menu.h"
@@ -280,8 +283,32 @@ void BuildPages() {
         p.rows.push_back(RHeader(Tr(L"Tab layout", L"Расположение вкладок")));
         p.rows.push_back(RCards(Tr(L"Tab layout", L"Расположение вкладок"), 1,
             { Tr(L"Compact", L"Компактно"), Tr(L"Separate tab bar", L"Отдельной строкой"), Tr(L"Vertical", L"Вертикально") },
-            []() { return g_prefs.tabLayout; },
-            [layout](int i) { g_prefs.tabLayout = i; layout(); }));
+            []() { return UiActiveIsBuiltin() ? g_prefs.tabLayout : -1; },
+            [](int i) { CrossfadeBegin(); UiSelectBuiltin(i); SettingsRefresh(); }));
+        if (!UiCustomLayouts().empty()) {
+            std::vector<std::wstring> names = { Tr(L"None (built-in above)", L"Нет (встроенная выше)") };
+            std::vector<std::wstring> ids = { L"" };
+            for (const UiLayoutDef& d : UiCustomLayouts()) { names.push_back(d.name); ids.push_back(d.id); }
+            p.rows.push_back(RChoice(Tr(L"My layouts", L"Мои раскладки"),
+                Tr(L"Layouts you made with Customize toolbar.", L"Раскладки, созданные в настройке интерфейса."),
+                names,
+                [ids]() {
+                    if (UiActiveIsBuiltin()) return 0;
+                    for (size_t i = 1; i < ids.size(); ++i) if (ids[i] == UiActive().id) return (int)i;
+                    return 0;
+                },
+                [ids](int i) {
+                    CrossfadeBegin();
+                    if (i <= 0 || i >= (int)ids.size()) UiSelectBuiltin(g_prefs.tabLayout);
+                    else UiSelectCustom(ids[i]);
+                    SettingsRefresh();
+                }));
+        }
+        p.rows.push_back(RButton(Tr(L"Customize toolbar", L"Настроить интерфейс"),
+            Tr(L"Move, hide and resize buttons, change colours, corners and the font. Built-in layouts stay as they are: changes go to a layout of your own.",
+               L"Перемещайте, скрывайте и меняйте размер кнопок, цвета, скругления и шрифт. Встроенные раскладки не меняются: изменения сохраняются в вашу раскладку."),
+            Tr(L"Customize\x2026", L"Настроить\x2026"),
+            []() { if (!CustomizeActive()) CustomizeBegin(); if (g_hWnd) SetForegroundWindow(g_hWnd); }));
         p.rows.push_back(RHeader(Tr(L"Tabs", L"Вкладки")));
         p.rows.push_back(RChoice(Tr(L"New tab opens", L"Новая вкладка открывает"),
             Tr(L"What Ctrl+T and the + button show.", L"Что показывают Ctrl+T и кнопка +."),

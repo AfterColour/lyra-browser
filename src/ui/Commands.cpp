@@ -19,6 +19,7 @@
 #include "ui/AddressBar.h"
 #include "ui/BookmarkPopup.h"
 #include "ui/Chrome.h"
+#include "ui/Customize.h"
 #include "ui/CommandPalette.h"
 #include "ui/Screenshot.h"
 #include "ui/BookmarksBar.h"
@@ -91,6 +92,7 @@ void RunCommand(int cmd) {
     case CMD_BOOKMARKSBAR: BookmarksBarToggle(); break;
     case CMD_SIDEBAR: SidebarToggle(); break;
     case CMD_READINGLIST: SidebarAddCurrentToReadingList(); SidebarOpen(2); break;
+    case CMD_CUSTOMIZE: if (CustomizeActive()) CustomizeEnd(); else CustomizeBegin(); break;
     case CMD_SPLIT:     SplitToggle(); break;
     case CMD_UPDATE:    UpdaterRestartAndInstall(); break;
     case CMD_SETTINGS:  ShowSettingsWindow(); break;
@@ -204,6 +206,7 @@ void ShowMoreMenu() {
     AppendMenuW(m, MF_STRING, CMD_ZOOMRESET, Tr(L"Actual Size\tCtrl+0", L"Исходный размер\tCtrl+0"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     if (g_prefs.devExtras) AppendMenuW(m, MF_STRING, CMD_DEVTOOLS, Tr(L"Developer Tools\tF12", L"Инструменты разработчика\tF12"));
+    AppendMenuW(m, MF_STRING | (CustomizeActive() ? MF_CHECKED : 0), CMD_CUSTOMIZE, Tr(L"Customize Toolbar\x2026", L"Настроить интерфейс\x2026"));
     AppendMenuW(m, MF_STRING, CMD_SETTINGS,  Tr(L"Settings\x2026\tCtrl+,", L"Настройки\x2026\tCtrl+,"));
     static const struct { UINT id; const wchar_t* glyph; } icons[] = {
         { CMD_UPDATE, L"\uE72C" }, { CMD_NEWTAB, L"\uE710" }, { CMD_NEWPRIVATE, L"\uED1A" }, { CMD_CLOSETAB, L"\uE711" },
@@ -212,10 +215,11 @@ void ShowMoreMenu() {
         { CMD_SETHOME, L"\uE80F" }, { CMD_READER, L"\uE736" }, { CMD_TRANSLATE, L"\uE8C1" }, { CMD_PIP, L"\uE8B9" },
         { CMD_SPLIT, L"\uE8A0" }, { CMD_PALETTE, L"\uE765" }, { CMD_TABSEARCH, L"\uE7C4" }, { CMD_SCREENSHOT, L"\uE722" }, { CMD_FIND, L"\uE721" }, { CMD_PRINT, L"\uE749" },
         { CMD_ZOOMIN, L"\uE8A3" }, { CMD_ZOOMOUT, L"\uE71F" }, { CMD_ZOOMRESET, L"\uE71E" }, { CMD_DEVTOOLS, L"\uE943" },
-        { CMD_SETTINGS, L"\uE713" },
+        { CMD_CUSTOMIZE, L"\uE771" }, { CMD_SETTINGS, L"\uE713" },
     };
     for (auto& i : icons) MenuSetIcon(m, i.id, i.glyph);
-    POINT pt = { (LONG)g_L.more.GetRight(), (LONG)(g_L.more.GetBottom() + S(4)) };
+    const RectF anchor = ChromeMenuAnchor();
+    POINT pt = { (LONG)anchor.GetRight(), (LONG)(anchor.GetBottom() + S(4)) };
     ClientToScreen(g_hWnd, &pt);
     int cmd = MenuTrack(m, TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, g_hWnd);
     DestroyMenu(m);
@@ -240,6 +244,7 @@ bool HandleShortcut(const MSG& m) {
     // Esc leaves element fullscreen (video players). WebKit leaves this to the app: on Windows
     // nothing else does it, and the page never sees the key as a way out.
     if (!ctrl && !alt && !shift && k == VK_ESCAPE && g_fullScreenView) { ExitFullScreenForTabSwitch(); return true; }
+    if (!ctrl && !alt && !shift && k == VK_ESCAPE && CustomizeActive()) { CustomizeEnd(); return true; }
 
     if (!ctrl && !alt && !shift && k == VK_F9) { RunCommand(CMD_READER); return true; }
     if (ctrl && shift && !alt) {

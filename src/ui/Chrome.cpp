@@ -1,10 +1,11 @@
 // Lyra — раскладка, отрисовка и попадание мышью для панели вкладок и инструментов.
 //
-// Three layouts (Settings > Tabs > Tab layout):
+// Three places for the tabs (the layout's mode, ui/UiLayout):
 //   compact   - one row: back/forward, the tabs, where the active tab is the address field,
 //               new tab, menu and the window buttons (like Safari's compact tab bar)
 //   separate  - a tab strip with the window buttons, below it a toolbar with the address field
 //   vertical  - a toolbar row with the address field, the tabs in a list on the left
+// The buttons go where the layout's zones put them; sizes, radii and borders are the layout's.
 // The window has no system title bar (see MainWindow.cpp): empty chrome drags the window.
 #include "ui/Chrome.h"
 #include "ui/TabHoverCard.h"
@@ -36,6 +37,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "app/Updater.h"
+#include "ui/Customize.h"
 #include <intrin.h>
 
 Layout g_L;
@@ -51,7 +53,7 @@ static bool s_paintTransparent = false;
 static Layout s_target;
 static std::map<unsigned long long, RectF> s_tabCur;   // drawn tab rectangles by tab id
 static std::map<unsigned, RectF> s_groupCur;          // drawn group labels by group id
-static RectF s_newTabCur;
+static RectF s_tabEndCur;                              // drawn extent of the zone after the tabs (the "+")
 static bool  s_haveCur = false;
 // Width freeze after closing a tab with the mouse
 static bool  s_frozen = false;
@@ -64,13 +66,12 @@ constexpr float kTabTauMs = 55.f;     // tabs settle in ~170 ms at 100 % speed
 constexpr float kHoverTauMs = 45.f;   // hover highlight fades in ~140 ms
 
 ChromeDims CurrentDims() {
-    //                     bar strip btn  tab icon cap  font sideW
-    static const ChromeDims kDims[3] = {
-        { 36, 34, 28, 26, 14, 40, 12, 220 },   // compact
-        { 42, 38, 32, 30, 15, 44, 13, 232 },   // normal
-        { 48, 42, 34, 34, 16, 46, 13, 244 },   // large
-    };
-    return kDims[std::max(0, std::min(2, g_prefs.density))];
+    const UiStyle& s = UiActive().style;
+    ChromeDims d;
+    d.bar = s.bar; d.strip = s.strip; d.btn = s.btn; d.tab = s.tab; d.icon = s.icon; d.font = s.font; d.sideW = s.sideW;
+    static const float kCap[3] = { 40, 44, 46 };         // window buttons: by the toolbar size
+    d.cap = kCap[std::max(0, std::min(2, g_prefs.density))];
+    return d;
 }
 
 // The sidebar's strip and header only while the pointer is (or just was) on them: chrome
@@ -184,20 +185,158 @@ static void PlaceCaptionButtons(Layout& L, float w, float rowH, const ChromeDims
     L.capMin   = RectF(right - cwClose - cw * 2, capTop, cw, capH);
 }
 
-// The star sits at the right end of the address field (left of reload when that is inside).
+// The star sits at the right end of the address field (left of the buttons inside it).
 static void PlaceStar(Layout& L) {
     const float rb = std::floor(L.pill.Height - S(6));
-    const float right = L.reloadInPill ? L.reload.X - S(1) : L.pill.GetRight() - S(3);
+    const float right = L.fieldX;
     L.star = RectF(right - rb, L.pill.Y + (L.pill.Height - rb) / 2, rb, rb);
     if (L.pill.Width < S(220)) L.star = RectF();         // too narrow: no star
 }
 
-static void PlaceReloadInPill(Layout& L) {
+// ---- The layout's items (ui/UiLayout) ----
+static RectF* ItemRect(Layout& L, int item) {
+    switch (item) {
+    case kItemBack:      return &L.back;
+    case kItemForward:   return &L.fwd;
+    case kItemReload:    return &L.reload;
+    case kItemHome:      return &L.home;
+    case kItemNewTab:    return &L.newTab;
+    case kItemDownloads: return &L.downloads;
+    case kItemSidebar:   return &L.sidebarBtn;
+    case kItemMenu:      return &L.more;
+    }
+    return nullptr;                                      // the extensions: L.ext
+}
+static const RectF* ItemRect(const Layout& L, int item) { return ItemRect(const_cast<Layout&>(L), item); }
+
+static const Hit::Kind kItemHit[kItemCount] = {
+    Hit::Back, Hit::Forward, Hit::Reload, Hit::Home, Hit::NewTab, Hit::Downloads, Hit::ExtAction, Hit::SidebarBtn, Hit::More
+};
+
+static size_t ExtCount() { return std::min<size_t>(ExtensionButtons().size(), 8); }
+
+// Downloads show once there are any, the extensions once one has a button; while customizing all do.
+static bool ItemShown(int item) {
+    if (CustomizeActive()) return true;
+    if (item == kItemDownloads) return !DownloadsList().empty();
+    if (item == kItemExtensions) return ExtCount() > 0;
+    return true;
+}
+
+static float ItemSize(int item, float btn) {
+    const float s = UiActive().items[item].size;
+    return s > 0 ? std::floor(S(s)) : btn;
+}
+
+// How many buttons the item is (the extensions: one each; customizing without any: a stand-in).
+static size_t ItemButtons(int item) {
+    if (item != kItemExtensions) return 1;
+    return std::max<size_t>(ExtCount(), CustomizeActive() ? 1 : 0);
+}
+
+static float ItemSpan(int item, float btn, float gap) {
+    const size_t m = ItemButtons(item);
+    return m ? ItemSize(item, btn) * (float)m + gap * (float)(m - 1) : 0.f;
+}
+
+// The zone's items in a row with the gaps between them; customizing, an empty zone gets a button's place.
+static float ZoneWidth(int z, float btn, float gap, int skip = -1) {
+    float sum = 0;
+    int k = 0;
+    for (int item : UiActive().zones[z]) {
+        if (item == skip || !ItemShown(item) || !ItemButtons(item)) continue;
+        sum += ItemSpan(item, btn, gap) + (k++ ? gap : 0.f);
+    }
+    if (!k && CustomizeActive()) sum = btn;
+    return sum;
+}
+
+static void PutItem(Layout& L, int item, int zone, int index, float x, float rowY, float rowH, float btn, float gap) {
+    const float sz = ItemSize(item, btn), y = rowY + std::floor((rowH - sz) / 2);
+    const float span = ItemSpan(item, btn, gap);
+    if (item == kItemExtensions) {
+        const size_t n = ExtCount();
+        L.ext.resize(n);
+        for (size_t i = 0; i < n; ++i) L.ext[i] = RectF(x + (float)i * (sz + gap), y, sz, sz);
+    } else {
+        *ItemRect(L, item) = RectF(x, y, sz, sz);
+    }
+    L.slots.push_back({ item, zone, index, RectF(x, y, span, sz) });
+}
+
+// Places the zone's items in a row from `x`: rightwards (dir > 0) or leftwards (dir < 0, `x` is
+// the right end). Returns the far end (`x` when nothing was placed and not customizing).
+static float PlaceZone(Layout& L, int z, float x, float rowY, float rowH, int dir, float btn, float gap, int skip = -1) {
+    const std::vector<int>& items = UiActive().zones[z];
+    float cur = x;
+    bool any = false;
+    const int n = (int)items.size();
+    for (int k = 0; k < n; ++k) {
+        const int idx = dir > 0 ? k : n - 1 - k;
+        const int item = items[idx];
+        if (item == skip || !ItemShown(item) || !ItemButtons(item)) continue;
+        const float span = ItemSpan(item, btn, gap);
+        if (dir > 0) { PutItem(L, item, z, idx, cur, rowY, rowH, btn, gap); cur += span + gap; }
+        else { cur -= span; PutItem(L, item, z, idx, cur, rowY, rowH, btn, gap); cur -= gap; }
+        any = true;
+    }
+    const float y = rowY + std::floor((rowH - btn) / 2);
+    float end = any ? (dir > 0 ? cur - gap : cur + gap) : x;
+    if (!any && CustomizeActive()) end = dir > 0 ? x + btn : x - btn;   // a place to drop onto
+    L.zoneRect[z] = dir > 0 ? RectF(x, y, end - x, btn) : RectF(end, y, x - end, btn);
+    return end;
+}
+
+// Moves what the zone holds (MergeSplitTabs / OpenInsertGap / the animated "+").
+static void ShiftZone(Layout& L, int z, float dx, float dy) {
+    if (dx == 0 && dy == 0) return;
+    for (Layout::Slot& s : L.slots) {
+        if (s.zone != z) continue;
+        s.r.X += dx; s.r.Y += dy;
+        if (s.item == kItemExtensions) for (RectF& r : L.ext) { r.X += dx; r.Y += dy; }
+        else if (RectF* r = ItemRect(L, s.item)) { r->X += dx; r->Y += dy; }
+    }
+    L.zoneRect[z].X += dx;
+    L.zoneRect[z].Y += dy;
+}
+
+// The items of the Field zone: small buttons at the right end of the address field.
+static void PlaceFieldItems(Layout& L) {
+    for (int i = 0; i < kItemCount; ++i) {
+        if (!L.inField[i]) continue;
+        if (RectF* r = ItemRect(L, i)) *r = RectF();
+        L.inField[i] = false;
+    }
+    L.slots.erase(std::remove_if(L.slots.begin(), L.slots.end(), [](const Layout::Slot& s) { return s.zone == kZoneField; }), L.slots.end());
     const float rb = std::floor(L.pill.Height - S(6));
-    L.reload = RectF(L.pill.GetRight() - rb - S(3), L.pill.Y + (L.pill.Height - rb) / 2, rb, rb);
-    L.reloadInPill = true;
+    const float y = L.pill.Y + (L.pill.Height - rb) / 2;
+    float x = L.pill.GetRight() - S(3);
+    bool any = false;
+    const std::vector<int>& items = UiActive().zones[kZoneField];
+    for (int k = (int)items.size() - 1; k >= 0; --k) {
+        const int item = items[k];
+        if (item == kItemExtensions || !ItemShown(item)) continue;
+        x -= rb;
+        *ItemRect(L, item) = RectF(x, y, rb, rb);
+        L.inField[item] = true;
+        L.slots.push_back({ item, kZoneField, k, RectF(x, y, rb, rb) });
+        x -= S(1);
+        any = true;
+    }
+    L.fieldItems = any;
+    L.fieldX = any ? x : L.pill.GetRight() - S(3);
+    L.reloadInPill = L.inField[kItemReload];
+    const float zx = any ? x + S(1) : (CustomizeActive() ? L.pill.GetRight() - S(3) - rb : L.pill.GetRight() - S(3));
+    L.zoneRect[kZoneField] = RectF(zx, y, L.pill.GetRight() - S(3) - zx, rb);
     PlaceStar(L);
 }
+
+// Where the address field's own icons (key, reader, ...) end on the right.
+static float FieldEdge(float gapItems, float gapNone) {
+    return g_L.fieldItems ? g_L.fieldX - gapItems : g_L.pill.GetRight() - gapNone;
+}
+
+static float BorderW(float v) { return v <= 0 ? 0.f : v <= 1 ? 1.f : std::round(S(v)); }
 
 // Split view: its two tabs are one tab in the list. The left half's tab takes both places (the
 // right half's gets no size); in the compact layout, while the split is open, the open half is
@@ -228,12 +367,12 @@ static void MergeSplitTabs(Layout& L) {
         for (size_t i = (size_t)ri + 1; i < n; ++i) { if (vertical) L.tabs[i].Y -= removed; else L.tabs[i].X -= removed; }
         for (size_t k = 0; k < L.groups.size(); ++k)
             if (L.groupFirst[k] > ri) { if (vertical) L.groups[k].Y -= removed; else L.groups[k].X -= removed; }
-        if (vertical) L.newTab.Y -= removed;
-        else L.newTab.X -= removed;
+        if (vertical) ShiftZone(L, kZoneTabEnd, 0, -removed);
+        else ShiftZone(L, kZoneTabEnd, -removed, 0);
     }
     if (L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
         L.pill = L.tabs[g_active];
-        PlaceReloadInPill(L);
+        PlaceFieldItems(L);
     }
 }
 
@@ -254,20 +393,12 @@ static void OpenInsertGap(Layout& L) {
     }
     for (size_t k = 0; k < L.groups.size(); ++k)
         if (L.groupFirst[k] >= s_insertHint) { if (vertical) L.groups[k].Y += gap; else L.groups[k].X += gap; }
-    if (vertical) L.newTab.Y += gap;
-    else L.newTab.X += gap;
+    if (vertical) ShiftZone(L, kZoneTabEnd, 0, gap);
+    else ShiftZone(L, kZoneTabEnd, gap, 0);
     if (L.mode == kLayoutCompact && g_active >= 0 && g_active < n) {
         L.pill = L.tabs[g_active];
-        PlaceReloadInPill(L);
+        PlaceFieldItems(L);
     }
-}
-
-// The extensions' buttons, right to left from `trail`; returns where they begin.
-static float PlaceExtButtons(Layout& L, float trail, float by, float btn, float gap) {
-    const size_t n = std::min<size_t>(ExtensionButtons().size(), 8);
-    L.ext.resize(n);
-    for (size_t i = 0; i < n; ++i) L.ext[i] = RectF(trail - (float)(n - i) * (btn + gap), by, btn, btn);
-    return n ? L.ext[0].X : trail;
 }
 
 // The text on a group's label: its name; when collapsed also how many tabs it holds.
@@ -328,33 +459,53 @@ static GroupPass PrepareGroups(Layout& L, float gap) {
 
 static void ComputeTarget(Layout& L, int clientW) {
     const ChromeDims d = CurrentDims();
+    const UiLayoutDef& ui = UiActive();
     const float w = (float)clientW;
     L = Layout();
-    L.mode = std::max(0, std::min(2, g_prefs.tabLayout));
+    L.mode = std::max(0, std::min(2, ui.mode));
 
     const float bar = std::floor(S(d.bar)), btn = std::floor(S(d.btn)), tabH = std::floor(S(d.tab));
     const float edge = S(8), gap = S(2);
+    const float tabMaxW = S(ui.style.tabMaxW > 0 ? ui.style.tabMaxW : 150.f);
+    const float fieldMaxW = ui.style.fieldMaxW > 0 ? S(ui.style.fieldMaxW) : 1e9f;
     const size_t n = g_tabs.size();
-    const bool dl = !DownloadsList().empty();        // the downloads button shows once there are any
     L.tabs.resize(n);
     const GroupPass gp = PrepareGroups(L, gap);
     const int nv = gp.visible;
     const float bmH = BookmarksBarShown() ? BookmarksBarHeight() : 0.f;   // the bookmarks bar, under the toolbar
+    const bool customizing = CustomizeActive();
+    const float teW = ZoneWidth(kZoneTabEnd, btn, gap);
+    auto placed = [&](int z) { return L.zoneRect[z].Width > 0; };
+
+    // Customizing: a row of the hidden items under everything, with "Done".
+    auto addPalette = [&]() {
+        if (!customizing) return;
+        const float palH = std::floor(S(46));
+        L.palette = RectF(0, L.chromeH, w, palH);
+        const float pw = std::floor(S(96)), ph = std::floor(S(30));
+        L.palDone = RectF(w - S(12) - pw, L.chromeH + std::floor((palH - ph) / 2), pw, ph);
+        float x = std::floor(S(16));
+        int k = 0;
+        for (int item = 0; item < kItemCount; ++item) {
+            const int z = UiItemZone(ui, item);
+            if (z >= 0 && UiZoneInMode(z, L.mode)) continue;
+            L.slots.push_back({ item, -1, k++, RectF(x, L.chromeH + std::floor((palH - btn) / 2), btn, btn) });
+            x += btn + S(6);
+        }
+        L.chromeH += palH;
+    };
 
     if (L.mode == kLayoutCompact) {
         L.chromeH = bar;
         PlaceCaptionButtons(L, w, bar, d);
-        const float by = std::floor((bar - btn) / 2);
-        L.back = RectF(edge, by, btn, btn);
-        L.fwd  = RectF(edge + btn + gap, by, btn, btn);
-        L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
-        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float trail = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap);
+        const float leftEnd = PlaceZone(L, kZoneLeft, edge, 0, bar, +1, btn, gap);
+        const float rStart = PlaceZone(L, kZoneRight, L.capMin.X - S(4), 0, bar, -1, btn, gap);
 
-        // Tabs between "forward" and "+": inactive tabs up to 150 px wide, the active tab (the
-        // address field) takes the rest, up to 860 px. Many tabs shrink the inactive ones first.
-        const float left = L.fwd.GetRight() + S(8);
-        const float right = trail - S(4) - btn - gap;
+        // Tabs between the left buttons and the zone after them: inactive tabs up to tabMaxW wide,
+        // the active tab (the address field) takes the rest, up to fieldMaxW. Many tabs shrink the
+        // inactive ones first.
+        const float left = placed(kZoneLeft) ? leftEnd + S(8) : edge;
+        const float right = rStart - S(4) - (teW > 0 ? teW + gap : 0.f);
         const float ty = std::floor((bar - tabH) / 2);
         float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedIn = 0;                                // pinned tabs (not the open one): a fixed narrow width
@@ -362,11 +513,11 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float pinW = std::floor(S(kPinnedW));
         avail = std::max(0.f, avail - pinW * (float)pinnedIn);
         const int inactive = nv ? nv - 1 - pinnedIn : 0;
-        float inW = S(150), pillW = 0;
+        float inW = tabMaxW, pillW = 0;
         if (inactive == 0) {
-            pillW = std::min(avail, S(860));
+            pillW = std::min(avail, fieldMaxW);
         } else if (avail - inactive * inW >= S(300)) {
-            pillW = std::min(avail - inactive * inW, S(860));
+            pillW = std::min(avail - inactive * inW, fieldMaxW);
         } else {
             inW = std::max(S(28), (avail - S(300)) / (float)inactive);
             pillW = std::max(S(160), avail - inactive * inW);
@@ -389,17 +540,20 @@ static void ComputeTarget(Layout& L, int clientW) {
         }
         if (g_active >= 0 && g_active < (int)n) L.pill = L.tabs[g_active];
         else L.pill = RectF(left, ty, pillW, tabH);
-        PlaceReloadInPill(L);
-        const float nx = std::min(x, right + gap);
-        L.newTab = RectF(std::floor(nx), by, btn, btn);
+        PlaceFieldItems(L);
+        PlaceZone(L, kZoneTabEnd, std::floor(std::min(x, right + gap)), 0, bar, +1, btn, gap);
         if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
+        addPalette();
     } else if (L.mode == kLayoutSeparate) {
         const float strip = std::floor(S(d.strip));
         L.chromeH = strip + bar;
         PlaceCaptionButtons(L, w, strip, d);
 
         // Tab strip
-        const float left = edge, right = L.capMin.X - S(8) - btn - gap;
+        const float slEnd = PlaceZone(L, kZoneStripLeft, edge, 0, strip, +1, btn, gap);
+        const float srStart = PlaceZone(L, kZoneStripRight, L.capMin.X - S(8), 0, strip, -1, btn, gap);
+        const float left = placed(kZoneStripLeft) ? slEnd + S(6) : edge;
+        const float right = (placed(kZoneStripRight) ? srStart - S(6) : srStart) - (teW > 0 ? teW + gap : 0.f);
         const float ty = std::floor((strip - tabH) / 2);
         const float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedN = 0;
@@ -407,7 +561,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float pinW = std::floor(S(kPinnedW));
         const size_t normal = (size_t)std::max(0, nv - pinnedN);
         float tw = normal ? std::max(0.f, avail - pinW * (float)pinnedN) / (float)normal : 0.f;
-        tw = std::max(S(28), std::min(tw, S(200)));
+        tw = std::max(S(28), std::min(tw, tabMaxW));
         if (s_frozen) tw = std::min(tw, s_frozenTabW);
         float x = left;
         for (size_t i = 0; i < n; ++i) {
@@ -421,39 +575,43 @@ static void ComputeTarget(Layout& L, int clientW) {
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(w), tabH);
             x += w + gap;
         }
-        L.newTab = RectF(std::floor(std::min(x, right + gap)), std::floor((strip - btn) / 2), btn, btn);
+        PlaceZone(L, kZoneTabEnd, std::floor(std::min(x, right + gap)), 0, strip, +1, btn, gap);
 
         // Toolbar
-        const float by = strip + std::floor((bar - btn) / 2);
-        L.back   = RectF(edge, by, btn, btn);
-        L.fwd    = RectF(edge + btn + gap, by, btn, btn);
-        L.reload = RectF(edge + (btn + gap) * 2, by, btn, btn);
-        L.reloadInPill = false;
-        L.more   = RectF(w - edge - btn, by, btn, btn);
-        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float pl = L.reload.GetRight() + S(8), pr = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap) - S(8);
-        L.pill = RectF(std::floor(pl), strip + std::floor((bar - tabH) / 2), std::floor(std::max(S(80), pr - pl)), tabH);
-        PlaceStar(L);
+        const float lEnd = PlaceZone(L, kZoneLeft, edge, strip, bar, +1, btn, gap);
+        const float rStart = PlaceZone(L, kZoneRight, w - edge, strip, bar, -1, btn, gap);
+        const float pl = placed(kZoneLeft) ? lEnd + S(8) : edge;
+        const float pr = placed(kZoneRight) ? rStart - S(8) : w - edge;
+        float pw = std::max(S(80), pr - pl), px = pl;
+        if (pw > fieldMaxW) {                            // a narrower field: in the middle of the window
+            pw = fieldMaxW;
+            px = std::max(pl, std::min(std::floor(w / 2 - pw / 2), pr - pw));
+        }
+        L.pill = RectF(std::floor(px), strip + std::floor((bar - tabH) / 2), std::floor(pw), tabH);
+        PlaceFieldItems(L);
         if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
+        addPalette();
     } else {   // vertical
         L.chromeH = bar + bmH;
         if (bmH > 0) L.bmBar = RectF(0, bar, w, bmH);
         L.sideW = std::floor(S(d.sideW));
         PlaceCaptionButtons(L, w, bar, d);
-        const float by = std::floor((bar - btn) / 2);
-        L.back = RectF(edge, by, btn, btn);
-        L.fwd  = RectF(edge + btn + gap, by, btn, btn);
-        L.more = RectF(L.capMin.X - S(4) - btn, by, btn, btn);
-        if (dl) L.downloads = RectF(L.more.X - gap - btn, by, btn, btn);
-        const float pl = L.fwd.GetRight() + S(12), pr = PlaceExtButtons(L, dl ? L.downloads.X : L.more.X, by, btn, gap) - S(12);
-        const float pw = std::max(S(120), std::min(pr - pl, S(640)));
+        const float lEnd = PlaceZone(L, kZoneLeft, edge, 0, bar, +1, btn, gap);
+        const float rStart = PlaceZone(L, kZoneRight, L.capMin.X - S(4), 0, bar, -1, btn, gap);
+        const float pl = placed(kZoneLeft) ? lEnd + S(12) : edge, pr = rStart - S(12);
+        const float pw = std::max(S(120), std::min(pr - pl, fieldMaxW));
         float px = std::floor(w / 2 - pw / 2);
         px = std::max(pl, std::min(px, pr - pw));
         L.pill = RectF(px, std::floor((bar - tabH) / 2), std::floor(pw), tabH);
-        PlaceReloadInPill(L);
+        PlaceFieldItems(L);
+        addPalette();
 
         const float rowH = tabH + S(2);
         float y = L.chromeH + S(4);
+        if (ZoneWidth(kZoneSideTop, btn, gap) > 0) {     // buttons above the list
+            PlaceZone(L, kZoneSideTop, S(6), std::floor(y), btn, +1, btn, gap);
+            y += btn + S(4);
+        }
         // Pinned tabs: a grid of icons at the top of the list.
         const float cell = std::floor(S(kPinnedW)), cgap = S(4);
         const int cols = std::max(1, (int)((L.sideW - S(12) + cgap) / (cell + cgap)));
@@ -478,7 +636,28 @@ static void ComputeTarget(Layout& L, int clientW) {
             L.tabs[i] = RectF(S(6) + in, std::floor(y), L.sideW - S(12) - in, rowH);
             y += rowH + S(1);
         }
-        L.newTab = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
+        // Under the list: "New tab" as a row, the zone's other items as buttons under it.
+        const std::vector<int>& te = ui.zones[kZoneTabEnd];
+        const auto ni = std::find(te.begin(), te.end(), (int)kItemNewTab);
+        RectF row;
+        if (ni != te.end()) {
+            row = RectF(S(6), std::floor(y), L.sideW - S(12), rowH);
+            L.newTab = row;
+            L.newTabRow = true;
+            L.slots.push_back({ kItemNewTab, kZoneTabEnd, (int)(ni - te.begin()), row });
+            y += rowH + S(1);
+        }
+        const bool others = te.size() > (L.newTabRow ? 1u : 0u);
+        if ((others || !L.newTabRow) && ZoneWidth(kZoneTabEnd, btn, gap, kItemNewTab) > 0) {
+            PlaceZone(L, kZoneTabEnd, S(6), std::floor(y), btn, +1, btn, gap, kItemNewTab);
+            if (L.newTabRow) {
+                RectF u;
+                RectF::Union(u, row, L.zoneRect[kZoneTabEnd]);
+                L.zoneRect[kZoneTabEnd] = u;
+            }
+        } else {
+            L.zoneRect[kZoneTabEnd] = row;
+        }
     }
     {   // the sidebar (ui/Sidebar): below the toolbar on one side, the page takes the rest
         RECT cr = {};
@@ -506,10 +685,11 @@ static void ApplyCurrent() {
         if (it != s_groupCur.end()) g_L.groups[k] = it->second;
     }
     TabGroupEditReposition();                            // a group's name field follows its label
-    if (g_L.mode != kLayoutVertical) g_L.newTab = s_newTabCur;
+    if (g_L.mode != kLayoutVertical)                     // the "+" (and what else follows the tabs) glides
+        ShiftZone(g_L, kZoneTabEnd, s_tabEndCur.X - s_target.zoneRect[kZoneTabEnd].X, s_tabEndCur.Y - s_target.zoneRect[kZoneTabEnd].Y);
     if (g_L.mode == kLayoutCompact && g_active >= 0 && g_active < (int)n) {
         g_L.pill = g_L.tabs[g_active];
-        PlaceReloadInPill(g_L);
+        PlaceFieldItems(g_L);
     }
 }
 
@@ -559,8 +739,8 @@ void ComputeLayout(int clientW, bool animate) {
         nextGroups[s_target.groupIds[k]] = cur;
     }
     s_groupCur.swap(nextGroups);
-    if (!anim) s_newTabCur = s_target.newTab;
-    else if (!Near(s_newTabCur, s_target.newTab)) moving = true;
+    if (!anim) s_tabEndCur = s_target.zoneRect[kZoneTabEnd];
+    else if (!Near(s_tabEndCur, s_target.zoneRect[kZoneTabEnd])) moving = true;
     s_haveCur = true;
     ApplyCurrent();
     if (moving) AnimRequest();
@@ -581,6 +761,15 @@ void FreezeTabWidths() {
 
 void UnfreezeTabWidths() { s_frozen = false; }
 bool TabWidthsFrozen() { return s_frozen; }
+RectF ChromeMenuAnchor() {
+    if (g_L.more.Width > 0) return g_L.more;
+    const ChromeDims d = CurrentDims();
+    const float b = std::floor(S(d.btn)), bar = std::floor(S(d.bar));
+    const float x = (g_L.mode == kLayoutSeparate ? (float)g_clientW - S(8) : g_L.capMin.X - S(4)) - b;
+    const float y = (g_L.mode == kLayoutSeparate ? g_L.captionH : 0.f) + std::floor((bar - b) / 2);
+    return RectF(x, y, b, b);
+}
+
 float TabStripBottom() {
     if (g_L.mode == kLayoutSeparate) return g_L.captionH;
     return g_L.mode == kLayoutVertical ? 0.f : g_L.chromeH;
@@ -766,7 +955,7 @@ bool ChromeAnimStep(float dt) {
             if (it == s_groupCur.end()) continue;
             step(it->second, s_target.groups[k], k2);
         }
-        if (s_target.mode != kLayoutVertical) step(s_newTabCur, s_target.newTab, k);
+        if (s_target.mode != kLayoutVertical) step(s_tabEndCur, s_target.zoneRect[kZoneTabEnd], k);
         const RectF pillWas = g_L.pill;
         ApplyCurrent();
         if (moved) {
@@ -846,7 +1035,7 @@ static bool KeyShown() {
 static RectF KeyRect() {
     const float c = S(22);
     const RectF& pill = g_L.pill;
-    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    float right = StarShown() ? g_L.star.X - S(2) : FieldEdge(S(1), S(6));
     if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
     return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
 }
@@ -861,7 +1050,7 @@ static bool ReaderShown() {
 static RectF ReaderRect() {
     const float c = S(22);
     const RectF& pill = g_L.pill;
-    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    float right = StarShown() ? g_L.star.X - S(2) : FieldEdge(S(1), S(6));
     if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
     if (KeyShown()) right = KeyRect().X - S(2);
     return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
@@ -877,7 +1066,7 @@ static bool TranslateShown() {
 static RectF TranslateRect() {
     const float c = S(22);
     const RectF& pill = g_L.pill;
-    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    float right = StarShown() ? g_L.star.X - S(2) : FieldEdge(S(1), S(6));
     if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
     if (KeyShown()) right = KeyRect().X - S(2);
     if (ReaderShown()) right = ReaderRect().X - S(2);
@@ -898,7 +1087,7 @@ static std::wstring ZoomText() {
 
 static RectF ZoomRect() {
     const RectF& pill = g_L.pill;
-    float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+    float right = StarShown() ? g_L.star.X - S(2) : FieldEdge(S(1), S(6));
     if (IsCompactActive(g_active) && AudioShown(g_active)) right = AudioRect(g_active).X - S(2);
     if (KeyShown()) right = KeyRect().X - S(2);
     if (ReaderShown()) right = ReaderRect().X - S(2);
@@ -921,7 +1110,7 @@ static RectF AudioRect(int i) {
     const float c = S(22);
     if (IsCompactActive(i)) {                        // inside the address field, left of the star
         const RectF& pill = g_L.pill;
-        const float right = StarShown() ? g_L.star.X - S(2) : g_L.reloadInPill ? g_L.reload.X - S(2) : pill.GetRight() - S(6);
+        const float right = StarShown() ? g_L.star.X - S(2) : FieldEdge(S(1), S(6));
         return RectF(right - c, pill.Y + (pill.Height - c) / 2, c, c);
     }
     const RectF& r = g_L.tabs[i];
@@ -952,13 +1141,16 @@ Hit HitTest(int px, int py) {
         if (L.capClose.Contains(x, y)) return MakeHit(Hit::CapClose);
         if (L.capMax.Contains(x, y))   return MakeHit(Hit::CapMax);
         if (L.capMin.Contains(x, y))   return MakeHit(Hit::CapMin);
-        if (L.back.Contains(x, y))     return MakeHit(Hit::Back);
-        if (L.fwd.Contains(x, y))      return MakeHit(Hit::Forward);
-        if (L.more.Contains(x, y))     return MakeHit(Hit::More);
-        if (L.downloads.Width > 0 && L.downloads.Contains(x, y)) return MakeHit(Hit::Downloads);
-        for (size_t i = 0; i < L.ext.size(); ++i) if (L.ext[i].Contains(x, y)) return MakeHit(Hit::ExtAction, (int)i);
-        if (L.mode != kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
-        if (!(L.reloadInPill && IsEditing()) && L.reload.Contains(x, y)) return MakeHit(Hit::Reload);
+    }
+    // The layout's buttons (in the vertical layout also above and under the tab list).
+    for (int item = 0; item < kItemCount; ++item) {
+        if (item == kItemExtensions || (item == kItemNewTab && L.newTabRow)) continue;
+        if (L.inField[item] && IsEditing()) continue;    // (typing: the field's buttons are hidden)
+        const RectF& r = *ItemRect(L, item);
+        if (r.Width > 0 && r.Contains(x, y)) return MakeHit(kItemHit[item]);
+    }
+    for (size_t i = 0; i < L.ext.size(); ++i) if (L.ext[i].Contains(x, y)) return MakeHit(Hit::ExtAction, (int)i);
+    if (inTop) {
         if (StarShown() && L.star.Contains(x, y)) return MakeHit(Hit::Star);
         if (KeyShown() && KeyRect().Contains(x, y)) return MakeHit(Hit::Key);
         if (ReaderShown() && ReaderRect().Contains(x, y)) return MakeHit(Hit::Reader);
@@ -978,7 +1170,7 @@ Hit HitTest(int px, int py) {
         if (TabHiddenByGroup(i) || r.Width < 1.f || r.Height < 1.f) continue;
         if (x >= r.X && x < r.GetRight() + S(2) && y >= r.Y && y < r.GetBottom()) return MakeHit(Hit::TabBody, i);
     }
-    if (L.mode == kLayoutVertical && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
+    if (L.newTabRow && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
     return MakeHit(Hit::None);
 }
 
@@ -990,11 +1182,14 @@ static bool HitDirtyRect(const Hit& h, RectF* out) {
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());
     switch (h.kind) {
     case Hit::None: case Hit::SideItem: case Hit::SideButton: case Hit::SideResize: return true;
-    case Hit::Back:      *out = L.back; return true;
-    case Hit::Forward:   *out = L.fwd; return true;
-    case Hit::More:      *out = L.more; return true;
-    case Hit::Downloads: *out = L.downloads; return true;
-    case Hit::NewTab:    *out = L.newTab; return true;
+    // A button inside the address field: the field brightens as a whole.
+    case Hit::Back:      *out = L.inField[kItemBack] ? L.pill : L.back; return true;
+    case Hit::Forward:   *out = L.inField[kItemForward] ? L.pill : L.fwd; return true;
+    case Hit::More:      *out = L.inField[kItemMenu] ? L.pill : L.more; return true;
+    case Hit::Downloads: *out = L.inField[kItemDownloads] ? L.pill : L.downloads; return true;
+    case Hit::NewTab:    *out = L.inField[kItemNewTab] ? L.pill : L.newTab; return true;
+    case Hit::Home:      *out = L.inField[kItemHome] ? L.pill : L.home; return true;
+    case Hit::SidebarBtn: *out = L.inField[kItemSidebar] ? L.pill : L.sidebarBtn; return true;
     case Hit::CapMin:    *out = L.capMin; return true;
     case Hit::CapMax:    *out = L.capMax; return true;
     case Hit::CapClose:  *out = L.capClose; return true;
@@ -1036,20 +1231,22 @@ static std::unique_ptr<Font> MakeFont(const wchar_t* const* families, int count,
 }
 
 void RebuildResources() {
-    static const wchar_t* ui[]    = { L"Segoe UI Variable Text", L"Segoe UI" };
+    const std::wstring& family = UiActive().style.fontFamily;   // the layout's font, else Segoe UI
+    const wchar_t* ui[] = { family.c_str(), L"Segoe UI Variable Text", L"Segoe UI" };
+    const int uiFirst = family.empty() ? 1 : 0;
     const ChromeDims d = CurrentDims();
-    g_fText    = MakeFont(ui, 2, S(d.font + 1));
-    g_fTab     = MakeFont(ui, 2, S(d.font));
-    g_fTabBold = MakeFont(ui, 2, S(d.font), FontStyleBold);
+    g_fText    = MakeFont(ui + uiFirst, 3 - uiFirst, S(d.font + 1));
+    g_fTab     = MakeFont(ui + uiFirst, 3 - uiFirst, S(d.font));
+    g_fTabBold = MakeFont(ui + uiFirst, 3 - uiFirst, S(d.font), FontStyleBold);
     g_fIcon    = MakeIconFont(S(d.icon));
     g_fIconSm  = MakeIconFont(S(d.icon - 3));
     g_fCaption = MakeIconFont(S(10));
-    g_fBadge   = MakeFont(ui, 2, S(9), FontStyleBold);
+    g_fBadge   = MakeFont(ui + 1, 2, S(9), FontStyleBold);
 
     HFONT old = g_editFont;
     g_editFont = CreateFontW(-(int)std::round(S(d.font + 1)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family.empty() ? L"Segoe UI" : family.c_str());
     if (g_urlEdit) {
         HDC dc = GetDC(g_urlEdit);
         HGDIOBJ prev = SelectObject(dc, g_editFont);
@@ -1127,10 +1324,13 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const float a = HoverAmount(hit);
         if (a > 0.f) FillRound(g, Faded(T.hover, a), r, rad);
     };
-    auto toolButton = [&](const RectF& r, const wchar_t* glyph, bool enabled, Hit::Kind k, Font* f) {
-        if (!InPaint(r, 2.f)) return;
-        if (enabled) hoverFill(r, MakeHit(k, -1), dwn(k, -1), S(6));
-        DrawGlyph(g, glyph, r, enabled ? T.icon : T.iconDis, f);
+    const UiLayoutDef& ui = UiActive();
+    const float btnRad = S(ui.style.btnRadius);
+    auto itemInk = [&](int item) { const Color& c = ui.items[item].color; return c.GetA() ? c : T.icon; };
+    auto toolButton = [&](const RectF& r, const wchar_t* glyph, bool enabled, Hit::Kind k, Font* f, const Color& ink) {
+        if (r.Width <= 0 || !InPaint(r, 2.f)) return;
+        if (enabled) hoverFill(r, MakeHit(k, -1), dwn(k, -1), btnRad);
+        DrawGlyph(g, glyph, r, enabled ? ink : T.iconDis, f);
     };
 
     // Backgrounds: chrome, page area (visible only before the first page paints), hairlines
@@ -1141,9 +1341,11 @@ static void DrawChrome(Graphics& g, int w, int h) {
             if (L.sideW > 0) g.FillRectangle(&frame, 0.f, L.chromeH, L.sideW, fh - L.chromeH);
         }
         g.FillRectangle(&page, L.pageL, L.chromeH, L.pageR - L.pageL, fh - L.chromeH);
-        Pen sep(T.sep, 1.f);
-        g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
-        if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
+        if (ui.style.separators) {
+            Pen sep(T.sep, 1.f);
+            g.DrawLine(&sep, L.sideW, L.chromeH - 0.5f, fw, L.chromeH - 0.5f);
+            if (L.sideW > 0) g.DrawLine(&sep, L.sideW - 0.5f, L.chromeH, L.sideW - 0.5f, fh);
+        }
         if (L.bmBar.Width > 0 && InPaint(L.bmBar)) {
             int hoverIndex = g_hover.kind == Hit::BookmarkItem ? g_hover.index : -1000;
             const int pressIndex = (g_down.kind == Hit::BookmarkItem && g_hover == g_down) ? g_down.index : -1000;
@@ -1198,92 +1400,113 @@ static void DrawChrome(Graphics& g, int w, int h) {
         }
     }
 
-    // Navigation
-    toolButton(L.back, L"\uE76B", cur && cur->canBack, Hit::Back, g_fIcon.get());
-    toolButton(L.fwd,  L"\uE76C", cur && cur->canFwd,  Hit::Forward, g_fIcon.get());
-    toolButton(L.more, L"\uE712", true, Hit::More, g_fIcon.get());
-    if (UpdaterReady()) {                // an update is waiting: a small dot on the menu button
-        const float d = S(6);
-        SolidBrush dot(g_th.accent);
-        g.FillEllipse(&dot, L.more.GetRight() - S(7) - d / 2, L.more.Y + S(7) - d / 2, d, d);
-    }
-    if (L.downloads.Width > 0 && InPaint(DownloadsAnimRect())) {
-        // Downloads: the arrow, with a progress bar under it while something downloads; it
-        // lights up in the accent colour for a moment when a download finishes.
-        const RectF& r = L.downloads;
-        hoverFill(r, MakeHit(Hit::Downloads, -1), dwn(Hit::Downloads, -1) || DownloadsPopupVisible(), S(6));
-        const bool running = DownloadsRunning() > 0;
-        RectF glyph = r;
-        if (running) glyph.Y -= S(3);
-        const float at = DownloadAnimT();
-        if (at >= 0) {
-            // A ring spreading out from the button and the arrow dropping in with a small bounce.
-            const float ease = 1.f - (1.f - at) * (1.f - at);
-            const float rad = r.Width * (0.32f + 0.5f * ease);
-            Pen ring(Faded(T.accent, 0.85f * (1.f - at)), std::max(1.5f, S(2.f) * (1.f - at * 0.5f)));
-            g.DrawEllipse(&ring, r.X + r.Width / 2 - rad, r.Y + r.Height / 2 - rad, rad * 2, rad * 2);
-            float dy;
-            if (at < 0.55f) { const float k = 1.f - at / 0.55f; dy = -S(9) * k * k; }
-            else dy = -S(2.5f) * std::sin((at - 0.55f) / 0.45f * 3.14159f);
-            glyph.Y += dy;
-        }
-        DrawGlyph(g, L"\uE896", glyph, (running || DownloadsJustFinished() || at >= 0) ? T.accent : T.icon, g_fIcon.get());
-        if (running) {
-            const float bw = std::floor(r.Width * 0.5f), bh = std::max(2.f, std::floor(S(3)));
-            const RectF track(r.X + (r.Width - bw) / 2, r.Y + r.Height * 0.72f, bw, bh);
-            FillRound(g, Faded(T.icon, 0.25f), track, bh / 2);
-            const float p = DownloadsProgress();
-            if (p >= 0) {
-                if (p > 0) FillRound(g, T.accent, RectF(track.X, track.Y, std::max(bh, bw * p), bh), bh / 2);
-            } else {                                     // size unknown: a segment sliding along
-                const float t = (float)(AnimMs() % 1200) / 1200.f;
-                const float sw = bw * 0.35f, sx = track.X + (bw - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
-                FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
+    // The layout's buttons; those inside the address field are drawn with it (below), a "New
+    // tab" row under the vertical list with the tabs.
+    auto drawItem = [&](int item, bool inField) {
+        Font* f = inField ? g_fIconSm.get() : g_fIcon.get();
+        switch (item) {
+        case kItemBack:    toolButton(L.back, L"\uE76B", cur && cur->canBack, Hit::Back, f, itemInk(item)); break;
+        case kItemForward: toolButton(L.fwd,  L"\uE76C", cur && cur->canFwd,  Hit::Forward, f, itemInk(item)); break;
+        case kItemReload:  toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, f, itemInk(item)); break;
+        case kItemHome:    toolButton(L.home, UiItemGlyph(item), true, Hit::Home, f, itemInk(item)); break;
+        case kItemNewTab:  toolButton(L.newTab, L"\uE710", (int)g_tabs.size() < metrics::kMaxTabs, Hit::NewTab, f, itemInk(item)); break;
+        case kItemSidebar: toolButton(L.sidebarBtn, UiItemGlyph(item), true, Hit::SidebarBtn, f, itemInk(item)); break;
+        case kItemMenu:
+            toolButton(L.more, L"\uE712", true, Hit::More, f, itemInk(item));
+            if (UpdaterReady() && L.more.Width > 0) {    // an update is waiting: a small dot on the menu button
+                const float d = S(6);
+                SolidBrush dot(g_th.accent);
+                g.FillEllipse(&dot, L.more.GetRight() - S(7) - d / 2, L.more.Y + S(7) - d / 2, d, d);
             }
-        }
-    }
-    // Extensions' buttons: the icon (greyed while off for this tab), the badge in its corner.
-    if (!L.ext.empty()) {
-        const std::vector<ExtensionButton> buttons = ExtensionButtons();
-        for (size_t i = 0; i < L.ext.size() && i < buttons.size(); ++i) {
-            const RectF& r = L.ext[i];
-            if (!InPaint(r, 4.f)) continue;
-            const ExtensionButton& b = buttons[i];
-            const Hit hit = MakeHit(Hit::ExtAction, (int)i);
-            hoverFill(r, hit, dwn(Hit::ExtAction, (int)i) || b.open, S(6));
-            const float is = std::floor(S(16));
-            const RectF ir(std::floor(r.X + (r.Width - is) / 2), std::floor(r.Y + (r.Height - is) / 2), is, is);
-            if (b.icon) {
-                const InterpolationMode im = g.GetInterpolationMode();
-                g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-                if (b.enabled) {
-                    g.DrawImage(b.icon, ir);
-                } else {
-                    ColorMatrix cm = { { { 0.3f, 0.3f, 0.3f, 0, 0 }, { 0.59f, 0.59f, 0.59f, 0, 0 }, { 0.11f, 0.11f, 0.11f, 0, 0 },
-                                         { 0, 0, 0, 0.45f, 0 }, { 0, 0, 0, 0, 1 } } };
-                    ImageAttributes ia;
-                    ia.SetColorMatrix(&cm);
-                    g.DrawImage(b.icon, ir, 0, 0, (REAL)b.icon->GetWidth(), (REAL)b.icon->GetHeight(), UnitPixel, &ia);
+            break;
+        case kItemDownloads: {
+            if (L.downloads.Width > 0 && InPaint(DownloadsAnimRect())) {
+                // Downloads: the arrow, with a progress bar under it while something downloads; it
+                // lights up in the accent colour for a moment when a download finishes.
+                const RectF& r = L.downloads;
+                hoverFill(r, MakeHit(Hit::Downloads, -1), dwn(Hit::Downloads, -1) || DownloadsPopupVisible(), btnRad);
+                const bool running = DownloadsRunning() > 0;
+                RectF glyph = r;
+                if (running) glyph.Y -= S(3);
+                const float at = DownloadAnimT();
+                if (at >= 0) {
+                    // A ring spreading out from the button and the arrow dropping in with a small bounce.
+                    const float ease = 1.f - (1.f - at) * (1.f - at);
+                    const float rad = r.Width * (0.32f + 0.5f * ease);
+                    Pen ring(Faded(T.accent, 0.85f * (1.f - at)), std::max(1.5f, S(2.f) * (1.f - at * 0.5f)));
+                    g.DrawEllipse(&ring, r.X + r.Width / 2 - rad, r.Y + r.Height / 2 - rad, rad * 2, rad * 2);
+                    float dy;
+                    if (at < 0.55f) { const float k = 1.f - at / 0.55f; dy = -S(9) * k * k; }
+                    else dy = -S(2.5f) * std::sin((at - 0.55f) / 0.45f * 3.14159f);
+                    glyph.Y += dy;
                 }
-                g.SetInterpolationMode(im);
-            } else {                                     // no icon: its first letter in a circle
-                FillRound(g, Faded(T.icon, b.enabled ? 0.22f : 0.1f), ir, is / 2);
-                const std::wstring letter = b.title.empty() ? std::wstring(L"?") : b.title.substr(0, 1);
-                DrawGlyph(g, letter.c_str(), ir, b.enabled ? T.icon : T.iconDis, g_fBadge.get());
+                DrawGlyph(g, L"\uE896", glyph, (running || DownloadsJustFinished() || at >= 0) ? T.accent : itemInk(kItemDownloads), f);
+                if (running) {
+                    const float bw = std::floor(r.Width * 0.5f), bh = std::max(2.f, std::floor(S(3)));
+                    const RectF track(r.X + (r.Width - bw) / 2, r.Y + r.Height * 0.72f, bw, bh);
+                    FillRound(g, Faded(T.icon, 0.25f), track, bh / 2);
+                    const float p = DownloadsProgress();
+                    if (p >= 0) {
+                        if (p > 0) FillRound(g, T.accent, RectF(track.X, track.Y, std::max(bh, bw * p), bh), bh / 2);
+                    } else {                                     // size unknown: a segment sliding along
+                        const float t = (float)(AnimMs() % 1200) / 1200.f;
+                        const float sw = bw * 0.35f, sx = track.X + (bw - sw) * (t < 0.5f ? t * 2 : 2 - t * 2);
+                        FillRound(g, T.accent, RectF(sx, track.Y, sw, bh), bh / 2);
+                    }
+                }
             }
-            if (!b.badge.empty()) {
-                StringFormat sf(StringFormat::GenericTypographic());
-                RectF tb;
-                g.MeasureString(b.badge.c_str(), -1, g_fBadge.get(), PointF(0, 0), &sf, &tb);
-                const float bh = std::floor(S(12)), bw = std::max(bh, std::ceil(tb.Width) + S(6));
-                const RectF br(std::min(r.GetRight() - S(1), ir.GetRight() + S(5)) - bw, std::min(r.GetBottom() - S(1), ir.GetBottom() + S(3)) - bh, bw, bh);
-                FillRound(g, b.badgeColor.GetA() ? b.badgeColor : T.accent, br, bh / 2);
-                DrawGlyph(g, b.badge.c_str(), br, b.badgeTextColor, g_fBadge.get());
-            }
+            break;
         }
-    }
-    if (!L.reloadInPill)
-        toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, g_fIcon.get());
+        case kItemExtensions: {
+            // Extensions' buttons: the icon (greyed while off for this tab), the badge in its corner.
+            if (!L.ext.empty()) {
+                const std::vector<ExtensionButton> buttons = ExtensionButtons();
+                for (size_t i = 0; i < L.ext.size() && i < buttons.size(); ++i) {
+                    const RectF& r = L.ext[i];
+                    if (!InPaint(r, 4.f)) continue;
+                    const ExtensionButton& b = buttons[i];
+                    const Hit hit = MakeHit(Hit::ExtAction, (int)i);
+                    hoverFill(r, hit, dwn(Hit::ExtAction, (int)i) || b.open, btnRad);
+                    const float is = std::floor(S(16));
+                    const RectF ir(std::floor(r.X + (r.Width - is) / 2), std::floor(r.Y + (r.Height - is) / 2), is, is);
+                    if (b.icon) {
+                        const InterpolationMode im = g.GetInterpolationMode();
+                        g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+                        if (b.enabled) {
+                            g.DrawImage(b.icon, ir);
+                        } else {
+                            ColorMatrix cm = { { { 0.3f, 0.3f, 0.3f, 0, 0 }, { 0.59f, 0.59f, 0.59f, 0, 0 }, { 0.11f, 0.11f, 0.11f, 0, 0 },
+                                                 { 0, 0, 0, 0.45f, 0 }, { 0, 0, 0, 0, 1 } } };
+                            ImageAttributes ia;
+                            ia.SetColorMatrix(&cm);
+                            g.DrawImage(b.icon, ir, 0, 0, (REAL)b.icon->GetWidth(), (REAL)b.icon->GetHeight(), UnitPixel, &ia);
+                        }
+                        g.SetInterpolationMode(im);
+                    } else {                                     // no icon: its first letter in a circle
+                        FillRound(g, Faded(T.icon, b.enabled ? 0.22f : 0.1f), ir, is / 2);
+                        const std::wstring letter = b.title.empty() ? std::wstring(L"?") : b.title.substr(0, 1);
+                        DrawGlyph(g, letter.c_str(), ir, b.enabled ? T.icon : T.iconDis, g_fBadge.get());
+                    }
+                    if (!b.badge.empty()) {
+                        StringFormat sf(StringFormat::GenericTypographic());
+                        RectF tb;
+                        g.MeasureString(b.badge.c_str(), -1, g_fBadge.get(), PointF(0, 0), &sf, &tb);
+                        const float bh = std::floor(S(12)), bw = std::max(bh, std::ceil(tb.Width) + S(6));
+                        const RectF br(std::min(r.GetRight() - S(1), ir.GetRight() + S(5)) - bw, std::min(r.GetBottom() - S(1), ir.GetBottom() + S(3)) - bh, bw, bh);
+                        FillRound(g, b.badgeColor.GetA() ? b.badgeColor : T.accent, br, bh / 2);
+                        DrawGlyph(g, b.badge.c_str(), br, b.badgeTextColor, g_fBadge.get());
+                    }
+                }
+            }
+            if (L.ext.empty() && CustomizeActive())       // none yet: a stand-in to place
+                for (const Layout::Slot& sl : L.slots)
+                    if (sl.item == kItemExtensions && sl.zone >= 0) DrawGlyph(g, UiItemGlyph(item), sl.r, itemInk(item), f);
+            break;
+        }
+        }
+    };
+    for (int item = 0; item < kItemCount; ++item)
+        if (!L.inField[item] && !(item == kItemNewTab && L.newTabRow)) drawItem(item, false);
 
     // Tabs (in the compact layout the active tab is drawn as the address field below)
     const int n = (int)std::min(L.tabs.size(), g_tabs.size());   // layout may lag behind g_tabs by one frame
@@ -1381,13 +1604,15 @@ static void DrawChrome(Graphics& g, int w, int h) {
         const bool act = merged ? (g_active == splitL || g_active == splitR) : (i == g_active);
         const float h = std::max({ HoverAmount(MakeHit(Hit::TabBody, i)), HoverAmount(MakeHit(Hit::TabClose, i)),
                                    HoverAmount(MakeHit(Hit::TabAudio, i)) });
-        const float rad = S(6);
+        const float rad = S(ui.style.tabRadius);
         if (act) {
-            FillRound(g, vertical ? T.tabActive : T.field, r, rad);
-            GraphicsPath p;
-            AddRound(p, r, rad);
-            Pen pen(T.fieldBorder, 1.f);
-            g.DrawPath(&pen, &p);
+            FillRound(g, (vertical || ui.style.colors[kColTabActive].GetA()) ? T.tabActive : T.field, r, rad);
+            if (const float bw = BorderW(ui.style.tabBorder)) {
+                GraphicsPath p;
+                AddRound(p, r, rad);
+                Pen pen(T.fieldBorder, bw);
+                g.DrawPath(&pen, &p);
+            }
         } else if (SplitVisible(tab)) {                  // the other half of the split view
             FillRound(g, Faded(vertical ? T.tabActive : T.field, 0.55f), r, rad);
             if (h > 0.f) FillRound(g, Faded(T.hover, h), r, rad);
@@ -1541,25 +1766,24 @@ static void DrawChrome(Graphics& g, int w, int h) {
         FillRound(g, Faded(T.accent, 0.16f * (1.f - e)), r, S(6));
     }
 
-    // New tab
-    if (vertical) {
+    // New tab: a row under the vertical list
+    if (L.newTabRow) {
         const RectF& r = L.newTab;
-        hoverFill(r, MakeHit(Hit::NewTab, -1), dwn(Hit::NewTab, -1), S(6));
+        hoverFill(r, MakeHit(Hit::NewTab, -1), dwn(Hit::NewTab, -1), btnRad);
         const float bs = S(14);
         DrawGlyph(g, L"\uE710", RectF(r.X + S(9), r.Y, bs, r.Height), T.text2, g_fIconSm.get());
         SolidBrush tb(T.text2);
         g.DrawString(Tr(L"New tab", L"Новая вкладка"), -1, g_fTab.get(),
                      RectF(r.X + S(9) + bs + S(7), r.Y, r.Width - bs - S(24), r.Height), &tf, &tb);
-    } else {
-        toolButton(L.newTab, L"\uE710", (int)g_tabs.size() < metrics::kMaxTabs, Hit::NewTab, g_fIcon.get());
     }
 
     // Address field
     if (InPaint(L.pill, S(3))) {
         const RectF& pill = L.pill;
-        const float rad = S(7);
+        const float rad = S(ui.style.fieldRadius);
         float pillHover = HoverAmount(MakeHit(Hit::Pill, -1));
-        if (L.reloadInPill) pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reload, -1)));
+        for (int item = 0; item < kItemCount; ++item)
+            if (L.inField[item]) pillHover = std::max(pillHover, HoverAmount(MakeHit(kItemHit[item], -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Star, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Key, -1)));
         pillHover = std::max(pillHover, HoverAmount(MakeHit(Hit::Reader, -1)));
@@ -1625,9 +1849,9 @@ static void DrawChrome(Graphics& g, int w, int h) {
                 AddRound(p, ring, rad + S(1));
                 Pen pen(T.accent, S(2));
                 g.DrawPath(&pen, &p);
-            } else {
+            } else if (const float bw = BorderW(ui.style.fieldBorder)) {
                 AddRound(p, ring, rad);
-                Pen pen(T.fieldBorder, 1.f);
+                Pen pen(T.fieldBorder, bw);
                 g.DrawPath(&pen, &p);
             }
         }
@@ -1656,7 +1880,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
 
             const float textL = pill.X + S(28);
             const bool star = StarShown();
-            float textR = star ? L.star.X - S(2) : L.reloadInPill ? L.reload.X - S(4) : pill.GetRight() - S(10);
+            float textR = star ? L.star.X - S(2) : FieldEdge(S(3), S(10));
             const bool audioHere = IsCompactActive(g_active) && AudioShown(g_active);
             if (audioHere) textR = AudioRect(g_active).X - S(2);
             const bool keyHere = KeyShown();
@@ -1691,8 +1915,8 @@ static void DrawChrome(Graphics& g, int w, int h) {
                          RectF(x0 + lockW + lockGap, pill.Y, tw + 1.f, pill.Height), &fmt, &tb);
             }
 
-            if (L.reloadInPill)
-                toolButton(L.reload, (cur && cur->loading) ? L"\uE711" : L"\uE72C", cur != nullptr, Hit::Reload, g_fIconSm.get());
+            for (int item = 0; item < kItemCount; ++item)
+                if (L.inField[item]) drawItem(item, true);
             if (star && InPaint(L.star)) {
                 const bool marked = IsBookmarkedCached(cur->url);
                 hoverFill(L.star, MakeHit(Hit::Star, -1), dwn(Hit::Star, -1) || BookmarkPopupVisible(), S(6));
@@ -1731,6 +1955,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
             }
         }
     }
+    if (CustomizeActive()) CustomizePaint(g);
 }
 
 void UpdateMainBackdrop() {
@@ -1824,11 +2049,12 @@ int SplitTabAt(int index, int x, int y) {
 
 void DrawTabFace(Graphics& g, const Tab& t, const RectF& r) {
     const Theme& T = g_th;
-    const float rad = S(6);
-    FillRound(g, g_L.mode == kLayoutVertical ? T.tabActive : T.field, r, rad);
+    const UiStyle& st = UiActive().style;
+    const float rad = S(st.tabRadius);
+    FillRound(g, (g_L.mode == kLayoutVertical || st.colors[kColTabActive].GetA()) ? T.tabActive : T.field, r, rad);
     GraphicsPath p;
     AddRound(p, r, rad);
-    Pen pen(T.fieldBorder, 1.f);
+    Pen pen(T.fieldBorder, std::max(1.f, BorderW(st.tabBorder)));
     g.DrawPath(&pen, &p);
     const float bs = S(14);
     const RectF badge(std::floor(r.X + S(9)), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);

@@ -26,7 +26,7 @@ void PositionEdit() {
     if (!g_urlEdit) return;
     // Between the search glyph on the left and the reload button (if it is inside the field)
     const float left = g_L.pill.X + S(28);
-    const float right = g_L.reloadInPill ? g_L.reload.X - S(4) : g_L.pill.GetRight() - S(10);
+    const float right = g_L.fieldItems ? g_L.fieldX - S(3) : g_L.pill.GetRight() - S(10);
     int x = (int)left;
     int w = (int)std::max(10.f, right - left);
     int h = g_editTextH;

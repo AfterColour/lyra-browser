@@ -56,6 +56,7 @@
 #include "ui/SwipeNav.h"
 #include "browser/WebAuthn.h"
 #include "ui/Sidebar.h"
+#include "ui/Customize.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -431,6 +432,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         PagesSeeMinimized(wParam == SIZE_MINIMIZED);
         if (wParam != SIZE_MINIMIZED) RefreshLayout();
         FindBarReposition();
+        CustomizeReposition();
         return 0;
     case WM_MOVE:
         SuggestHide();
@@ -438,6 +440,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         DownloadsPopupClose();
         TransitionCancel();
         FindBarReposition();
+        CustomizeReposition();
         return 0;
 
     case WM_NCCALCSIZE:
@@ -452,6 +455,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ScreenToClient(hWnd, &pt);
         if (LRESULT top = FrameTopResizeHit(hWnd, pt, S(5), S(16))) return top;   // top resize border
         Hit h = HitTest(pt.x, pt.y);
+        // Customizing: the chrome is for dragging buttons, not the window (the window buttons still work).
+        if (CustomizeActive() && !h.IsCaptionButton() && pt.y >= 0 && pt.y < (LONG)g_L.chromeH) return HTCLIENT;
         switch (h.kind) {
         case Hit::CapMin:   return HTMINBUTTON;
         case Hit::CapMax:   return HTMAXBUTTON;
@@ -578,7 +583,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         // A command sent as a message (no control): the same as choosing it from the menu.
-        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_READINGLIST) {
+        if (lParam == 0 && LOWORD(wParam) >= CMD_NEWTAB && LOWORD(wParam) <= CMD_CUSTOMIZE) {
             RunCommand(LOWORD(wParam));
             return 0;
         }
@@ -595,6 +600,12 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd && CustomizeActive()) {
+            POINT cp;
+            GetCursorPos(&cp);
+            ScreenToClient(hWnd, &cp);
+            if (CustomizeSetCursor(cp.x, cp.y)) return TRUE;
+        }
         if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd && SplitSetCursor()) return TRUE;
         if (s_tabDragging) { SetCursor(LoadCursor(nullptr, IDC_ARROW)); return TRUE; }
         if (LOWORD(lParam) == HTCLIENT && (HWND)wParam == hWnd) {
@@ -606,6 +617,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_MOUSEMOVE: {
+        if (CustomizeMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
         if (SidebarResizing()) { SidebarResizeMove(GET_X_LPARAM(lParam)); return 0; }
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
             if (!g_trackingMouse) {
@@ -639,6 +651,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_LBUTTONDOWN: {
         TabHoverCardHide();
+        if (CustomizeMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
         if (TabGroupEditingId()) TabGroupEditFinish(true);   // a click in the chrome ends a group's renaming
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // divider / gutter
         if (HitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)).kind == Hit::SideResize) {   // the sidebar's edge
@@ -671,6 +684,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (CustomizeMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
         if (SidebarResizing()) { SidebarResizeEnd(); if (GetCapture() == hWnd) ReleaseCapture(); return 0; }
         if (SplitMouse(msg, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
         if (TabDragEnd(true)) {                          // a tab dropped (on another tab: split view)
@@ -697,6 +711,8 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::ExtAction: ExtensionButtonClick(up.index); break;
             case Hit::More:     ShowMoreMenu(); break;
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
+            case Hit::Home:     NavigateActive(g_homePage); break;
+            case Hit::SidebarBtn: RunCommand(CMD_SIDEBAR); break;
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
             case Hit::TabAudio: MediaToggleMute(up.index); break;
             case Hit::Key:      PasswordsSiteMenu(); break;
@@ -716,6 +732,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_CAPTURECHANGED:
+        CustomizeMouse(msg, 0, 0);
         SidebarResizeEnd();
         SplitMouse(msg, 0, 0);
         TabDragEnd(false);
