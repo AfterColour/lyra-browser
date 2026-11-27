@@ -11,6 +11,8 @@
 //   title <title>
 //   group <id>         the tab's group; optional
 //   ws <id>            the tab's workspace; optional (the first one)
+//   front 1            the tab its stack shows (browser/TabGroups.h); optional
+//   last 1             the tab its workspace opens on (not the active workspace); optional
 //   state <base64>     WebKit's session state (back/forward list); optional
 //   end
 #include "browser/Session.h"
@@ -109,7 +111,7 @@ std::string PageState(WKPageRef page) {
     return out;
 }
 
-struct SavedTab { std::wstring url, title; std::string state; bool pinned = false; unsigned group = 0, workspace = 0; };
+struct SavedTab { std::wstring url, title; std::string state; bool pinned = false, front = false, last = false; unsigned group = 0, workspace = 0; };
 
 std::string s_lastSignature;
 DWORD s_lastSave = 0;
@@ -140,9 +142,15 @@ std::string Build(bool clean, std::string* signature) {
         if (t.pinned) out << "pinned 1\n";
         if (t.group) out << "group " << t.group << "\n";
         out << "ws " << t.workspace << "\n";
+        const TabGroup* tg = t.group ? FindTabGroup(t.group) : nullptr;
+        const bool front = tg && tg->stacked && tg->front == t.id;
+        const Workspace* tw = t.workspace != g_workspace ? FindWorkspace(t.workspace) : nullptr;
+        const bool last = tw && tw->lastTab == t.id;
+        if (front) out << "front 1\n";
+        if (last) out << "last 1\n";
         if (!state.empty()) out << "state " << state << "\n";
         out << "end\n";
-        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << (t.pinned ? 1 : 0) << '|' << t.group << '|' << t.workspace << '\n';
+        sig << OneLine(url) << '|' << state.size() << '|' << (t.canBack ? 1 : 0) << (t.canFwd ? 1 : 0) << (t.pinned ? 1 : 0) << '|' << t.group << '|' << t.workspace << (front ? "f" : "") << (last ? "l" : "") << '\n';
     }
     if (signature) *signature = sig.str();
     return out.str();
@@ -224,6 +232,8 @@ bool SessionRestore(bool pinnedOnly) {
         else if (const char* v = value("title")) cur.title = FromUtf8(v);
         else if (const char* v = value("state")) cur.state = v;
         else if (const char* v = value("pinned")) cur.pinned = atoi(v) != 0;
+        else if (const char* v = value("front")) cur.front = atoi(v) != 0;
+        else if (const char* v = value("last")) cur.last = atoi(v) != 0;
     }
     // Closed before any tab starts WebKit's processes: they inherit open CRT files, and an
     // inherited handle kept session.txt locked, so later saves could not replace it.
@@ -243,6 +253,7 @@ bool SessionRestore(bool pinnedOnly) {
     Log("session: restoring %zu tab(s) (previous exit %s)", tabs.size(), clean ? "normal" : "NOT clean");
 
     std::vector<std::pair<Tab*, unsigned>> grouped, placed;
+    std::vector<Tab*> fronts, lasts;
     for (auto& s : tabs) {
         WKPageConfigurationRef conf = CreatePageConfigurationForTab();
         Tab* t = CreateTabWithConfiguration(conf, false, false);
@@ -256,15 +267,19 @@ bool SessionRestore(bool pinnedOnly) {
         t->pinned = s.pinned;
         if (!pinnedOnly && s.group) grouped.push_back({ t, s.group });
         if (s.workspace) placed.push_back({ t, s.workspace });
+        if (s.front) fronts.push_back(t);
+        if (s.last) lasts.push_back(t);
     }
     // The workspaces, once every tab exists (each new tab went into the active one meanwhile).
     for (auto& [tab, ws] : placed) tab->workspace = ws;
     WorkspacesRestore(workspaces, activeWs);
+    for (Tab* t : lasts) if (Workspace* w = FindWorkspace(t->workspace)) w->lastTab = t->id;
     // Groups only once every tab exists (each new tab lays the list out, which drops groups
     // that have no tabs yet).
     if (!pinnedOnly) {
         for (auto& [tab, group] : grouped) tab->group = group;
         TabGroupsRestore(groups);
+        for (Tab* t : fronts) if (TabGroup* g = FindTabGroup(t->group)) g->front = t->id;
     }
     // (pinned ones first, as they were saved: nothing to sort)
     if (g_tabs.empty() || pinnedOnly) return false;     // the caller opens its start tab after them

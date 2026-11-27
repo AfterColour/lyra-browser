@@ -23,7 +23,7 @@ namespace {
 
 struct IconDef { const wchar_t* glyph; };
 const IconDef kIcons[kWorkspaceIconCount] = {
-    { L"" },   // home
+    { L"\uE8A9" },   // workspaces (a house would pass for the Home button)
     { L"" },   // briefcase
     { L"" },   // code
     { L"" },   // game
@@ -273,7 +273,7 @@ void WorkspaceMenu(POINT screen) {
     MenuSetIcon(m, kRename, L"");
     HMENU icons = CreatePopupMenu();
     static const wchar_t* const kIconNames[kWorkspaceIconCount][2] = {
-        { L"Home", L"Дом" }, { L"Work", L"Работа" }, { L"Code", L"Код" }, { L"Games", L"Игры" },
+        { L"General", L"Общее" }, { L"Work", L"Работа" }, { L"Code", L"Код" }, { L"Games", L"Игры" },
         { L"Music", L"Музыка" }, { L"Shopping", L"Покупки" }, { L"Heart", L"Сердце" }, { L"Star", L"Звезда" },
         { L"Globe", L"Глобус" }, { L"Book", L"Книга" }, { L"Art", L"Творчество" }, { L"People", L"Люди" } };
     for (int k = 0; k < kWorkspaceIconCount; ++k) {
