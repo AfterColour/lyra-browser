@@ -101,7 +101,8 @@ set "RUNPATH=%RUNPATH:\=/%"
 cmake %FRESH% -S . -B %BUILDDIR% -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo "-DCMAKE_CXX_COMPILER=%CLANGCL%" "-DWEBKIT_BUILD_DIR=%WEBKITDIR%" "-DLYRA_RUN_DIR=%RUNPATH%"
 if errorlevel 1 goto :fail
 cmake --build %BUILDDIR%
-if errorlevel 1 goto :fail
+rem (not "if errorlevel 1": a crashed linker exits with -1, which that test lets through)
+if not "%errorlevel%"=="0" goto :fail
 
 echo.
 echo [build] OK: %~dp0%RUNDIR%\Lyra.exe

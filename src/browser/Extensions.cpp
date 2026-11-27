@@ -46,6 +46,13 @@ extern HWND g_setHwnd;
 
 namespace {
 
+// A diagnostic switch from the environment ("" when unset).
+std::string EnvVar(const char* name) {
+    char v[64] = {};
+    const DWORD n = GetEnvironmentVariableA(name, v, sizeof(v));
+    return n > 0 && n < sizeof(v) ? std::string(v, n) : std::string();
+}
+
 struct ContentScript {
     std::vector<std::string> matches, excludes;     // WebKit user content URL patterns
     std::vector<std::wstring> js, css;              // files, relative to the extension
@@ -2177,7 +2184,7 @@ void WrFinish(int id) {
     if (it == s_wrRequests.end()) return;
     WrRequest r = std::move(it->second);
     s_wrRequests.erase(it);
-    if (getenv("LYRA_WR_STATS")) {
+    if (!EnvVar("LYRA_WR_STATS").empty()) {
         static long long sum[3]; static int cnt[3];
         const int k = r.kind < 3 ? r.kind : 0;
         sum[k] += NowUnixMs() - r.time; ++cnt[k];
@@ -2478,7 +2485,7 @@ void HandleMessage(const HandlerCtx& ctx, WKScriptMessageRef message, WKCompleti
         return;
     }
     const std::string op = msg.str("op");
-    if (getenv("LYRA_EXT_TRACE")) Log("exttrace %ls %s %s: %.200s", e->info.id.c_str(), ctx.content ? "content" : "page", op.c_str(), op == "storage.set" ? "" : WKStrUtf8((WKStringRef)body).c_str());
+    if (!EnvVar("LYRA_EXT_TRACE").empty()) Log("exttrace %ls %s %s: %.200s", e->info.id.c_str(), ctx.content ? "content" : "page", op.c_str(), op == "storage.set" ? "" : WKStrUtf8((WKStringRef)body).c_str());
     WKPageRef fromPage = nullptr;
     WKFrameInfoRef fromFrame = WKScriptMessageGetFrameInfo(message);
     bool mainFrame = true;
@@ -2845,7 +2852,7 @@ void OnMessage(WKScriptMessageRef message, WKCompletionListenerRef reply, const 
     if (!context) answer = "{\"error\":\"extension not found\"}";
     else HandleMessage(*(const HandlerCtx*)context, message, reply, answer, deferred);
     const double took = MsNow() - started;
-    if (took >= (getenv("LYRA_SLOW_MS") ? atof(getenv("LYRA_SLOW_MS")) : 30.0)) {
+    if (took >= (EnvVar("LYRA_SLOW_MS").empty() ? 30.0 : atof(EnvVar("LYRA_SLOW_MS").c_str()))) {
         WKTypeRef body = WKScriptMessageGetBody(message);
         const std::string text = body && WKGetTypeID(body) == WKStringGetTypeID() ? WKStrUtf8((WKStringRef)body) : std::string();
         Log("extensions: slow message (%.1f ms, %zu bytes in, %zu out): %.120s", took, text.size(), answer.size(), text.c_str());
