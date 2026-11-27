@@ -40,8 +40,11 @@ struct Layout {
     std::vector<RectF> groups;
     std::vector<unsigned> groupIds;  // the group of each label
     std::vector<int> groupFirst;     // the index of its first tab
+    // An open stack (a group shown as a stack) in the horizontal layouts: a row under the tabs
+    // with all its tabs (their L.tabs rectangles); the open one is stackActive.
+    RectF stackRow, stackActive;
     // The layout's items (ui/UiLayout): where each went. Hidden ones have empty rectangles.
-    RectF home, sidebarBtn;
+    RectF home, sidebarBtn, workspacesBtn;
     bool  inField[kItemCount] = {};  // inside the address field (drawn small, not while typing)
     bool  fieldItems = false;        // any: they begin at fieldX
     float fieldX = 0;
@@ -54,7 +57,7 @@ struct Layout {
 extern Layout g_L;
 
 struct Hit {
-    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem, SideItem, SideButton, SideResize, Home, SidebarBtn };
+    enum Kind { None, Back, Forward, Reload, More, NewTab, Pill, TabBody, TabClose, CapMin, CapMax, CapClose, Star, Downloads, TabAudio, Key, Reader, Translate, ExtAction, GroupLabel, Zoom, BookmarkItem, SideItem, SideButton, SideResize, Home, SidebarBtn, WorkspacesBtn };
     Kind kind = None;
     int  index = -1;
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index; }

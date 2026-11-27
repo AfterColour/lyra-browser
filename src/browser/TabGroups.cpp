@@ -4,6 +4,7 @@
 #include "browser/SplitView.h"
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
+#include "browser/Workspaces.h"
 #include "core/Constants.h"
 #include "core/Localization.h"
 #include "core/StringUtils.h"
@@ -14,6 +15,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Menu.h"
 #include "ui/Theme.h"
+#include "ui/UiLayout.h"
 
 std::vector<TabGroup> g_groups;
 static unsigned s_nextGroupId = 1;
@@ -101,7 +103,54 @@ int TabGroupTabCount(unsigned id) {
 bool TabHiddenByGroup(int index) {
     if (index < 0 || index >= (int)g_tabs.size() || index == g_active) return false;
     const TabGroup* g = FindTabGroup(g_tabs[index]->group);
-    return g && g->collapsed;
+    if (!g) return false;
+    if (g->collapsed) return true;
+    return g->stacked && !TabGroupStackOpen(g->id) && index != TabGroupFrontIndex(g->id);
+}
+
+int TabGroupFrontIndex(unsigned id) {
+    const TabGroup* g = FindTabGroup(id);
+    if (!g) return -1;
+    if (g_active >= 0 && g_active < (int)g_tabs.size() && g_tabs[g_active]->group == id) return g_active;
+    int first = -1, last = -1;
+    if (!TabGroupRange(id, &first, &last)) return -1;
+    for (int i = first; i <= last; ++i) if (g_tabs[i]->id == g->front) return i;
+    return first;
+}
+
+bool TabGroupStackOpen(unsigned id) {
+    const TabGroup* g = FindTabGroup(id);
+    return g && g->stacked && !g->collapsed && g_active >= 0 && g_active < (int)g_tabs.size() && g_tabs[g_active]->group == id;
+}
+
+bool TabInStackRow(int index) {
+    if (index < 0 || index >= (int)g_tabs.size() || index == g_active) return false;
+    if (UiActive().mode == kLayoutVertical) return false;
+    return TabGroupStackOpen(g_tabs[index]->group);
+}
+
+void TabGroupSetStacked(unsigned id, bool stacked) {
+    TabGroup* g = FindTabGroup(id);
+    if (!g || g->stacked == stacked) return;
+    g->stacked = stacked;
+    if (stacked) {
+        g->collapsed = false;
+        const int f = TabGroupFrontIndex(id);
+        if (f >= 0) g->front = g_tabs[f]->id;
+    }
+    Log("group %u %s", id, stacked ? "-> stack" : "-> group");
+    Changed();
+}
+
+void TabGroupLabelClick(unsigned id) {
+    const TabGroup* g = FindTabGroup(id);
+    if (!g) return;
+    if (g->stacked && !g->collapsed && !TabGroupStackOpen(id)) {   // a closed stack: its front tab opens
+        const int f = TabGroupFrontIndex(id);
+        if (f >= 0) SelectTab(f);
+        return;
+    }
+    TabGroupToggle(id);
 }
 
 void TabGroupsNormalize() {
@@ -183,9 +232,9 @@ void TabGroupSetCollapsed(unsigned id, bool collapsed) {
         int first = -1, last = -1, next = -1;
         TabGroupRange(id, &first, &last);
         for (int i = last + 1; i < (int)g_tabs.size() && next < 0; ++i)
-            if (!TabHiddenByGroup(i)) next = i;
+            if (!TabHidden(i)) next = i;
         for (int i = first - 1; i >= 0 && next < 0; --i)
-            if (!TabHiddenByGroup(i)) next = i;
+            if (!TabHidden(i)) next = i;
         if (next < 0) {                                  // nothing else: a new tab after the group
             RunCommand(CMD_NEWTAB);
             g = FindTabGroup(id);
@@ -313,7 +362,7 @@ void TabGroupCloseTabs(unsigned id) {
     std::vector<unsigned long long> ids;
     for (auto& t : g_tabs) if (t->group == id) ids.push_back(t->id);
     if (ids.empty()) return;
-    if (ids.size() == g_tabs.size()) RunCommand(CMD_NEWTAB);   // the window stays open
+    if ((int)ids.size() >= WsTabEnd()) RunCommand(CMD_NEWTAB);   // the window stays open
     for (unsigned long long tabId : ids) {
         int i = IndexOfId(tabId);
         if (i >= 0) CloseTab(i);
@@ -330,7 +379,7 @@ void TabGroupNewTab(unsigned id) {
 void TabGroupMenu(unsigned id, POINT screen) {
     const TabGroup* g = FindTabGroup(id);
     if (!g) return;
-    enum : UINT { kNewTab = 1, kRename, kCollapse, kUngroup, kClose, kColor0 = 100 };
+    enum : UINT { kNewTab = 1, kRename, kCollapse, kUngroup, kClose, kStack, kColor0 = 100 };
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, kNewTab, Tr(L"New tab in group", L"Новая вкладка в группе"));
     AppendMenuW(m, MF_STRING, kRename, Tr(L"Rename group...", L"Переименовать группу..."));
@@ -339,6 +388,8 @@ void TabGroupMenu(unsigned id, POINT screen) {
         AppendMenuW(colors, MF_STRING | (c == g->color ? MF_CHECKED : 0), kColor0 + c, TabGroupColorName(c));
     AppendMenuW(m, MF_POPUP, (UINT_PTR)colors, Tr(L"Colour", L"Цвет"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, kStack, g->stacked ? Tr(L"Show as group", L"Показать как группу")
+                                                 : Tr(L"Show as stack", L"Показать стопкой"));
     AppendMenuW(m, MF_STRING, kCollapse, g->collapsed ? Tr(L"Expand group", L"Развернуть группу")
                                                       : Tr(L"Collapse group", L"Свернуть группу"));
     AppendMenuW(m, MF_STRING, kUngroup, Tr(L"Ungroup", L"Разгруппировать"));
@@ -346,6 +397,7 @@ void TabGroupMenu(unsigned id, POINT screen) {
     MenuSetIcon(m, kNewTab, L"");
     MenuSetIcon(m, kRename, L"");
     MenuSetIcon(m, kCollapse, g->collapsed ? L"" : L"");
+    MenuSetIcon(m, kStack, g->stacked ? L"\uE8FD" : L"\uE8A9");
     MenuSetIcon(m, kUngroup, L"");
     MenuSetIcon(m, kClose, L"");
     const int cmd = MenuTrack(m, TPM_LEFTALIGN | TPM_TOPALIGN, screen.x, screen.y, g_hWnd);
@@ -354,6 +406,7 @@ void TabGroupMenu(unsigned id, POINT screen) {
     if (cmd == kNewTab) TabGroupNewTab(id);
     else if (cmd == kRename) TabGroupStartRename(id);
     else if (cmd == kCollapse) TabGroupToggle(id);
+    else if (cmd == kStack) TabGroupSetStacked(id, !FindTabGroup(id)->stacked);
     else if (cmd == kUngroup) TabGroupUngroup(id);
     else if (cmd == kClose) TabGroupCloseTabs(id);
     else if (cmd >= kColor0 && cmd < kColor0 + kTabGroupColorCount) TabGroupSetColor(id, cmd - kColor0);
@@ -370,12 +423,16 @@ void TabGroupsAppendTabMenu(HMENU menu, int tabIndex, UINT firstId) {
     const Tab& t = *g_tabs[tabIndex];
     AppendMenuW(menu, MF_STRING, firstId, Tr(L"Add tab to new group", L"Добавить вкладку в новую группу"));
     MenuSetIcon(menu, firstId, L"");
+    auto here = [](unsigned id) {                        // a group of the active workspace
+        int first = -1;
+        return TabGroupRange(id, &first, nullptr) && TabInActiveWorkspace(first);
+    };
     bool others = false;
-    for (auto& g : g_groups) if (g.id != t.group) others = true;
+    for (auto& g : g_groups) if (g.id != t.group && here(g.id)) others = true;
     if (others) {
         HMENU sub = CreatePopupMenu();
         for (size_t k = 0; k < g_groups.size(); ++k)
-            if (g_groups[k].id != t.group)
+            if (g_groups[k].id != t.group && here(g_groups[k].id))
                 AppendMenuW(sub, MF_STRING, firstId + 2 + (UINT)k, MenuName(g_groups[k]).c_str());
         AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, Tr(L"Add tab to group", L"Добавить вкладку в группу"));
     }
@@ -399,8 +456,10 @@ bool TabGroupsTabMenuCommand(UINT cmd, int tabIndex, UINT firstId) {
 }
 
 void TabGroupsTabSelected(Tab& t) {
-    if (TabGroup* g = FindTabGroup(t.group))
+    if (TabGroup* g = FindTabGroup(t.group)) {
+        g->front = t.id;                                 // (a stack shows it from now on)
         if (g->collapsed) { g->collapsed = false; InvalidateChrome(); }
+    }
 }
 
 void TabGroupsTabOpenedFrom(Tab& t, const Tab* opener) {
@@ -432,7 +491,7 @@ std::string TabGroupsSessionLines() {
         if (!saved) continue;
         std::string name = ToUtf8(g.name);
         for (auto& c : name) if (c == '\r' || c == '\n') c = ' ';
-        out += "group " + std::to_string(g.id) + " " + std::to_string(g.color) + " " + (g.collapsed ? "1" : "0") + " " + name + "\n";
+        out += "group " + std::to_string(g.id) + " " + std::to_string(g.color) + " " + std::to_string((g.collapsed ? 1 : 0) | (g.stacked ? 2 : 0)) + " " + name + "\n";
     }
     return out;
 }
@@ -443,7 +502,8 @@ bool TabGroupsSessionParse(const std::string& s, TabGroup* out) {
     if (sscanf_s(s.c_str(), "%u %d %d%n", &id, &color, &collapsed, &used) < 3 || !id) return false;
     out->id = id;
     out->color = std::clamp(color, 0, kTabGroupColorCount - 1);
-    out->collapsed = collapsed != 0;
+    out->collapsed = (collapsed & 1) != 0;
+    out->stacked = (collapsed & 2) != 0;
     std::string name = s.substr(std::min((size_t)used, s.size()));
     if (!name.empty() && name[0] == ' ') name.erase(0, 1);
     out->name.clear();

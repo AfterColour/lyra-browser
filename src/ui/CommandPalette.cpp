@@ -8,6 +8,7 @@
 #include "browser/Tab.h"
 #include "browser/TabManager.h"
 #include "browser/TabSleep.h"
+#include "browser/Workspaces.h"
 #include "browser/SplitView.h"
 #include "core/Constants.h"
 #include "core/Localization.h"
@@ -79,6 +80,9 @@ const std::vector<CommandDef>& Commands() {
         { L"Show or hide bookmarks bar", L"Показать или скрыть панель закладок", L"bookmarks bar toolbar панель закладок", L"Ctrl+Shift+B", [] { RunCommand(CMD_BOOKMARKSBAR); }, L"\uE728" },
     { L"Show or hide sidebar", L"Показать или скрыть боковую панель", L"sidebar panel боковая панель", L"Ctrl+Shift+E", [] { RunCommand(CMD_SIDEBAR); }, L"\uE8A0" },
     { L"Add page to reading list", L"Добавить страницу в список для чтения", L"reading list read later читать позже", L"", [] { RunCommand(CMD_READINGLIST); }, L"\uE736" },
+    { L"New workspace", L"Новое пространство", L"workspace space create рабочее пространство создать", L"", [] { WorkspaceNew(); }, L"\uE710" },
+    { L"Next workspace", L"Следующее пространство", L"workspace space switch рабочее пространство переключить", L"", [] { WorkspaceSwitchRelative(1); }, L"\uE8A9", [] { return g_workspaces.size() > 1; } },
+    { L"Previous workspace", L"Предыдущее пространство", L"workspace space switch рабочее пространство переключить", L"", [] { WorkspaceSwitchRelative(-1); }, L"\uE8A9", [] { return g_workspaces.size() > 1; } },
     { L"Customize toolbar", L"Настроить интерфейс", L"customize toolbar layout buttons interface настроить интерфейс раскладка кнопки панель", L"", [] { RunCommand(CMD_CUSTOMIZE); }, L"\uE771" },
     { L"Notes", L"Заметки", L"notes заметки", L"", [] { SidebarOpen(4); }, L"\uE70B" },
         { L"Downloads", L"Загрузки", L"files файлы", L"Ctrl+J", [] { RunCommand(CMD_DOWNLOADS); }, L"\uE896" },
@@ -155,6 +159,8 @@ void RebuildTabs(const std::vector<std::wstring>& words) {
         r.url = url;
         r.tabId = t.id;
         std::wstring detail = IsInternalPageUrl(url) ? std::wstring(L"Lyra") : HostOf(url);
+        if (t.workspace != g_workspace)
+            if (const Workspace* w = FindWorkspace(t.workspace)) detail = w->name + L" · " + detail;
         if (&t == active) detail = Tr(L"Open now", L"Открыта сейчас");
         else if (t.audible && !t.muted) detail = Tr(L"Playing · ", L"Звук · ") + detail;
         else if (t.sleeping || t.lazyPending) detail = Tr(L"Not loaded · ", L"Не загружена · ") + detail;
@@ -220,6 +226,8 @@ void Rebuild() {
         r.url = t.url;
         r.tabId = t.id;
         r.detail = Tr(L"Switch to tab", L"Перейти на вкладку");
+        if (t.workspace != g_workspace)
+            if (const Workspace* w = FindWorkspace(t.workspace)) r.detail += L" · " + w->name;
         tabs.push_back({ sc, r });
     }
     // Commands, in both languages.
@@ -235,6 +243,21 @@ void Rebuild() {
         r.detail = c.shortcut;
         r.url = c.glyph;                                 // (commands: the glyph)
         r.run = c.run;
+        cmds.push_back({ sc, r });
+    }
+    for (size_t i = 0; i < g_workspaces.size() && g_workspaces.size() > 1; ++i) {
+        const Workspace& w = g_workspaces[i];
+        if (w.id == g_workspace) continue;
+        const std::wstring title = Tr(L"Switch to workspace: ", L"Перейти в пространство: ") + w.name;
+        const int sc = MatchScore(words, Lower(std::wstring(L"workspace space switch пространство перейти ") + w.name), Lower(title));
+        if (!sc) continue;
+        Row r;
+        r.kind = Row::Command;
+        r.title = title;
+        if (i < 9) r.detail = L"Ctrl+Alt+" + std::to_wstring(i + 1);
+        r.url = WorkspaceIconGlyph(w.icon);
+        const unsigned id = w.id;
+        r.run = [id] { WorkspaceSwitch(id); };
         cmds.push_back({ sc, r });
     }
     auto byScore = [](const std::pair<int, Row>& a, const std::pair<int, Row>& b) { return a.first > b.first; };

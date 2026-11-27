@@ -57,6 +57,7 @@ const wchar_t* UiItemName(int item) {
     case kItemExtensions: return Tr(L"Extensions", L"Расширения");
     case kItemSidebar:    return Tr(L"Sidebar", L"Боковая панель");
     case kItemMenu:       return Tr(L"Menu", L"Меню");
+    case kItemWorkspaces: return Tr(L"Workspaces", L"Пространства");
     }
     return L"";
 }
@@ -72,6 +73,7 @@ const wchar_t* UiItemGlyph(int item) {
     case kItemExtensions: return L"";
     case kItemSidebar:    return L"";
     case kItemMenu:       return L"";
+    case kItemWorkspaces: return L"\uE8A9";
     }
     return L"";
 }
@@ -135,10 +137,13 @@ UiLayoutDef UiBuiltin(int mode) {
     d.zones[kZoneTabEnd] = { kItemNewTab };
     if (mode == kLayoutSeparate) {
         d.zones[kZoneLeft] = { kItemBack, kItemForward, kItemReload };
+        d.zones[kZoneStripLeft] = { kItemWorkspaces };
     } else {
         d.zones[kZoneLeft] = { kItemBack, kItemForward };
         d.zones[kZoneField] = { kItemReload };
     }
+    if (mode == kLayoutCompact) d.zones[kZoneLeft].push_back(kItemWorkspaces);   // left of the tabs
+    if (mode == kLayoutVertical) d.zones[kZoneSideTop] = { kItemWorkspaces };    // above the list
     return d;
 }
 
@@ -157,7 +162,7 @@ static Color ParseColor(const std::string& s) {
 }
 
 static const char* const kZoneKeys[kZoneCount] = { "left", "right", "field", "tabEnd", "stripLeft", "stripRight", "sideTop" };
-static const char* const kItemKeys[kItemCount] = { "back", "forward", "reload", "home", "newTab", "downloads", "extensions", "sidebar", "menu" };
+static const char* const kItemKeys[kItemCount] = { "back", "forward", "reload", "home", "newTab", "downloads", "extensions", "sidebar", "menu", "workspaces" };
 static const char* const kColorKeys[kColCount] = { "frame", "field", "fieldBorder", "tabActive", "text", "text2", "icon", "accent", "hover" };
 
 static int ItemByKey(const std::string& k) {

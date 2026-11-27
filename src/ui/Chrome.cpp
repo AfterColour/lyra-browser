@@ -24,6 +24,7 @@
 #include "core/Localization.h"
 #include "browser/Tab.h"
 #include "browser/TabGroups.h"
+#include "browser/Workspaces.h"
 #include "browser/SiteZoom.h"
 #include "browser/TabManager.h"
 #include "core/Constants.h"
@@ -204,13 +205,14 @@ static RectF* ItemRect(Layout& L, int item) {
     case kItemDownloads: return &L.downloads;
     case kItemSidebar:   return &L.sidebarBtn;
     case kItemMenu:      return &L.more;
+    case kItemWorkspaces: return &L.workspacesBtn;
     }
     return nullptr;                                      // the extensions: L.ext
 }
 static const RectF* ItemRect(const Layout& L, int item) { return ItemRect(const_cast<Layout&>(L), item); }
 
 static const Hit::Kind kItemHit[kItemCount] = {
-    Hit::Back, Hit::Forward, Hit::Reload, Hit::Home, Hit::NewTab, Hit::Downloads, Hit::ExtAction, Hit::SidebarBtn, Hit::More
+    Hit::Back, Hit::Forward, Hit::Reload, Hit::Home, Hit::NewTab, Hit::Downloads, Hit::ExtAction, Hit::SidebarBtn, Hit::More, Hit::WorkspacesBtn
 };
 
 static size_t ExtCount() { return std::min<size_t>(ExtensionButtons().size(), 8); }
@@ -404,7 +406,7 @@ static void OpenInsertGap(Layout& L) {
 // The text on a group's label: its name; when collapsed also how many tabs it holds.
 static std::wstring GroupLabelText(const TabGroup& g) {
     std::wstring s = g.name;
-    if (g.collapsed) {
+    if (g.collapsed || g.stacked) {
         const std::wstring count = std::to_wstring(TabGroupTabCount(g.id));
         s = s.empty() ? count : s + L"  " + count;
     }
@@ -428,20 +430,23 @@ static float GroupLabelWidth(const TabGroup& g) {
 struct GroupPass {
     std::vector<int> labelBefore;    // per tab: the label placed before it, or -1
     std::vector<char> hidden;        // per tab: in a collapsed group
+    std::vector<char> row;           // per tab: in the open stack's row (placed by PlaceStackRow)
     std::vector<float> labelW;       // per label (horizontal layouts)
     float labelsW = 0;               // all labels with their gaps
     int visible = 0;                 // tabs that get a place
 };
 
 static GroupPass PrepareGroups(Layout& L, float gap) {
+    WorkspacesNormalize();
     TabGroupsNormalize();
     GroupPass p;
     const size_t n = g_tabs.size();
     p.labelBefore.assign(n, -1);
     p.hidden.assign(n, 0);
+    p.row.assign(n, 0);
     for (size_t i = 0; i < n; ++i) {
         const unsigned id = g_tabs[i]->group;
-        const TabGroup* g = FindTabGroup(id);
+        const TabGroup* g = TabInActiveWorkspace((int)i) ? FindTabGroup(id) : nullptr;
         if (g && (i == 0 || g_tabs[i - 1]->group != id)) {
             p.labelBefore[i] = (int)L.groups.size();
             L.groups.push_back(RectF());
@@ -451,10 +456,38 @@ static GroupPass PrepareGroups(Layout& L, float gap) {
             p.labelW.push_back(w);
             p.labelsW += w + gap;
         }
-        p.hidden[i] = TabHiddenByGroup((int)i) ? 1 : 0;
-        if (!p.hidden[i]) ++p.visible;
+        p.hidden[i] = TabHidden((int)i) ? 1 : 0;
+        p.row[i] = TabInStackRow((int)i) ? 1 : 0;
+        if (!p.hidden[i] && !p.row[i]) ++p.visible;
     }
     return p;
+}
+
+// An open stack's row under the tab list (horizontal layouts), from y; its height (0: none).
+static float PlaceStackRow(Layout& L, float y, float w, float tabH) {
+    if (L.mode == kLayoutVertical || g_active < 0 || g_active >= (int)g_tabs.size()) return 0.f;
+    const unsigned id = g_tabs[g_active]->group;
+    int first = -1, last = -1;
+    if (!TabGroupStackOpen(id) || !TabGroupRange(id, &first, &last)) return 0.f;
+    const float rowH = std::floor(tabH * 0.8f), pad = std::floor(S(3));
+    L.stackRow = RectF(0, y, w, rowH + pad * 2);
+    float x = S(8);
+    for (size_t k = 0; k < L.groupIds.size(); ++k)       // under the stack's label
+        if (L.groupIds[k] == id) x = std::max(x, std::floor(L.groups[k].X));
+    const int count = last - first + 1;
+    const float gap = S(2);
+    float iw = std::floor(std::min(S(180), (w - S(8) - x - gap * (float)(count - 1)) / (float)count));
+    if (iw < S(60)) {                                    // not enough room after the label: from the left
+        x = S(8);
+        iw = std::floor(std::max(S(28), std::min(S(180), (w - S(16) - gap * (float)(count - 1)) / (float)count)));
+    }
+    for (int i = first; i <= last; ++i) {
+        const RectF r(std::floor(x), y + pad, iw, rowH);
+        if (i == g_active) L.stackActive = r;
+        else L.tabs[i] = r;
+        x += iw + gap;
+    }
+    return L.stackRow.Height;
 }
 
 static void ComputeTarget(Layout& L, int clientW) {
@@ -509,7 +542,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float ty = std::floor((bar - tabH) / 2);
         float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedIn = 0;                                // pinned tabs (not the open one): a fixed narrow width
-        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned && (int)i != g_active) ++pinnedIn;
+        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned && (int)i != g_active && !gp.hidden[i]) ++pinnedIn;
         const float pinW = std::floor(S(kPinnedW));
         avail = std::max(0.f, avail - pinW * (float)pinnedIn);
         const int inactive = nv ? nv - 1 - pinnedIn : 0;
@@ -533,7 +566,7 @@ static void ComputeTarget(Layout& L, int clientW) {
                 L.groups[k] = RectF(std::floor(x), ty, gp.labelW[k], tabH);
                 x += gp.labelW[k] + gap;
             }
-            if (gp.hidden[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
+            if (gp.hidden[i] || gp.row[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
             const float tw = ((int)i == g_active) ? pillW : g_tabs[i]->pinned ? pinW : inW;
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(tw), tabH);
             x += tw + gap;
@@ -542,6 +575,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         else L.pill = RectF(left, ty, pillW, tabH);
         PlaceFieldItems(L);
         PlaceZone(L, kZoneTabEnd, std::floor(std::min(x, right + gap)), 0, bar, +1, btn, gap);
+        L.chromeH += PlaceStackRow(L, L.chromeH, w, tabH);
         if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
         addPalette();
     } else if (L.mode == kLayoutSeparate) {
@@ -557,7 +591,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         const float ty = std::floor((strip - tabH) / 2);
         const float avail = std::max(0.f, right - left - gap * (float)(nv ? nv - 1 : 0) - gp.labelsW);
         int pinnedN = 0;
-        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned) ++pinnedN;
+        for (size_t i = 0; i < n; ++i) if (g_tabs[i]->pinned && !gp.hidden[i]) ++pinnedN;
         const float pinW = std::floor(S(kPinnedW));
         const size_t normal = (size_t)std::max(0, nv - pinnedN);
         float tw = normal ? std::max(0.f, avail - pinW * (float)pinnedN) / (float)normal : 0.f;
@@ -570,16 +604,18 @@ static void ComputeTarget(Layout& L, int clientW) {
                 L.groups[k] = RectF(std::floor(x), ty, gp.labelW[k], tabH);
                 x += gp.labelW[k] + gap;
             }
-            if (gp.hidden[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
+            if (gp.hidden[i] || gp.row[i]) { L.tabs[i] = RectF(std::floor(x), ty, 0, tabH); continue; }
             const float w = g_tabs[i]->pinned ? pinW : tw;
             L.tabs[i] = RectF(std::floor(x), ty, std::floor(w), tabH);
             x += w + gap;
         }
         PlaceZone(L, kZoneTabEnd, std::floor(std::min(x, right + gap)), 0, strip, +1, btn, gap);
+        const float top = strip + PlaceStackRow(L, strip, w, tabH);   // (an open stack's row)
+        L.chromeH = top + bar;
 
         // Toolbar
-        const float lEnd = PlaceZone(L, kZoneLeft, edge, strip, bar, +1, btn, gap);
-        const float rStart = PlaceZone(L, kZoneRight, w - edge, strip, bar, -1, btn, gap);
+        const float lEnd = PlaceZone(L, kZoneLeft, edge, top, bar, +1, btn, gap);
+        const float rStart = PlaceZone(L, kZoneRight, w - edge, top, bar, -1, btn, gap);
         const float pl = placed(kZoneLeft) ? lEnd + S(8) : edge;
         const float pr = placed(kZoneRight) ? rStart - S(8) : w - edge;
         float pw = std::max(S(80), pr - pl), px = pl;
@@ -587,7 +623,7 @@ static void ComputeTarget(Layout& L, int clientW) {
             pw = fieldMaxW;
             px = std::max(pl, std::min(std::floor(w / 2 - pw / 2), pr - pw));
         }
-        L.pill = RectF(std::floor(px), strip + std::floor((bar - tabH) / 2), std::floor(pw), tabH);
+        L.pill = RectF(std::floor(px), top + std::floor((bar - tabH) / 2), std::floor(pw), tabH);
         PlaceFieldItems(L);
         if (bmH > 0) { L.bmBar = RectF(0, L.chromeH, w, bmH); L.chromeH += bmH; }
         addPalette();
@@ -619,6 +655,7 @@ static void ComputeTarget(Layout& L, int clientW) {
         bool anyPinned = false;
         for (size_t i = 0; i < n; ++i) {
             if (!g_tabs[i]->pinned) continue;
+            if (gp.hidden[i]) { L.tabs[i] = RectF(S(6), std::floor(y), 0, 0); continue; }
             anyPinned = true;
             L.tabs[i] = RectF(S(6) + (cell + cgap) * (float)col, std::floor(y), cell, rowH);
             if (++col == cols) { col = 0; y += rowH + cgap; }
@@ -1165,9 +1202,10 @@ Hit HitTest(int px, int py) {
     if (inTop && L.pill.Contains(x, y)) return MakeHit(Hit::Pill);
     for (size_t k = 0; k < L.groups.size(); ++k)
         if (L.groups[k].Width >= 1.f && L.groups[k].Height >= 1.f && L.groups[k].Contains(x, y)) return MakeHit(Hit::GroupLabel, (int)k);
+    if (L.stackActive.Width >= 1.f && L.stackActive.Contains(x, y)) return MakeHit(Hit::TabBody, g_active);
     for (int i = n - 1; i >= 0; --i) {
         const RectF& r = L.tabs[i];
-        if (TabHiddenByGroup(i) || r.Width < 1.f || r.Height < 1.f) continue;
+        if (TabHidden(i) || r.Width < 1.f || r.Height < 1.f) continue;
         if (x >= r.X && x < r.GetRight() + S(2) && y >= r.Y && y < r.GetBottom()) return MakeHit(Hit::TabBody, i);
     }
     if (L.newTabRow && L.newTab.Contains(x, y)) return MakeHit(Hit::NewTab);
@@ -1190,6 +1228,7 @@ static bool HitDirtyRect(const Hit& h, RectF* out) {
     case Hit::NewTab:    *out = L.inField[kItemNewTab] ? L.pill : L.newTab; return true;
     case Hit::Home:      *out = L.inField[kItemHome] ? L.pill : L.home; return true;
     case Hit::SidebarBtn: *out = L.inField[kItemSidebar] ? L.pill : L.sidebarBtn; return true;
+    case Hit::WorkspacesBtn: *out = L.inField[kItemWorkspaces] ? L.pill : L.workspacesBtn; return true;
     case Hit::CapMin:    *out = L.capMin; return true;
     case Hit::CapMax:    *out = L.capMax; return true;
     case Hit::CapClose:  *out = L.capClose; return true;
@@ -1411,6 +1450,10 @@ static void DrawChrome(Graphics& g, int w, int h) {
         case kItemHome:    toolButton(L.home, UiItemGlyph(item), true, Hit::Home, f, itemInk(item)); break;
         case kItemNewTab:  toolButton(L.newTab, L"\uE710", (int)g_tabs.size() < metrics::kMaxTabs, Hit::NewTab, f, itemInk(item)); break;
         case kItemSidebar: toolButton(L.sidebarBtn, UiItemGlyph(item), true, Hit::SidebarBtn, f, itemInk(item)); break;
+        case kItemWorkspaces:                            // the active workspace's icon
+            toolButton(L.workspacesBtn, CustomizeActive() ? UiItemGlyph(item) : WorkspaceIconGlyph(ActiveWorkspace().icon),
+                       true, Hit::WorkspacesBtn, f, itemInk(item));
+            break;
         case kItemMenu:
             toolButton(L.more, L"\uE712", true, Hit::More, f, itemInk(item));
             if (UpdaterReady() && L.more.Width > 0) {    // an update is waiting: a small dot on the menu button
@@ -1530,6 +1573,7 @@ static void DrawChrome(Graphics& g, int w, int h) {
         TabGroupRange(grp->id, &first, &last);
         float endX = r.GetRight(), endY = r.GetBottom();
         for (int i = std::max(first, 0); i <= last && i < n; ++i) {
+            if (TabInStackRow(i)) continue;
             const RectF tr = (L.mode == kLayoutCompact && i == g_active) ? L.pill : L.tabs[i];
             if (tr.Width < 1.f || tr.Height < 1.f) continue;
             endX = std::max(endX, tr.GetRight());
@@ -1584,9 +1628,35 @@ static void DrawChrome(Graphics& g, int w, int h) {
         }
     }
 
+    // An open stack's row: a band under the tabs, the open tab's entry lit.
+    if (L.stackRow.Height >= 1.f && InPaint(L.stackRow) && g_active >= 0 && g_active < n) {
+        const TabGroup* sg = FindTabGroup(g_tabs[g_active]->group);
+        SolidBrush band(Faded(T.text, g_dark ? 0.045f : 0.05f));
+        g.FillRectangle(&band, L.stackRow);
+        if (sg) {
+            SolidBrush edgeB(TabGroupColor(sg->color));
+            g.FillRectangle(&edgeB, RectF(0, L.stackRow.Y, std::max(2.f, std::round(S(3))), L.stackRow.Height));
+        }
+        const RectF& r = L.stackActive;
+        if (r.Width >= 1.f) {
+            const Tab& at = *g_tabs[g_active];
+            FillRound(g, T.tabActive, r, S(ui.style.tabRadius));
+            const float bs = S(14);
+            const RectF badge(std::floor(r.X + S(8)), std::floor(r.Y + (r.Height - bs) / 2), bs, bs);
+            if (at.privateTab) DrawPrivateBadge(g, badge);
+            else DrawSiteBadge(g, at, badge);
+            const float tx = badge.GetRight() + S(6), tr = r.GetRight() - S(8);
+            if (tr - tx > S(10)) {
+                SolidBrush tb(T.text);
+                g.DrawString(at.title.c_str(), -1, g_fTabBold.get(), RectF(tx, r.Y, tr - tx, r.Height), &tf, &tb);
+            }
+            if (sg) FillRound(g, TabGroupColor(sg->color), RectF(r.X + S(8), r.GetBottom() - S(2.5f), r.Width - S(16), std::max(2.f, std::round(S(2)))), S(1));
+        }
+    }
+
     for (int i = 0; i < n; ++i) {
         if (IsCompactActive(i)) continue;
-        if (TabHiddenByGroup(i)) continue;               // (in a collapsed group)
+        if (TabHidden(i)) continue;                      // (in a collapsed group, or another workspace)
         const RectF& r = L.tabs[i];
         if (r.Width < 1.f || r.Height < 1.f) continue;   // (the right half of a split view: drawn with the left)
         if (!InPaint(r, S(8))) continue;                 // (not in the piece being painted)

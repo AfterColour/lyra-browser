@@ -34,6 +34,7 @@ struct Tab {
     bool  openedByPage = false;     // created by window.open / target=_blank
     bool  pinned = false;           // pinned: a narrow icon at the start of the tab list, kept across restarts
     unsigned group = 0;             // the tab group it is in (browser/TabGroups.cpp), 0: none
+    unsigned workspace = 0;         // the workspace it belongs to (browser/Workspaces.cpp)
     // Restored from the last session and not shown yet: nothing is loaded until it is selected
     // (Session.cpp). url / title hold the saved ones meanwhile.
     bool  lazyPending = false;

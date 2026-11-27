@@ -19,7 +19,7 @@
 
 enum UiItem {
     kItemBack, kItemForward, kItemReload, kItemHome, kItemNewTab, kItemDownloads,
-    kItemExtensions, kItemSidebar, kItemMenu, kItemCount
+    kItemExtensions, kItemSidebar, kItemMenu, kItemWorkspaces, kItemCount
 };
 
 enum UiZone {

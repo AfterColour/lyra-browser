@@ -10,6 +10,7 @@
 #include "browser/History.h"
 #include "browser/StartPage.h"
 #include "browser/TabGroups.h"
+#include "browser/Workspaces.h"
 #include "ui/LinkStatus.h"
 #include "core/Localization.h"
 #include "app/Log.h"
@@ -19,6 +20,7 @@
 #include "browser/Tab.h"
 #include "browser/WebContext.h"
 #include "core/Constants.h"
+#include "ui/Commands.h"
 #include "core/Settings.h"
 #include "core/StringUtils.h"
 #include "core/Url.h"
@@ -188,6 +190,8 @@ static void TouchMru(unsigned long long id) {
 
 void SelectTab(int i) {
     if (i < 0 || i >= (int)g_tabs.size()) return;
+    i = WorkspaceActivateFor(i);                         // another workspace's tab: that workspace opens
+    if (i < 0 || i >= (int)g_tabs.size()) return;
     if (g_fullScreenView && (!g_tabs[i]->hwnd || g_tabs[i]->hwnd != g_fullScreenView))
         ExitFullScreenForTabSwitch();
     // A tab shown before (or the prepared start page) is covered by its last picture until
@@ -331,7 +335,12 @@ Tab* CreateTabWithConfiguration(WKPageConfigurationRef conf, bool openedByPage, 
     WKPageSetPageZoomFactor(page, g_zoom);
 
     g_ctxs.push_back(std::move(ctx));
-    g_tabs.push_back(std::move(tab));
+    raw->workspace = ActiveWorkspace().id;
+    {   // after the active workspace's tabs (the open tab keeps being the open one)
+        const unsigned long long activeId = ActiveTab() ? ActiveTab()->id : 0;
+        g_tabs.insert(g_tabs.begin() + WsTabEnd(), std::move(tab));
+        if (activeId) FindTab(activeId, &g_active);
+    }
     Log("tab#%llu CREATED view=%p page=%p hwnd=%p popup=%d (tabs=%d)", raw->id, (void*)raw->view,
         (void*)raw->page, (void*)raw->hwnd, (int)openedByPage, (int)g_tabs.size());
     if (openedByPage) TabGroupsTabOpenedFrom(*raw, ActiveTab());   // into its opener's group
@@ -487,12 +496,16 @@ static bool AdoptSpareTab() {
     if (s_spareCtx) s_spareCtx->tab = raw;
     s_spareCtx = nullptr;
     raw->state = TabState::Live;
-    g_tabs.push_back(std::move(tab));
+    raw->workspace = ActiveWorkspace().id;
+    const unsigned long long activeId = ActiveTab() ? ActiveTab()->id : 0;
+    const int at = WsTabEnd();
+    g_tabs.insert(g_tabs.begin() + at, std::move(tab));  // after the active workspace's tabs
+    if (activeId) FindTab(activeId, &g_active);
     Log("tab#%llu CREATED from the spare start page (tabs=%d)", raw->id, (int)g_tabs.size());
     SyncTab(*raw);
     RefreshLayout(true);
     s_adopting = true;
-    SelectTab((int)g_tabs.size() - 1);
+    SelectTab(at);
     s_adopting = false;
     // The start page changed meanwhile (favourites, theme...): load the current one.
     const std::wstring fresh = StartPageUrl();
@@ -645,9 +658,10 @@ void ReopenClosedTab(int which) {
     // Back to its place (pinned ones among the pinned, the others after them).
     if (FindTab(id, &at)) {
         const int pinnedOthers = PinnedTabCount() - (t->pinned ? 1 : 0);
-        int to = std::clamp(c.index, 0, (int)g_tabs.size() - 1);
+        const int last = std::max(0, WsTabEnd() - 1);
+        int to = std::clamp(c.index, 0, last);
         to = t->pinned ? std::min(to, pinnedOthers) : std::max(to, pinnedOthers);
-        MoveTab(at, std::clamp(to, 0, (int)g_tabs.size() - 1));
+        MoveTab(at, std::clamp(to, 0, last));
     }
     // Into its group, if the group is still there (at the group's end when its place is not next to it).
     // A group made again for a tab reopened before stands in for the closed one.
@@ -683,7 +697,7 @@ void DuplicateTab(int index) {
         if (Tab* t = OpenInNewTab(url, false, true)) {
             int at = -1, from = -1;
             if (FindTab(srcId, &at) && FindTab(t->id, &from))
-                MoveTab(from, std::clamp(std::max(at + 1, PinnedTabCount()), 0, (int)g_tabs.size() - 1));
+                MoveTab(from, std::clamp(std::max(at + 1, PinnedTabCount()), 0, std::max(0, WsTabEnd() - 1)));
         }
         return;
     }
@@ -705,7 +719,7 @@ void DuplicateTab(int index) {
     t->title = title.empty() ? HostOf(url) : title;
     int at = -1, from = -1;
     if (FindTab(srcId, &at) && FindTab(id, &from)) {      // right after it (after the pinned ones)
-        const int to = std::clamp(std::max(at + 1, PinnedTabCount()), 0, (int)g_tabs.size() - 1);
+        const int to = std::clamp(std::max(at + 1, PinnedTabCount()), 0, std::max(0, WsTabEnd() - 1));
         MoveTab(from, to);
         if (group && FindTabGroup(group) && FindTab(id, &at)) { g_tabs[at]->group = group; TabGroupsNormalize(); }
     }
@@ -726,7 +740,7 @@ void CloseOtherTabs(int index) {
     if (index < 0 || index >= (int)g_tabs.size()) return;
     const unsigned long long keep = g_tabs[index]->id;
     std::vector<unsigned long long> ids;
-    for (auto& t : g_tabs) if (t->id != keep && !t->pinned) ids.push_back(t->id);
+    for (int i = 0; i < WsTabEnd(); ++i) if (g_tabs[i]->id != keep && !g_tabs[i]->pinned) ids.push_back(g_tabs[i]->id);
     { int i = -1; if (FindTab(keep, &i) && i != g_active) SelectTab(i); }
     CloseTabIds(ids);
 }
@@ -734,7 +748,7 @@ void CloseOtherTabs(int index) {
 void CloseTabsToRight(int index) {
     if (index < 0 || index >= (int)g_tabs.size()) return;
     std::vector<unsigned long long> ids;
-    for (int i = index + 1; i < (int)g_tabs.size(); ++i) if (!g_tabs[i]->pinned) ids.push_back(g_tabs[i]->id);
+    for (int i = index + 1; i < WsTabEnd(); ++i) if (!g_tabs[i]->pinned) ids.push_back(g_tabs[i]->id);
     CloseTabIds(ids);
 }
 
@@ -750,9 +764,9 @@ void MoveTab(int from, int to) {
     g_down = Hit();
 }
 
-int PinnedTabCount() {
+int PinnedTabCount() {                                  // (in the active workspace)
     int n = 0;
-    for (auto& t : g_tabs) if (t->pinned) ++n;
+    for (int i = 0, end = WsTabEnd(); i < end; ++i) if (g_tabs[i]->pinned) ++n;
     return n;
 }
 
@@ -773,7 +787,7 @@ void DropTabAt(unsigned long long id, int insertAt) {
     int from = -1;
     Tab* t = FindTab(id, &from);
     if (!t) return;
-    const int n = (int)g_tabs.size();
+    const int n = WsTabEnd();
     insertAt = std::clamp(insertAt, 0, n);
     const int to = insertAt > from ? insertAt - 1 : insertAt;          // its index once moved
     const int pinnedOthers = PinnedTabCount() - (t->pinned ? 1 : 0);
@@ -798,6 +812,12 @@ void CloseTab(int i) {
     if (g_tabOp) { Log("CloseTab(%d) re-entered during a tab operation -> ignored", i); return; }
     if (g_modalDepth > 0) { Log("CloseTab(%d) while a page dialog is open -> ignored", i); return; }
     if (i < 0 || i >= (int)g_tabs.size()) return;
+    if (i < WsTabEnd() && WsTabEnd() == 1 && g_tabs.size() > 1) {
+        // The last tab of a workspace (others have tabs): a new tab takes its place.
+        const unsigned long long id = g_tabs[i]->id;
+        RunCommand(CMD_NEWTAB);
+        if (!FindTab(id, &i) || WsTabEnd() < 2) return;
+    }
     if (g_tabs.size() == 1) {            // closing the last tab closes the window (like Safari)
         Log("CloseTab: last tab tab#%llu -> posting WM_CLOSE (already requested=%d)",
             g_tabs[0]->id, (int)g_closeRequested);
@@ -824,7 +844,7 @@ void CloseTab(int i) {
     else if (g_active == i) {
         int half = -1;                                   // a half of the split view closed: the other one
         if (otherHalf && FindTab(otherHalf, &half)) g_active = half;
-        else g_active = std::min(i, (int)g_tabs.size() - 1);
+        else g_active = std::min(i, std::max(0, WsTabEnd() - 1));
     }
     // The tab that comes forward is covered by its last picture until it has drawn (no empty
     // page area); the closing tab's own picture goes with it.

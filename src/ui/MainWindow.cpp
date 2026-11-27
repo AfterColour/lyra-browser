@@ -57,6 +57,7 @@
 #include "browser/WebAuthn.h"
 #include "ui/Sidebar.h"
 #include "ui/Customize.h"
+#include "browser/Workspaces.h"
 
 HWND   g_hWnd = nullptr;
 
@@ -109,6 +110,7 @@ static std::vector<StripItem> StripItems() {
     const int n = (int)std::min(g_tabs.size(), g_L.tabs.size());
     for (int i = 0; i < n; ++i) {
         if (pair && i == ri) continue;                   // (with the left half)
+        if (TabHidden(i) || TabInStackRow(i)) continue;  // (another workspace's, a collapsed group's, a stack's row)
         RectF r = (g_L.mode == kLayoutCompact && i == g_active) ? g_L.pill : g_L.tabs[i];
         if (pair && i == li) {
             if (g_L.mode == kLayoutCompact && (g_active == li || g_active == ri)) r = g_L.pill;
@@ -161,15 +163,15 @@ static void TabDropAt(int dragged, int x, int y, int* target, bool* right, int* 
             if (px < 0 || px > g_L.sideW || py < first.Y - S(4) || py > last.GetBottom() + S(40)) return;
             for (const StripItem& it : items)
                 if (py < it.r.Y + it.r.Height / 2 && !g_tabs[it.first]->pinned) { insert = it.first; break; }
-            if (insert < 0) insert = (int)g_tabs.size();
+            if (insert < 0) insert = WsTabEnd();
         } else {
             if (py < first.Y - S(6) || py > first.GetBottom() + S(6)) return;
             if (px < first.X) insert = items.front().first;
-            else if (px > last.GetRight()) insert = (int)g_tabs.size();
+            else if (px > last.GetRight()) insert = WsTabEnd();
             else {
                 for (const StripItem& it : items)
                     if (px < it.r.X + it.r.Width / 2) { insert = it.first; break; }
-                if (insert < 0) insert = (int)g_tabs.size();
+                if (insert < 0) insert = WsTabEnd();
             }
         }
     }
@@ -224,10 +226,10 @@ static bool TabDragEnd(bool drop) {
         if (Tab* t = FindTab(pressedId, &index)) {
             int ins = insertAt;
             if (SplitPartnerOf(*t)) {                    // keep the place once the two are ordinary tabs again
-                const unsigned long long before = ins < (int)g_tabs.size() ? g_tabs[ins]->id : 0;
+                const unsigned long long before = ins < WsTabEnd() ? g_tabs[ins]->id : 0;
                 SplitDetach(pressedId);
                 int b = -1;
-                ins = before && FindTab(before, &b) ? b : (int)g_tabs.size();
+                ins = before && FindTab(before, &b) ? b : WsTabEnd();
             }
             DropTabAt(pressedId, ins);
             moved = true;
@@ -713,6 +715,13 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::NewTab:   RunCommand(CMD_NEWTAB); break;
             case Hit::Home:     NavigateActive(g_homePage); break;
             case Hit::SidebarBtn: RunCommand(CMD_SIDEBAR); break;
+            case Hit::WorkspacesBtn: {                   // the switcher, under the button
+                const RectF& r = g_L.inField[kItemWorkspaces] ? g_L.pill : g_L.workspacesBtn;
+                POINT p = { (LONG)r.X, (LONG)r.GetBottom() + 2 };
+                ClientToScreen(hWnd, &p);
+                WorkspaceMenu(p);
+                break;
+            }
             case Hit::TabClose: CloseTabWithMouse(hWnd, up.index); break;
             case Hit::TabAudio: MediaToggleMute(up.index); break;
             case Hit::Key:      PasswordsSiteMenu(); break;
@@ -723,7 +732,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             case Hit::SideItem: SidebarItemClick(up.index); break;
             case Hit::SideButton: SidebarButtonClick(up.index); break;
             case Hit::GroupLabel:
-                if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupToggle(g_L.groupIds[up.index]);
+                if (up.index >= 0 && up.index < (int)g_L.groupIds.size()) TabGroupLabelClick(g_L.groupIds[up.index]);
                 break;
             default: break;
             }
@@ -767,7 +776,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (h.kind != Hit::TabBody && h.kind != Hit::TabClose && h.kind != Hit::TabAudio) break;
         if (h.index < 0 || h.index >= (int)g_tabs.size()) return 0;
         const unsigned long long id = g_tabs[h.index]->id;
-        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin, kReload, kDuplicate, kCloseOthers, kCloseRight, kGroups = 1000 };
+        enum { kSleep = 1, kSleepOthers, kClose, kSplitWith, kSplitSwap, kSplitClose, kPin, kReload, kDuplicate, kCloseOthers, kCloseRight, kWorkspaces = 900, kGroups = 1000 };
         HMENU m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, kReload, h.index == g_active ? Tr(L"Reload\tCtrl+R", L"Обновить\tCtrl+R") : Tr(L"Reload", L"Обновить"));
         AppendMenuW(m, MF_STRING, kDuplicate, Tr(L"Duplicate", L"Дублировать"));
@@ -793,10 +802,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 AppendMenuW(m, MF_STRING, kSplitWith, Tr(L"Split view with new tab", L"Разделённый экран с новой вкладкой"));
             }
             if (!(target.pinned || (h.index != g_active && open && open->pinned))) AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-            if (!target.pinned) {                        // tab groups
-                TabGroupsAppendTabMenu(m, h.index, kGroups);
-                AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-            }
+            if (!target.pinned) TabGroupsAppendTabMenu(m, h.index, kGroups);   // tab groups
+            WorkspacesAppendTabMenu(m, h.index, kWorkspaces);
+            if (!target.pinned || g_workspaces.size() > 1) AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         }
         const std::wstring why = TabSleepBlocker(*g_tabs[h.index]);
         std::wstring sleepText = Tr(L"Put tab to sleep", L"Усыпить вкладку");
@@ -810,7 +818,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             AppendMenuW(m, MF_STRING, kClose, Tr(L"Close tab\tCtrl+W", L"Закрыть вкладку\tCtrl+W"));
         {
             bool others = false, right = false;
-            for (int i = 0; i < (int)g_tabs.size(); ++i) {
+            for (int i = 0; i < WsTabEnd(); ++i) {
                 if (i == h.index || g_tabs[i]->pinned) continue;
                 others = true;
                 if (i > h.index) right = true;
@@ -840,6 +848,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         else if (cmd == kCloseOthers) CloseOtherTabs(index);
         else if (cmd == kCloseRight) CloseTabsToRight(index);
         else if (cmd >= kGroups) TabGroupsTabMenuCommand((UINT)cmd, index, kGroups);
+        else if (cmd >= kWorkspaces) WorkspacesTabMenuCommand((UINT)cmd, index, kWorkspaces);
         else if (cmd == kPin) SetTabPinned(index, !t->pinned);
         else if (cmd == kSplitWith) { if (t == ActiveTab()) SplitWithNewTab(); else SplitWith(id); }
         else if (cmd == kSplitSwap) SplitSwap();

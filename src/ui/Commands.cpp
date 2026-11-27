@@ -20,6 +20,7 @@
 #include "ui/BookmarkPopup.h"
 #include "ui/Chrome.h"
 #include "ui/Customize.h"
+#include "browser/Workspaces.h"
 #include "ui/CommandPalette.h"
 #include "ui/Screenshot.h"
 #include "ui/BookmarksBar.h"
@@ -258,6 +259,7 @@ bool HandleShortcut(const MSG& m) {
         if (k == 'E') { RunCommand(CMD_SIDEBAR); return true; }
         if (k == VK_DELETE) { OpenClearDataSettings(); return true; }
     }
+    if (ctrl && alt && !shift && k >= '1' && k <= '9') { WorkspaceSwitchByIndex((int)(k - '1')); return true; }
     if (ctrl && !alt) {
         switch (k) {
         case 'T': RunCommand(CMD_NEWTAB); return true;
@@ -276,14 +278,15 @@ bool HandleShortcut(const MSG& m) {
         case VK_OEM_MINUS: case VK_SUBTRACT:   RunCommand(CMD_ZOOMOUT); return true;
         case '0': case VK_NUMPAD0:             RunCommand(CMD_ZOOMRESET); return true;
         case VK_TAB: {
-            int n = (int)g_tabs.size();
+            int n = WsTabEnd();
             if (n > 1) SelectTab(((g_active + (shift ? -1 : 1)) % n + n) % n);
             return true;
         }
         }
         if (k >= '1' && k <= '9') {
-            int n = (int)g_tabs.size();
-            SelectTab(k == '9' ? n - 1 : (int)(k - '1'));
+            int n = WsTabEnd();
+            const int want = k == '9' ? n - 1 : (int)(k - '1');
+            if (want < n) SelectTab(want);
             return true;
         }
     }

@@ -12,6 +12,11 @@ struct TabGroup {
     std::wstring name;                   // may be empty: the label is then a coloured dot
     int          color = 0;              // index into the palette, 0 .. kTabGroupColorCount - 1
     bool         collapsed = false;      // its tabs are hidden, only the label shows
+    // Shown as a stack: one place in the tab list with its front tab (the open one, or the one
+    // open last). While one of its tabs is open they all show: in a thin row under the tabs, or
+    // indented under the stack in the vertical list.
+    bool         stacked = false;
+    unsigned long long front = 0;        // the tab id the stack shows
 };
 extern std::vector<TabGroup> g_groups;
 
@@ -22,8 +27,14 @@ TabGroup* FindTabGroup(unsigned id);
 // The indexes in g_tabs of the first and the last tab of the group; false if it has none.
 bool TabGroupRange(unsigned id, int* first, int* last);
 int  TabGroupTabCount(unsigned id);
-// The tab is in a collapsed group: it gets no place in the tab list.
+// The tab is in a collapsed group, or behind its stack's front tab: it gets no place in the tab list.
 bool TabHiddenByGroup(int index);
+int  TabGroupFrontIndex(unsigned id);                // the stack's front tab, -1: none
+bool TabGroupStackOpen(unsigned id);                 // a stack whose tabs show (one of them is open)
+// The tab goes in the row under the tabs (a horizontal layout, its stack open), not in the tab list.
+bool TabInStackRow(int index);
+void TabGroupSetStacked(unsigned id, bool stacked);
+void TabGroupLabelClick(unsigned id);                // a stack opens; a group collapses or expands
 // Keeps the rules: groups contiguous, no pinned tab in a group, a split view's two tabs in the
 // same group, no empty groups, the open tab never hidden. ComputeTarget runs it before layout.
 void TabGroupsNormalize();
